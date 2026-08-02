@@ -1,0 +1,184 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"porttorch/scanner/internal/client"
+	"porttorch/scanner/internal/config"
+	"porttorch/scanner/internal/version"
+)
+
+func newDoctorCmd(configPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "doctor",
+		Short: "Checks the scanner's config, dependencies, and webserver connectivity before you run a real scan",
+		// A failed check is an environment/config problem, not a
+		// misused flag - showing the usage block for it would be noise.
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDoctor(*configPath)
+		},
+	}
+}
+
+type checkStatus int
+
+const (
+	statusOK checkStatus = iota
+	statusWarn
+	statusFail
+)
+
+type check struct {
+	name   string
+	status checkStatus
+	detail string
+}
+
+// runDoctor never returns on the first failure - it runs every check it
+// can and prints a full report, since seeing "masscan is fine but nmap
+// isn't on PATH and the webserver is unreachable" in one pass is far more
+// useful than fixing issues one at a time across repeated runs.
+func runDoctor(configPath string) error {
+	var checks []check
+	checks = append(checks, check{"scanner version", statusOK, version.Version})
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		checks = append(checks, check{"config file (" + configPath + ")", statusFail, err.Error()})
+		printChecks(checks)
+		return fmt.Errorf("config could not be loaded")
+	}
+	checks = append(checks, check{"config file (" + configPath + ")", statusOK, "loaded"})
+
+	// masscan and nmap are hard requirements - every scan needs both.
+	// gowitness/Chrome, xfreerdp/Xvfb/import are optional (HTTP
+	// screenshots and RDP screenshots are best-effort features), so their
+	// absence is a warning, not a failure.
+	checks = append(checks, checkPrivilegedBinary("masscan", cfg.MasscanPath, true)...)
+	checks = append(checks, checkPrivilegedBinary("nmap", cfg.NmapPath, true)...)
+	checks = append(checks, checkBinary("gowitness", cfg.GowitnessPath, false))
+	checks = append(checks, checkChrome(cfg.ChromePath))
+	checks = append(checks, checkBinary("xfreerdp (RDP screenshots)", cfg.XfreerdpPath, false))
+	checks = append(checks, checkBinary("Xvfb (RDP screenshots)", cfg.XvfbPath, false))
+	checks = append(checks, checkBinary("ImageMagick import (RDP screenshots)", cfg.ImportPath, false))
+	checks = append(checks, checkBinary("tesseract (screenshot OCR)", cfg.TesseractPath, false))
+
+	checks = append(checks, checkWebserver(cfg))
+
+	printChecks(checks)
+
+	for _, c := range checks {
+		if c.status == statusFail {
+			return fmt.Errorf("one or more required checks failed - see above")
+		}
+	}
+	return nil
+}
+
+func printChecks(checks []check) {
+	for _, c := range checks {
+		var symbol string
+		switch c.status {
+		case statusOK:
+			symbol = "[ OK ]"
+		case statusWarn:
+			symbol = "[WARN]"
+		case statusFail:
+			symbol = "[FAIL]"
+		}
+		fmt.Printf("%s %-45s %s\n", symbol, c.name, c.detail)
+	}
+}
+
+// checkBinary confirms a binary is resolvable (either an absolute path
+// that exists, or a bare command found on $PATH) and executable.
+func checkBinary(label, configuredPath string, required bool) check {
+	name := label + " (" + configuredPath + ")"
+	resolved, err := exec.LookPath(configuredPath)
+	if err != nil {
+		status := statusWarn
+		if required {
+			status = statusFail
+		}
+		return check{name, status, "not found: " + err.Error()}
+	}
+	return check{name, statusOK, "found at " + resolved}
+}
+
+// checkPrivilegedBinary is checkBinary plus a best-effort check that the
+// binary actually has the raw-socket access masscan/nmap need
+// (cap_net_raw,cap_net_admin, or running as root) - a binary that's
+// present but lacks this fails with a confusing permissions error only
+// once a real scan is attempted, which this catches up front instead.
+func checkPrivilegedBinary(label, configuredPath string, required bool) []check {
+	binCheck := checkBinary(label, configuredPath, required)
+	if binCheck.status == statusFail {
+		return []check{binCheck}
+	}
+
+	if os.Geteuid() == 0 {
+		return []check{binCheck, {label + " privileges", statusOK, "running as root"}}
+	}
+
+	resolved, err := exec.LookPath(configuredPath)
+	if err != nil {
+		return []check{binCheck}
+	}
+	getcapPath, err := exec.LookPath("getcap")
+	if err != nil {
+		return []check{binCheck, {label + " privileges", statusWarn, "getcap not available to verify - make sure cap_net_raw,cap_net_admin is set or run as root"}}
+	}
+	out, err := exec.Command(getcapPath, resolved).Output()
+	if err != nil {
+		return []check{binCheck, {label + " privileges", statusWarn, "could not run getcap: " + err.Error()}}
+	}
+	hasCaps := strings.Contains(string(out), "cap_net_raw") && strings.Contains(string(out), "cap_net_admin")
+	if !hasCaps {
+		return []check{binCheck, {
+			label + " privileges", statusFail,
+			fmt.Sprintf("missing cap_net_raw,cap_net_admin - run: sudo setcap cap_net_raw,cap_net_admin+eip %s", resolved),
+		}}
+	}
+	return []check{binCheck, {label + " privileges", statusOK, "cap_net_raw,cap_net_admin set"}}
+}
+
+// checkChrome mirrors gowitness's own resolution order (explicit
+// chromePath, then whatever chromedp/gowitness would find on $PATH) -
+// google-chrome and chromium are both common depending on distro.
+func checkChrome(chromePath string) check {
+	if chromePath != "" {
+		return checkBinary("Chrome/Chromium", chromePath, false)
+	}
+	for _, name := range []string{"google-chrome", "chromium", "chromium-browser"} {
+		if resolved, err := exec.LookPath(name); err == nil {
+			return check{"Chrome/Chromium (auto-detected)", statusOK, "found at " + resolved}
+		}
+	}
+	return check{"Chrome/Chromium", statusWarn, "not found on $PATH - set chromePath in config.yaml, or HTTP screenshots will fail"}
+}
+
+// checkWebserver reuses GetExcludes (an existing, lightweight
+// authenticated endpoint) rather than adding a health-check-only route -
+// a successful call confirms both network reachability and that the
+// configured API key is valid in one request.
+func checkWebserver(cfg *config.Config) check {
+	c, err := client.New(cfg)
+	if err != nil {
+		return check{"webserver client setup", statusFail, err.Error()}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := c.GetExcludes(ctx); err != nil {
+		return check{"webserver connectivity (" + cfg.WebserverURL + ")", statusFail, err.Error()}
+	}
+	return check{"webserver connectivity (" + cfg.WebserverURL + ")", statusOK, "reachable, api key valid"}
+}

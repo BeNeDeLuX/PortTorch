@@ -1,0 +1,349 @@
+import type { ColumnType, Generated } from "kysely";
+
+export interface UsersTable {
+  id: Generated<number>;
+  username: string;
+  password_hash: string;
+  role: string;
+  created_at: ColumnType<Date, string | undefined, never>;
+  last_login_at: ColumnType<Date | null, string | undefined, string>;
+  totp_secret: string | null;
+  totp_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  totp_recovery_codes: string[] | null;
+  // Account-level defaults, set from the Account page - null means "no
+  // override", i.e. fall back to the built-in default (see auth/routes.ts's
+  // toPreferences). Followed across browsers/devices, unlike the existing
+  // localStorage-based theme toggle/table prefs, which are per-browser.
+  pref_theme: "dark" | "light" | null;
+  pref_hosts_page_size: number | null;
+  pref_show_active_scans_banner: ColumnType<boolean, boolean | undefined, boolean>;
+  pref_default_scanner_agent_id: string | null;
+  // IANA zone name (e.g. "Europe/Berlin"); null means "use the browser's
+  // own local timezone", same null-means-no-override convention as the
+  // other preferences here.
+  pref_timezone: string | null;
+  pref_time_format: "h12" | "h24" | null;
+  // Which --accent CSS custom property value to use (styles.css); null
+  // means "green", today's only/default color.
+  pref_accent_color: "green" | "orange" | "blue" | null;
+}
+
+export interface ScannerAgentsTable {
+  id: Generated<string>;
+  name: string;
+  api_key_hash: string;
+  last_seen_at: Date | null;
+  last_seen_ip: string | null;
+  // Reported by the scanner on every ingest request (X-Scanner-Version
+  // header) - null until a scanner built with that support has made at
+  // least one request.
+  version: string | null;
+  created_at: ColumnType<Date, string | undefined, never>;
+  revoked_at: Date | null;
+}
+
+// For external, non-interactive callers (SOAR/enrichment tools) - distinct
+// from scanner_agents (which authenticate a specific scanner submitting
+// scan results) and from session auth (interactive dashboard users).
+export interface ApiTokensTable {
+  id: Generated<string>;
+  name: string;
+  token_hash: string;
+  created_by: string | null;
+  last_used_at: Date | null;
+  created_at: ColumnType<Date, string | undefined, never>;
+  revoked_at: Date | null;
+}
+
+export interface ScanJobsTable {
+  id: Generated<string>;
+  // null means the scanner agent that ran this job was later deleted -
+  // the job itself (and everything cascading from it) is preserved as
+  // read-only history rather than deleted along with the agent.
+  scanner_agent_id: string | null;
+  target_spec: string;
+  port_spec: string;
+  status: string;
+  started_at: ColumnType<Date, string | undefined, never>;
+  finished_at: Date | null;
+  // True only for jobs created by a long-running "serve" process (its own
+  // REST-triggered ad-hoc scans and queue-triggered ones) - only those can
+  // actually be stopped, since only "serve" runs the concurrent watcher
+  // that checks cancel_requested_at while the scan is in progress. A
+  // one-shot "scan"/"menu" process has nothing polling during its single
+  // blocking scan, so cancellation could never reach it.
+  cancellable: ColumnType<boolean, boolean | undefined, never>;
+  cancel_requested_at: ColumnType<Date | null, string | undefined, string>;
+}
+
+export interface HostsTable {
+  id: Generated<string>;
+  ip: string;
+  // Which scanner reported this host - part of its identity, not just
+  // metadata: two different scanners (different, non-interconnected
+  // networks) can each have a real device at the same ip, so identity is
+  // (ip, scanner_agent_id), not ip alone. Null only ever means the
+  // scanner that originally reported this host has since been deleted
+  // (ON DELETE SET NULL) - never true for a host as of its own ingest.
+  scanner_agent_id: string | null;
+  hostname: string | null;
+  os_name: string | null;
+  os_family: string | null;
+  os_vendor: string | null;
+  device_type: string | null;
+  os_accuracy: number | null;
+  // From nmap's ARP resolution - only ever populated when the host is on
+  // the scanner's own local L2 segment (see pipeline/nmap.go's
+  // applyMACAddress); null for anything reached over a routed hop, which
+  // is most targets in a typical internal network scan.
+  mac_address: string | null;
+  mac_vendor: string | null;
+  // Manual override, never written by the scan pipeline itself (unlike
+  // hostname, which nmap's own PTR lookup overwrites every scan) - set by
+  // an admin/operator on the Host Detail page when the discovered IP alone
+  // can't reach the right vhost (SNI-based routing, e.g. nginx rejecting a
+  // TLS handshake whose SNI doesn't match any server_name). Used instead
+  // of the bare IP for the TLS certificate probe's SNI and the gowitness
+  // screenshot URL - see pipeline/tlscert.go and orchestrator.go.
+  probe_hostname: string | null;
+  first_seen_at: ColumnType<Date, string | undefined, never>;
+  last_seen_at: ColumnType<Date, string | undefined, string>;
+}
+
+export interface HostPortObservationsTable {
+  id: Generated<string>;
+  host_id: string;
+  scan_job_id: string;
+  port: number;
+  protocol: string;
+  state: string;
+  service_name: string | null;
+  service_product: string | null;
+  service_version: string | null;
+  extra_info: string | null;
+  os_type: string | null;
+  cpes: string[] | null;
+  banner: string | null;
+  observed_at: ColumnType<Date, string | undefined, never>;
+}
+
+export interface CurrentHostPortsTable extends HostPortObservationsTable {}
+
+export interface ScreenshotsTable {
+  id: Generated<string>;
+  host_id: string;
+  scan_job_id: string;
+  port: number;
+  url: string;
+  image_path: string;
+  http_status: number | null;
+  page_title: string | null;
+  captured_at: ColumnType<Date, string | undefined, never>;
+  tls_protocol: string | null;
+  tls_cipher: string | null;
+  tls_subject: string | null;
+  tls_issuer: string | null;
+  tls_valid_from: Date | null;
+  tls_valid_to: Date | null;
+  technologies: string[] | null;
+  // Stored as jsonb; inserted as a JSON string, read back as a parsed
+  // object (node-postgres parses jsonb columns on select automatically).
+  headers: ColumnType<Record<string, string> | null, string | null, string | null>;
+  // Extracted by the scanner via Tesseract (pipeline/ocr.go) - best-effort,
+  // null if tesseract wasn't installed on the scanner or recognition failed.
+  ocr_text: string | null;
+}
+
+export interface RdpScreenshotsTable {
+  id: Generated<string>;
+  host_id: string;
+  scan_job_id: string;
+  port: number;
+  image_path: string;
+  captured_at: ColumnType<Date, string | undefined, never>;
+  ocr_text: string | null;
+}
+
+export interface ScanSchedulesTable {
+  id: Generated<string>;
+  scanner_agent_id: string;
+  target_spec: string;
+  port_spec: string;
+  // Exactly one of interval_minutes/cron_expression/run_at is set,
+  // matching schedule_type - enforced by scan_schedules_type_fields_check,
+  // not just convention.
+  schedule_type: ColumnType<
+    "interval" | "cron" | "once",
+    "interval" | "cron" | "once" | undefined,
+    "interval" | "cron" | "once"
+  >;
+  interval_minutes: number | null;
+  cron_expression: string | null;
+  run_at: ColumnType<Date | null, string | null | undefined, string | null>;
+  enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  next_run_at: ColumnType<Date, string | undefined, string>;
+  last_run_at: ColumnType<Date | null, string | undefined, string>;
+  created_by: string | null;
+  created_at: ColumnType<Date, string | undefined, never>;
+}
+
+export interface ScanRequestsTable {
+  id: Generated<string>;
+  // null means the scanner agent this request was queued for was later
+  // deleted - the request itself is preserved as read-only history
+  // rather than deleted along with the agent.
+  scanner_agent_id: string | null;
+  host_id: string | null;
+  target_spec: string;
+  port_spec: string;
+  status: ColumnType<string, string | undefined, string>;
+  scan_job_id: string | null;
+  requested_by: string | null;
+  created_at: ColumnType<Date, string | undefined, never>;
+  claimed_at: ColumnType<Date | null, string | undefined, string>;
+  completed_at: ColumnType<Date | null, string | undefined, string>;
+}
+
+export interface TlsCertificatesTable {
+  id: Generated<string>;
+  host_id: string;
+  scan_job_id: string;
+  port: number;
+  subject_cn: string | null;
+  issuer_cn: string | null;
+  san_list: string[] | null;
+  not_before: Date | null;
+  not_after: Date | null;
+  fingerprint_sha256: string;
+  signature_algorithm: string | null;
+  self_signed: ColumnType<boolean, boolean | undefined, boolean>;
+  tls_version: string | null;
+  cipher_suite: string | null;
+  key_algorithm: string | null;
+  key_bits: number | null;
+  expiry_alert_sent_at: Date | null;
+  captured_at: ColumnType<Date, string | undefined, never>;
+}
+
+export interface SshHostKeysTable {
+  id: Generated<string>;
+  host_id: string;
+  scan_job_id: string;
+  port: number;
+  key_type: string;
+  bits: number | null;
+  fingerprint_md5: string | null;
+  fingerprint_sha256: string;
+  captured_at: ColumnType<Date, string | undefined, never>;
+}
+
+export interface HostTagsTable {
+  id: Generated<string>;
+  host_id: string;
+  tag: string;
+  created_at: ColumnType<Date, string | undefined, never>;
+}
+
+export interface HostCommentsTable {
+  id: Generated<string>;
+  host_id: string;
+  author: string;
+  body: string;
+  created_at: ColumnType<Date, string | undefined, never>;
+}
+
+export interface SavedSearchesTable {
+  id: Generated<string>;
+  name: string;
+  // Stored as jsonb; inserted as a JSON string, read back as a parsed
+  // object (same pattern as screenshots.headers/audit_log.details).
+  filters: ColumnType<Record<string, unknown>, string, string>;
+  created_by: string | null;
+  created_at: ColumnType<Date, string | undefined, never>;
+}
+
+export interface SavedSearchMatchesTable {
+  saved_search_id: string;
+  host_id: string;
+}
+
+// Restricts a non-admin user to only that scanner agent's results (see
+// server/src/auth/scannerScope.ts) - no rows for a user = unrestricted.
+export interface UserScannerAgentsTable {
+  user_id: number;
+  scanner_agent_id: string;
+}
+
+export interface CveEntry {
+  id: string;
+  description: string;
+  cvssScore: number | null;
+  cvssSeverity: string | null;
+  published: string | null;
+}
+
+export interface CveCacheTable {
+  cpe: string;
+  // Stored as jsonb; inserted as a JSON string, read back as a parsed
+  // array (same pattern as screenshots.headers/audit_log.details).
+  cves: ColumnType<CveEntry[], string, string>;
+  checked_at: ColumnType<Date, string | undefined, string>;
+}
+
+export interface ScanExcludesTable {
+  id: Generated<string>;
+  kind: string;
+  value: string;
+  // null = applies to every scanner (the inherited default); set = only
+  // that one scanner, e.g. to exclude an IP that's only sensitive within
+  // that specific scanner's network (private ranges commonly overlap
+  // across scanners in different networks).
+  scanner_agent_id: string | null;
+  created_by: string | null;
+  created_at: ColumnType<Date, string | undefined, never>;
+}
+
+export interface WebhooksTable {
+  id: Generated<string>;
+  name: string;
+  url: string;
+  enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  events: string[];
+  created_at: ColumnType<Date, string | undefined, never>;
+}
+
+export interface AuditLogTable {
+  id: Generated<string>;
+  event: string;
+  actor: string | null;
+  source_ip: string | null;
+  // Stored as jsonb; inserted as a JSON string, read back as a parsed
+  // object (same pattern as screenshots.headers).
+  details: ColumnType<Record<string, unknown> | null, string | null, never>;
+  created_at: ColumnType<Date, string | undefined, never>;
+}
+
+export interface Database {
+  users: UsersTable;
+  scanner_agents: ScannerAgentsTable;
+  api_tokens: ApiTokensTable;
+  scan_jobs: ScanJobsTable;
+  hosts: HostsTable;
+  host_port_observations: HostPortObservationsTable;
+  current_host_ports: CurrentHostPortsTable;
+  screenshots: ScreenshotsTable;
+  host_tags: HostTagsTable;
+  host_comments: HostCommentsTable;
+  scan_excludes: ScanExcludesTable;
+  saved_searches: SavedSearchesTable;
+  saved_search_matches: SavedSearchMatchesTable;
+  user_scanner_agents: UserScannerAgentsTable;
+  cve_cache: CveCacheTable;
+  webhooks: WebhooksTable;
+  audit_log: AuditLogTable;
+  rdp_screenshots: RdpScreenshotsTable;
+  scan_schedules: ScanSchedulesTable;
+  scan_requests: ScanRequestsTable;
+  tls_certificates: TlsCertificatesTable;
+  ssh_host_keys: SshHostKeysTable;
+}

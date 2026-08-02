@@ -1,0 +1,51 @@
+{
+  "name": "porttorch-server",
+  "version": "0.2.0",
+  "license": "MIT",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.build.json && npm run build:frontend",
+    "build:frontend": "npm run build --prefix frontend",
+    "start": "node dist/src/index.js",
+    "migrate:up": "node-pg-migrate up -m migrations",
+    "migrate:down": "node-pg-migrate down -m migrations",
+    "seed-admin": "node dist/scripts/seed-admin.js",
+    "seed-admin:dev": "tsx scripts/seed-admin.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "connect-pg-simple": "^10.0.0",
+    "cron-parser": "^5.6.2",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0",
+    "helmet": "^7.1.0",
+    "kysely": "^0.29.4",
+    "multer": "^2.2.0",
+    "node-forge": "^1.3.1",
+    "node-pg-migrate": "^7.6.1",
+    "pg": "^8.12.0",
+    "pino": "^9.14.0",
+    "qrcode": "^1.5.4",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/connect-pg-simple": "^7.0.3",
+    "@types/express": "^4.17.21",
+    "@types/express-session": "^1.18.0",
+    "@types/multer": "^1.4.11",
+    "@types/node": "^22.5.0",
+    "@types/node-forge": "^1.3.11",
+    "@types/qrcode": "^1.5.5",
+    "@types/supertest": "^7.2.1",
+    "supertest": "^7.2.2",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4",
+    "vitest": "^4.1.10"
+  }
+}

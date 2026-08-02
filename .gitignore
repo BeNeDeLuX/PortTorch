@@ -1,0 +1,15 @@
+.claude/
+node_modules/
+dist/
+*.tsbuildinfo
+frontend/dist/
+*.log
+.env
+/data/
+/certs/
+scanner/scanner
+scanner/*.yaml
+!scanner/config.example.yaml
+*.swp
+*.swo
+*~

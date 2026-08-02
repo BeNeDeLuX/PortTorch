@@ -1,0 +1,110 @@
+# Copy to config.yaml (or ~/.config/porttorch/config.yaml)
+# and adjust the values.
+
+webserverUrl: "https://porttorch.internal:443"
+
+# Shown once when creating a scanner agent in the dashboard
+# (Admin login -> Scanner Agents -> Create new).
+apiKey: "REPLACE_ME"
+
+# Recommended: path to the self-signed server certificate (cert.pem), so
+# the connection can be verified without disabling TLS verification.
+# serverCaCertPath: "/etc/porttorch/server-cert.pem"
+
+# Only if serverCaCertPath is not set and you want to "blindly" trust the
+# self-signed certificate (not recommended outside of quick tests):
+insecureSkipVerify: false
+
+masscanPath: "masscan"
+nmapPath: "nmap"
+masscanRate: 1000
+# masscan is a stateless SYN scanner - a single lost packet in either
+# direction means a genuinely open port just isn't reported that run.
+# This resends each probe (1s apart) regardless of whether a reply was
+# already seen, trading a little extra scan time/traffic for materially
+# fewer "was open yesterday, not found today" false negatives.
+masscanRetries: 2
+concurrency: 5
+
+gowitnessPath: "gowitness"
+# Optional: path to Chrome/Chromium, if not findable in PATH as
+# "google-chrome" (e.g. on Debian/Ubuntu: /usr/bin/chromium).
+# chromePath: "/usr/bin/chromium"
+screenshotTimeoutSeconds: 20
+# Chrome window size for HTTP(S) screenshots, and so the resolution of
+# the captured PNG - higher than gowitness's own 1280x720 default for a
+# sharper, more readable image on the host detail page.
+screenshotWidth: 1920
+screenshotHeight: 1080
+# Deliberately separate from (and much lower than) "concurrency" above:
+# each gowitness invocation spawns its own full headless Chrome instance,
+# which needs far more CPU/RAM than an nmap process. Setting this as high
+# as "concurrency" can starve every concurrent Chrome instance of
+# resources and make them all miss screenshotTimeoutSeconds together -
+# seen in practice as a wave of "context deadline exceeded" failures
+# all around the same timestamp. Raise this only if the scanner host has
+# the CPU/RAM headroom for that many simultaneous Chrome instances.
+gowitnessConcurrency: 2
+
+# RDP screenshots (v2): requires xfreerdp3, Xvfb, and ImageMagick (import).
+#   sudo apt-get install -y freerdp3-x11 xvfb imagemagick
+# Limitation: if the target server enforces Network Level Authentication
+# (NLA, often the default on modern Windows versions), the connection
+# fails before any graphical output appears - no screenshot is possible
+# without valid credentials (a protocol property, not a bug).
+xfreerdpPath: "xfreerdp3"
+xvfbPath: "Xvfb"
+importPath: "import"
+rdpScreenWidth: 1920
+rdpScreenHeight: 1080
+rdpConnectTimeoutSeconds: 8
+rdpScreenshotDelaySeconds: 8
+# Separate from "concurrency" for the same reason as gowitnessConcurrency
+# above - Xvfb+xfreerdp+import per screenshot is also much heavier than
+# an nmap process.
+rdpConcurrency: 2
+
+# TLS certificates: a real TLS handshake (Go standard library, no external
+# tool) against all ports detected as TLS-carrying, not just HTTP(S) (e.g.
+# also IMAPS/SMTPS/LDAPS). Provides CN, issuer, validity, SHA-256
+# fingerprint, self-signed detection.
+tlsCertTimeoutSeconds: 8
+
+# Screenshot OCR: extracts text from HTTP(S) and RDP screenshots via
+# Tesseract, so page/login content becomes searchable in the dashboard
+# even when it never appears in a banner or HTTP header. Best-effort like
+# gowitness/RDP themselves - if tesseract isn't installed, screenshots are
+# still captured normally, just without OCR text.
+#   sudo apt-get install -y tesseract-ocr
+tesseractPath: "tesseract"
+
+# SSH host keys: captured as best-effort via nmap's "ssh-hostkey" script in
+# addition to the banner script (no separate toggle needed). Limitation:
+# nmap's ssh2 NSE library doesn't support modern KEX algorithms (e.g.
+# curve25519-sha256) - against servers that only offer modern KEX by
+# default (e.g. stock OpenSSH 9.9+/10), the script returns no host key
+# (confirmed by testing). It still works against older/classically
+# configured SSH servers.
+
+# OS/device-type fingerprinting (nmap -O, e.g. "Windows", "Linux",
+# type="switch"/"router"/"printer" etc.): no separate toggle either, but
+# unlike everything else in this file, it needs the scanner process to
+# actually run as root - nmap refuses to run -O at all otherwise ("requires
+# root privileges"), not just skip it. The cap_net_raw/cap_net_admin
+# capabilities from setcap (see below) are NOT enough for this one nmap
+# feature. If the scanner isn't running as root, OS/device classification
+# is simply omitted; everything else in this file keeps working normally.
+
+# Only relevant for "scanner serve" (REST API instead of TUI menu).
+listenAddr: ":9090"
+# Required so the scanner API isn't reachable without authentication.
+# Generate yourself, e.g. with: openssl rand -hex 32
+controlApiToken: "REPLACE_ME"
+# How often "scanner serve" asks the webserver for pending scan requests
+# (dashboard rescan button or recurring schedules).
+pollIntervalSeconds: 15
+
+# Note: masscan needs raw socket access. Either run the scanner as root,
+# or grant the binaries the necessary capabilities:
+#   sudo setcap cap_net_raw,cap_net_admin+eip $(which masscan)
+#   sudo setcap cap_net_raw,cap_net_admin+eip $(which nmap)

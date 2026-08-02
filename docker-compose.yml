@@ -1,0 +1,70 @@
+# Pinned explicitly so the project directory can be renamed (it was
+# originally "claude-code", the repo folder name Compose would otherwise
+# derive this from) without Compose creating a second, empty set of
+# containers/volumes/network under a new name - existing data stays
+# attached regardless of what the directory itself is called.
+name: claude-code
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Ephemeral Postgres for integration tests (server/tests/integration) -
+  # never starts as part of a plain `docker compose up`, only via
+  # `docker compose --profile test up -d postgres-test`. No named volume:
+  # data is meant to be thrown away between test runs, not persisted.
+  postgres-test:
+    image: postgres:16-alpine
+    profiles: ["test"]
+    environment:
+      POSTGRES_USER: porttorch_test
+      POSTGRES_PASSWORD: porttorch_test
+      POSTGRES_DB: porttorch_test
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U porttorch_test -d porttorch_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  webserver:
+    build: ./server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SESSION_SECRET: ${SESSION_SECRET}
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      PORT: ${PORT}
+      CERT_DIR: /data/certs
+      SCREENSHOT_DIR: /data/screenshots
+    ports:
+      - "443:${PORT}"
+    volumes:
+      - certs:/data/certs
+      - screenshots:/data/screenshots
+
+volumes:
+  pgdata:
+  certs:
+  screenshots:
