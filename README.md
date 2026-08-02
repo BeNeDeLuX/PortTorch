@@ -1,5 +1,10 @@
 # PortTorch
 
+> **Disclaimer:** This entire project - scanner, webserver, dashboard, and
+> documentation - was built entirely with AI (Claude Code), with no
+> hand-written code. Review it yourself before relying on it, especially
+> for anything security-sensitive.
+
 ![Scan results dashboard](screenshots/PortTorch_scan_results.png)
 
 ![Host detail page](screenshots/PortTorch_host_details.png)
@@ -30,6 +35,154 @@ The project has two independently deployed components:
 - **`/server`** - a Node/TypeScript + PostgreSQL webserver with the React
   dashboard, authentication, and the database. This is the only component
   end users interact with directly.
+
+## Dashboard features
+
+- :mag: **Search** - free text across IP, hostname, service name/product,
+  banners, known CVE ids (matched against the CVE correlation cache - see
+  below), and text OCR'd from HTTP(S)/RDP screenshots (e.g. a login page's
+  wording that never appears in any banner or header); also accepts a
+  single IPv4 or IPv6 address, or a CIDR range of either (e.g.
+  `10.0.0.0/24` or `2001:db8::/32`), to match all hosts in that subnet.
+- :toolbox: **Facets & filters** - filter by port, service, or host tag (multi-select,
+  AND semantics: picking port 21 and 3389 means hosts with both open, not
+  either), OS family, device type, or scanner agent (also multi-select, via
+  a compact dropdown - useful once you're running more than one scanner,
+  e.g. to look at a couple of network segments in isolation), and a
+  last-seen date range; toggle "hide hosts without open ports" and "only
+  hosts with a screenshot"; paginated (50/page) so large networks stay
+  usable. Every filter combines with the free-text search box and with
+  each other.
+- :card_index_dividers: **Grid or table view** - table view has sortable, show/hide-able columns
+  (hostname, open port count, last seen, screenshot, OS/device); your
+  choice of view and column layout is remembered per browser. Both views
+  support selecting multiple hosts to bulk-tag or bulk-rescan at once.
+- :floppy_disk: **Saved searches** - save the current filter combination by name; a
+  background check every 5 minutes fires a `saved_search.match` webhook
+  the first time a host newly starts matching (not repeatedly for hosts
+  that already matched).
+- :outbox_tray: **CSV export** - respects whatever filters are currently active. Choose
+  either a one-row-per-host summary (with an open-port count) or a
+  one-row-per-open-port detailed export (port/protocol/service columns) for
+  a flat asset-inventory shape.
+- :desktop_computer: **Host detail page** - open ports with banners/CPE/OS hints and known
+  CVEs (matched against detected service versions, synced daily from the
+  NVD database - see below), OS/device classification and MAC address
+  (when available - see "What each scan does" above), TLS certificates
+  (with expiry status), SSH host keys, HTTP(S) and RDP screenshots (with
+  detected technologies, response headers, and OCR'd screenshot text), a
+  full scan history timeline (with which scanner agent produced each
+  entry), a "changes since last scan" diff, host tags, and an append-only
+  comment log (each comment keeps its author and timestamp). Prev/next
+  buttons step through whichever filtered/sorted host list you came from
+  (including across a page boundary), so you can click through a search's
+  results without going back to the list each time.
+- :arrows_counterclockwise: **Rescan button** - triggers an on-demand rescan of a host's currently
+  known open ports, picked up by whichever scanner last scanned it.
+- :alarm_clock: **Schedule Scans** - schedule a target/port spec to be scanned on a plain
+  interval ("every N minutes"), a fixed schedule (every day, specific days
+  of the week, or the Nth/last weekday of the month, all at a given time -
+  with a point-and-click builder for the common cases plus a raw
+  cron-expression field for anything else), or just once at a picked date
+  and time. A one-time schedule auto-disables itself after it fires
+  (kept, not deleted, for history) and can be re-armed to run again.
+  Uses the same underlying request queue as the rescan button.
+- :scroll: **Scan History** - every finished scan job (completed, failed, or
+  cancelled) across every scanner, searchable by target/ports/scanner
+  and filterable by status, showing how long it took and what it found
+  (hosts scanned, open ports, screenshots, TLS certificates). The
+  historical counterpart to the "Active scans" banner, which only
+  shows what's running right now.
+- :closed_lock_with_key: **Certificates overview** - every TLS certificate across the whole
+  fleet, sorted soonest-expiring first. Searchable by host, port, CN, or
+  issuer, plus a checkbox to show only already-expired certificates.
+- :shield: **Vulnerabilities overview** - every known CVE match (see vulnerability
+  correlation above) across the whole fleet in one sortable table - host,
+  port, CVE, severity, description - instead of having to check each
+  host's detail page individually.
+- :bar_chart: **Digest** - a fleet-wide "what changed" view (newly discovered hosts,
+  newly opened/closed ports) over the last 24 hours or 7 days.
+- :bell: **Webhooks** - fire a JSON POST (compatible with Slack/Discord incoming
+  webhooks) when a new host appears, a port newly opens, a certificate is
+  about to expire, or a saved search matches a new host.
+- :dna: **Vulnerability correlation** - a daily background job matches every
+  CPE (service/version fingerprint) nmap has detected against the NVD
+  vulnerability database and caches the result; the host detail page
+  shows known CVEs per port with severity-colored badges linking to the
+  NVD entry. Set `NVD_API_KEY` in `.env` to raise the sync rate limit
+  from 5 to 50 requests/30s (works fine without one, just slower for a
+  large number of distinct CPEs).
+- :robot: **Scanner agent management** - create/revoke API keys; revoking
+  invalidates the key without deleting that scanner's scan history. A
+  revoked agent can also be deleted from the list entirely - this only
+  clears the agent row itself, its past scan jobs/requests stay in the
+  database with the agent reference cleared, so scan history is never
+  lost. Agents are grouped into **Scanning** / **Idle** / **Revoked**
+  sections. Each agent reports its own version on every request, shown in
+  the table - useful for spotting a fleet where some scanners haven't
+  been upgraded. The table also shows each agent's current scan (target,
+  ports, elapsed time) or "idle", refreshed every 5 seconds.
+- :zap: **Active scans** - the same "what's running right now" information as
+  a fleet-wide banner on the main dashboard (rather than per-agent),
+  across every scanner and however the scan was triggered (manual
+  `scan`, `menu`, or the rescan/schedule queue). Hidden entirely when
+  nothing is running. Scans running under a `serve` scanner (its own
+  `POST /scans` API or the rescan/schedule queue) show a **Stop** button -
+  a `scan`/`menu` run has nothing checking for a stop signal while it's
+  running, so those can't be stopped remotely and show no button.
+- :no_entry_sign: **Scan excludes** (admin only) - IPs (single address, CIDR, or an
+  address range like `10.0.0.1-10.0.0.10`), ports/port ranges, or a
+  specific IP+port combination (e.g. `10.0.0.5:3389`) that a scanner will
+  never touch. Each exclude either applies to all scanners (the default)
+  or is scoped to one specific scanner in addition to the defaults -
+  useful since private IP ranges often repeat across scanners sitting in
+  different networks, so excluding `10.0.0.5` for one scanner shouldn't
+  also exclude an unrelated host with the same address elsewhere. Every
+  scanner fetches its effective list (defaults + its own scoped excludes)
+  fresh immediately before each scan (manual, menu, or queue-triggered) -
+  not just scans started from the dashboard - so a change here takes
+  effect on the very next scan.
+- :key: **API Tokens** (admin only) - manage tokens for external tools (see
+  "External API" below); separate from Scanner Agent keys.
+- :busts_in_silhouette: **Multi-user accounts with roles**:
+  - **admin** - everything, including user/agent/schedule/webhook/exclude
+    management. Always sees every scanner's results, regardless of any
+    restriction below.
+  - **operator** - can also rescan, tag hosts, and add comments; can't
+    touch scanner agents, schedules, webhooks, excludes, or other users.
+  - **user** - read-only.
+  - An admin can additionally restrict an operator/user account to only
+    see results from specific scanner agents (**Users → Edit access**) -
+    applies fleet-wide (dashboard, host detail, scan history/active/queue,
+    digest, vulnerabilities, certificates, scanner agents, schedules), not
+    just the main search. Leaving no scanners assigned means unrestricted
+    (today's default for every account).
+- :memo: **Audit log** (admin only) - who did what and when, for every
+  agent/schedule/tag/webhook/exclude/user/comment/rescan action plus login
+  activity, separate from the structured stdout logs meant for SIEM
+  ingestion.
+- :wastebasket: **Host retention** - hosts not seen (`last_seen_at`) in 180 days are
+  purged automatically (hourly check), along with all their history -
+  ports, screenshots, tags, comments, certificates. Configurable via
+  `HOST_RETENTION_DAYS` in `.env` (`0` disables it); every purge is
+  logged and shows up in the audit log.
+- :lock: **Login protection** - failed logins are rate-limited per username and
+  per source IP (5 attempts / 15 minutes).
+- :iphone: **Two-factor authentication** - optional TOTP-based 2FA (any authenticator
+  app: Google Authenticator, 1Password, Authy, etc.), set up per-account from
+  the username link in the header ("Account" page). Comes with one-time
+  recovery codes for when the device isn't available, and an admin can turn
+  a user's 2FA back off if they lose it (never turn it on for them - that
+  step is inherently self-service).
+- :gear: **Account preferences** - also on the Account page: default theme, accent
+  color (green, orange, or blue), how many hosts to show per page on the
+  main dashboard, whether to default to a specific scanner there instead of
+  "All Scanner", whether to show the Active Scans banner at all, and a
+  timezone + 12h/24h time format applied to every date/time shown
+  throughout the dashboard (defaults to the browser's own local
+  zone/locale if left unset). Saved to your account, so - unlike the quick
+  theme toggle or table column choices in the header, which are
+  per-browser - these follow you to a new browser or device.
 
 ## Quick start (Docker Compose)
 
@@ -318,154 +471,6 @@ this means a scan that's killed, cancelled, or crashes partway through
 doesn't lose everything - whatever hosts had already streamed in stay in
 the database. A host whose submission fails is logged and skipped; the
 rest of the scan keeps running.
-
-## Dashboard features
-
-- **Search** - free text across IP, hostname, service name/product,
-  banners, known CVE ids (matched against the CVE correlation cache - see
-  below), and text OCR'd from HTTP(S)/RDP screenshots (e.g. a login page's
-  wording that never appears in any banner or header); also accepts a
-  single IPv4 or IPv6 address, or a CIDR range of either (e.g.
-  `10.0.0.0/24` or `2001:db8::/32`), to match all hosts in that subnet.
-- **Facets & filters** - filter by port, service, or host tag (multi-select,
-  AND semantics: picking port 21 and 3389 means hosts with both open, not
-  either), OS family, device type, or scanner agent (also multi-select, via
-  a compact dropdown - useful once you're running more than one scanner,
-  e.g. to look at a couple of network segments in isolation), and a
-  last-seen date range; toggle "hide hosts without open ports" and "only
-  hosts with a screenshot"; paginated (50/page) so large networks stay
-  usable. Every filter combines with the free-text search box and with
-  each other.
-- **Grid or table view** - table view has sortable, show/hide-able columns
-  (hostname, open port count, last seen, screenshot, OS/device); your
-  choice of view and column layout is remembered per browser. Both views
-  support selecting multiple hosts to bulk-tag or bulk-rescan at once.
-- **Saved searches** - save the current filter combination by name; a
-  background check every 5 minutes fires a `saved_search.match` webhook
-  the first time a host newly starts matching (not repeatedly for hosts
-  that already matched).
-- **CSV export** - respects whatever filters are currently active. Choose
-  either a one-row-per-host summary (with an open-port count) or a
-  one-row-per-open-port detailed export (port/protocol/service columns) for
-  a flat asset-inventory shape.
-- **Host detail page** - open ports with banners/CPE/OS hints and known
-  CVEs (matched against detected service versions, synced daily from the
-  NVD database - see below), OS/device classification and MAC address
-  (when available - see "What each scan does" above), TLS certificates
-  (with expiry status), SSH host keys, HTTP(S) and RDP screenshots (with
-  detected technologies, response headers, and OCR'd screenshot text), a
-  full scan history timeline (with which scanner agent produced each
-  entry), a "changes since last scan" diff, host tags, and an append-only
-  comment log (each comment keeps its author and timestamp). Prev/next
-  buttons step through whichever filtered/sorted host list you came from
-  (including across a page boundary), so you can click through a search's
-  results without going back to the list each time.
-- **Rescan button** - triggers an on-demand rescan of a host's currently
-  known open ports, picked up by whichever scanner last scanned it.
-- **Schedule Scans** - schedule a target/port spec to be scanned on a plain
-  interval ("every N minutes"), a fixed schedule (every day, specific days
-  of the week, or the Nth/last weekday of the month, all at a given time -
-  with a point-and-click builder for the common cases plus a raw
-  cron-expression field for anything else), or just once at a picked date
-  and time. A one-time schedule auto-disables itself after it fires
-  (kept, not deleted, for history) and can be re-armed to run again.
-  Uses the same underlying request queue as the rescan button.
-- **Scan History** - every finished scan job (completed, failed, or
-  cancelled) across every scanner, searchable by target/ports/scanner
-  and filterable by status, showing how long it took and what it found
-  (hosts scanned, open ports, screenshots, TLS certificates). The
-  historical counterpart to the "Active scans" banner, which only
-  shows what's running right now.
-- **Certificates overview** - every TLS certificate across the whole
-  fleet, sorted soonest-expiring first. Searchable by host, port, CN, or
-  issuer, plus a checkbox to show only already-expired certificates.
-- **Vulnerabilities overview** - every known CVE match (see vulnerability
-  correlation above) across the whole fleet in one sortable table - host,
-  port, CVE, severity, description - instead of having to check each
-  host's detail page individually.
-- **Digest** - a fleet-wide "what changed" view (newly discovered hosts,
-  newly opened/closed ports) over the last 24 hours or 7 days.
-- **Webhooks** - fire a JSON POST (compatible with Slack/Discord incoming
-  webhooks) when a new host appears, a port newly opens, a certificate is
-  about to expire, or a saved search matches a new host.
-- **Vulnerability correlation** - a daily background job matches every
-  CPE (service/version fingerprint) nmap has detected against the NVD
-  vulnerability database and caches the result; the host detail page
-  shows known CVEs per port with severity-colored badges linking to the
-  NVD entry. Set `NVD_API_KEY` in `.env` to raise the sync rate limit
-  from 5 to 50 requests/30s (works fine without one, just slower for a
-  large number of distinct CPEs).
-- **Scanner agent management** - create/revoke API keys; revoking
-  invalidates the key without deleting that scanner's scan history. A
-  revoked agent can also be deleted from the list entirely - this only
-  clears the agent row itself, its past scan jobs/requests stay in the
-  database with the agent reference cleared, so scan history is never
-  lost. Agents are grouped into **Scanning** / **Idle** / **Revoked**
-  sections. Each agent reports its own version on every request, shown in
-  the table - useful for spotting a fleet where some scanners haven't
-  been upgraded. The table also shows each agent's current scan (target,
-  ports, elapsed time) or "idle", refreshed every 5 seconds.
-- **Active scans** - the same "what's running right now" information as
-  a fleet-wide banner on the main dashboard (rather than per-agent),
-  across every scanner and however the scan was triggered (manual
-  `scan`, `menu`, or the rescan/schedule queue). Hidden entirely when
-  nothing is running. Scans running under a `serve` scanner (its own
-  `POST /scans` API or the rescan/schedule queue) show a **Stop** button -
-  a `scan`/`menu` run has nothing checking for a stop signal while it's
-  running, so those can't be stopped remotely and show no button.
-- **Scan excludes** (admin only) - IPs (single address, CIDR, or an
-  address range like `10.0.0.1-10.0.0.10`), ports/port ranges, or a
-  specific IP+port combination (e.g. `10.0.0.5:3389`) that a scanner will
-  never touch. Each exclude either applies to all scanners (the default)
-  or is scoped to one specific scanner in addition to the defaults -
-  useful since private IP ranges often repeat across scanners sitting in
-  different networks, so excluding `10.0.0.5` for one scanner shouldn't
-  also exclude an unrelated host with the same address elsewhere. Every
-  scanner fetches its effective list (defaults + its own scoped excludes)
-  fresh immediately before each scan (manual, menu, or queue-triggered) -
-  not just scans started from the dashboard - so a change here takes
-  effect on the very next scan.
-- **API Tokens** (admin only) - manage tokens for external tools (see
-  "External API" below); separate from Scanner Agent keys.
-- **Multi-user accounts with roles**:
-  - **admin** - everything, including user/agent/schedule/webhook/exclude
-    management. Always sees every scanner's results, regardless of any
-    restriction below.
-  - **operator** - can also rescan, tag hosts, and add comments; can't
-    touch scanner agents, schedules, webhooks, excludes, or other users.
-  - **user** - read-only.
-  - An admin can additionally restrict an operator/user account to only
-    see results from specific scanner agents (**Users → Edit access**) -
-    applies fleet-wide (dashboard, host detail, scan history/active/queue,
-    digest, vulnerabilities, certificates, scanner agents, schedules), not
-    just the main search. Leaving no scanners assigned means unrestricted
-    (today's default for every account).
-- **Audit log** (admin only) - who did what and when, for every
-  agent/schedule/tag/webhook/exclude/user/comment/rescan action plus login
-  activity, separate from the structured stdout logs meant for SIEM
-  ingestion.
-- **Host retention** - hosts not seen (`last_seen_at`) in 180 days are
-  purged automatically (hourly check), along with all their history -
-  ports, screenshots, tags, comments, certificates. Configurable via
-  `HOST_RETENTION_DAYS` in `.env` (`0` disables it); every purge is
-  logged and shows up in the audit log.
-- **Login protection** - failed logins are rate-limited per username and
-  per source IP (5 attempts / 15 minutes).
-- **Two-factor authentication** - optional TOTP-based 2FA (any authenticator
-  app: Google Authenticator, 1Password, Authy, etc.), set up per-account from
-  the username link in the header ("Account" page). Comes with one-time
-  recovery codes for when the device isn't available, and an admin can turn
-  a user's 2FA back off if they lose it (never turn it on for them - that
-  step is inherently self-service).
-- **Account preferences** - also on the Account page: default theme, accent
-  color (green, orange, or blue), how many hosts to show per page on the
-  main dashboard, whether to default to a specific scanner there instead of
-  "All Scanner", whether to show the Active Scans banner at all, and a
-  timezone + 12h/24h time format applied to every date/time shown
-  throughout the dashboard (defaults to the browser's own local
-  zone/locale if left unset). Saved to your account, so - unlike the quick
-  theme toggle or table column choices in the header, which are
-  per-browser - these follow you to a new browser or device.
 
 ## External API (SOAR / enrichment integrations)
 
