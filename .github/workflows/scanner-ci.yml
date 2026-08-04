@@ -1,0 +1,53 @@
+name: Scanner CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "scanner/**"
+      - ".github/workflows/scanner-ci.yml"
+  pull_request:
+    paths:
+      - "scanner/**"
+      - ".github/workflows/scanner-ci.yml"
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    working-directory: scanner
+
+jobs:
+  build-vet-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: scanner/go.mod
+          cache-dependency-path: scanner/go.sum
+
+      - name: gofmt check
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      # gowitness/rdp/tlscert tests shell out to real external binaries
+      # (gowitness+Chrome, xfreerdp3+Xvfb+ImageMagick) or dial a real target
+      # (tlscert needs the webserver reachable on 127.0.0.1:443) and skip
+      # themselves - rather than failing - when the dependency isn't
+      # available, so this runner needs none of that set up. See CLAUDE.md.
+      - name: Test
+        run: go test ./...
