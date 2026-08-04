@@ -44,6 +44,11 @@ services:
       - /var/lib/postgresql/data
 
   webserver:
+    # Pulled from Docker Hub by default (built by .github/workflows/webserver-docker.yml
+    # on every push to master that touches server/**). `build:` stays here so
+    # `docker compose up --build` (or `docker compose build`) still builds and
+    # tags a local image from source instead, e.g. for testing unreleased changes.
+    image: benedelux/porttorch-server:latest
     build: ./server
     restart: unless-stopped
     depends_on:

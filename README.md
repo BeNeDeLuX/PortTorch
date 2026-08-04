@@ -199,14 +199,22 @@ Edit `.env` and set real values - at minimum, change `POSTGRES_PASSWORD`,
 `SESSION_SECRET` (`openssl rand -hex 32`), and `ADMIN_PASSWORD`:
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
 
-This builds the webserver image, starts PostgreSQL, runs the database
+This pulls the prebuilt webserver image from [Docker
+Hub](https://hub.docker.com/r/benedelux/porttorch-server) (published
+automatically by `.github/workflows/webserver-docker.yml` on every push to
+`master` that touches `server/**`), starts PostgreSQL, runs the database
 migrations, and seeds the initial admin login from `ADMIN_USERNAME`/
 `ADMIN_PASSWORD` - all automatically on boot. The webserver generates its
 own self-signed TLS certificate on first start (persisted in a volume, so
 it survives restarts).
+
+If you've made local changes to `/server` and want to run those instead of
+the published image, build from source with `docker compose up -d --build`
+(the `image:`/`build:` combo in `docker-compose.yml` means `--build`
+overrides the pulled image with a freshly built, identically-tagged one).
 
 Open **`https://<host>/`** and log in with the admin credentials from
 `.env`. Your browser will warn about the self-signed certificate the first
@@ -214,14 +222,15 @@ time - that's expected for a self-signed cert (see [Scanner
 configuration](#scanner-configuration) below for how to trust it from the
 scanner side instead of just clicking through).
 
-To update after pulling new changes:
+To update after a new release:
 
 ```bash
-docker compose up -d --build
+docker compose pull && docker compose up -d
 ```
 
-Migrations run automatically on every boot; only new/changed ones actually
-execute.
+(or `docker compose up -d --build` if you're running from a local checkout
+of the source instead). Migrations run automatically on every boot; only
+new/changed ones actually execute.
 
 ## Scanner installation
 
