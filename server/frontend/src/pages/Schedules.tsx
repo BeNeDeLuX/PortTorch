@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { api, Me, ScannerAgent, Schedule } from "../api";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";

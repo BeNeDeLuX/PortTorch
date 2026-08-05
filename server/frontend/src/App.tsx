@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router";
 import { api, Me } from "./api";
 import { applyTheme, hasStoredTheme } from "./lib/theme";
 import { applyAccent, hasStoredAccent } from "./lib/accent";

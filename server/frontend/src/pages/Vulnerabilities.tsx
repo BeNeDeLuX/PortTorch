@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { api, FleetVulnerability, Me } from "../api";
 import { cveSeverityClass } from "../lib/cveSeverity";
 import PageHeader from "../components/PageHeader";

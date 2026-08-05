@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { api, ExpiringCertificate, Me } from "../api";
 import { certExpiryStatus, certExpiryLabel } from "../lib/certExpiry";
 import PageHeader from "../components/PageHeader";

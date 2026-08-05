@@ -1,4 +1,4 @@
-import { Link, NavLink } from "react-router-dom";
+import { Link, NavLink } from "react-router";
 import { api, Me } from "../api";
 import Brand from "./Brand";
 import ThemeToggle from "./ThemeToggle";

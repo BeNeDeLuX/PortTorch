@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router";
 import { api, HostDetail as HostDetailData, HostFilters, Me } from "../api";
 import { certExpiryStatus, certExpiryLabel } from "../lib/certExpiry";
 import { cveSeverityClass } from "../lib/cveSeverity";
