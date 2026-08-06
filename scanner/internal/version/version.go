@@ -1,6 +1,8 @@
 // Package version holds the scanner's own version number - bumped by
-// hand on meaningful changes, since there's no release/tagging process
-// yet to derive it from automatically.
+// hand on meaningful changes for local/dev builds. Released builds (built
+// by .github/workflows/scanner-release.yml from a scanner-v* tag) override
+// this at build time via -ldflags "-X .../version.Version=<tag>", which
+// only works against a package-level var, not a const.
 package version
 
-const Version = "0.2.0"
+var Version = "0.2.0"

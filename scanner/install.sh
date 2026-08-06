@@ -3,23 +3,40 @@
 # PortTorch scanner installer - Debian (and Debian-derivatives) only for now.
 #
 # Installs masscan/nmap/gowitness/xfreerdp3/Xvfb/ImageMagick/tesseract,
-# builds the scanner binary from this checkout, grants masscan/nmap raw
-# socket capabilities, writes ~porttorch/.config/porttorch/config.yaml,
-# and sets up a systemd service running "porttorch serve" so rescans and
-# recurring schedules work without a human keeping a terminal open.
+# gets the porttorch binary (downloaded prebuilt, or built from this
+# checkout - see below), grants masscan/nmap raw socket capabilities,
+# writes ~porttorch/.config/porttorch/config.yaml, and sets up a systemd
+# service running "porttorch serve" so rescans and recurring schedules
+# work without a human keeping a terminal open.
 #
 # Usage: sudo ./install.sh   (run from inside the scanner/ checkout)
 #        sudo ./install.sh --rebuild-only   (after a "git pull" - just
 #          rebuilds the porttorch binary from the current checkout and
-#          restarts the service, skipping the apt-get/Go-toolchain/gowitness/
-#          config steps. Requires a prior full install to already exist.)
+#          restarts the service, skipping the apt-get/gowitness/config steps.
+#          Requires a prior full install to already exist.)
+#        sudo ./install.sh --from-source   (skip the prebuilt-binary download
+#          below even if the checkout is exactly at a released tag, and
+#          always build from source instead. Flags can be combined.)
+#
+# When this checkout's current commit is exactly a "scanner-vX.Y.Z" tag, the
+# porttorch binary is downloaded from that tag's GitHub Release instead of
+# being built locally (faster, no Go toolchain needed on this host at all) -
+# see .github/workflows/scanner-release.yml. Any other checkout state (a
+# branch, or commits ahead of the last tag) has no matching release, so this
+# always falls back to building from source - it never installs code
+# different from what's actually checked out here.
 
 set -euo pipefail
 
 REBUILD_ONLY=false
-if [[ "${1:-}" == "--rebuild-only" ]]; then
-  REBUILD_ONLY=true
-fi
+FORCE_FROM_SOURCE=false
+for arg in "$@"; do
+  case "$arg" in
+    --rebuild-only) REBUILD_ONLY=true ;;
+    --from-source) FORCE_FROM_SOURCE=true ;;
+    *) echo "unknown argument: $arg (supported: --rebuild-only, --from-source)" >&2; exit 1 ;;
+  esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -78,46 +95,108 @@ else
   install_optional tesseract-ocr
 fi
 
-# --- Go toolchain (needed to build; not needed at runtime afterward) ---
-# Checked both on $PATH and at /usr/local/go/bin directly - a prior run of
-# this script put it there, but that directory is only added to *this*
-# process's PATH below, not persisted anywhere, so plain "command -v go"
-# alone would look for it and always miss it on every re-run.
-need_go_install=true
-go_bin=""
-if command -v go >/dev/null 2>&1; then
-  go_bin="$(command -v go)"
-elif [[ -x /usr/local/go/bin/go ]]; then
-  go_bin="/usr/local/go/bin/go"
-fi
-if [[ -n "$go_bin" ]]; then
-  current_go="$("$go_bin" version | awk '{print $3}' | sed 's/^go//')"
-  if [[ "$(printf '%s\n%s\n' "$REQUIRED_GO_VERSION" "$current_go" | sort -V | head -1)" == "$REQUIRED_GO_VERSION" ]]; then
-    need_go_install=false
+# --- prebuilt-binary fast path (see header comment above) ---------------
+release_repo_slug() {
+  local url
+  url="$(git -c safe.directory="$SCRIPT_DIR" -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || true)"
+  [[ -n "$url" ]] || return 1
+  url="${url#git@github.com:}"
+  url="${url#https://github.com/}"
+  url="${url%.git}"
+  [[ "$url" == */* ]] || return 1
+  printf '%s' "$url"
+}
+
+download_release_binary() {
+  local tag="$1" arch="$2" repo bin_url sums_url tmp_bin tmp_sums expected actual
+  repo="$(release_repo_slug)" || { warn "couldn't determine GitHub repo from 'git remote get-url origin'"; return 1; }
+  bin_url="https://github.com/$repo/releases/download/$tag/porttorch-linux-$arch"
+  sums_url="https://github.com/$repo/releases/download/$tag/SHA256SUMS"
+  tmp_bin="$(mktemp)"; tmp_sums="$(mktemp)"
+  if ! curl -fsSL "$bin_url" -o "$tmp_bin"; then
+    rm -f "$tmp_bin" "$tmp_sums"; return 1
+  fi
+  if ! curl -fsSL "$sums_url" -o "$tmp_sums"; then
+    warn "downloaded $tag binary but couldn't fetch its SHA256SUMS - refusing to install an unverified binary"
+    rm -f "$tmp_bin" "$tmp_sums"; return 1
+  fi
+  expected="$(awk -v f="porttorch-linux-$arch" '$2 == f {print $1}' "$tmp_sums")"
+  actual="$(sha256sum "$tmp_bin" | awk '{print $1}')"
+  if [[ -z "$expected" || "$expected" != "$actual" ]]; then
+    warn "checksum mismatch for $tag's porttorch-linux-$arch - refusing to install it"
+    rm -f "$tmp_bin" "$tmp_sums"; return 1
+  fi
+  install -m 755 "$tmp_bin" "$BIN_PATH"
+  rm -f "$tmp_bin" "$tmp_sums"
+  return 0
+}
+
+BUILT_FROM_SOURCE=true
+if ! $FORCE_FROM_SOURCE; then
+  release_tag="$(git -c safe.directory="$SCRIPT_DIR" -C "$SCRIPT_DIR" describe --tags --exact-match --match 'scanner-v*' 2>/dev/null || true)"
+  if [[ -n "$release_tag" ]]; then
+    case "$(uname -m)" in
+      x86_64) release_arch=amd64 ;;
+      aarch64) release_arch=arm64 ;;
+      *) release_arch="" ;;
+    esac
+    if [[ -n "$release_arch" ]]; then
+      log "Checkout is exactly at release $release_tag - downloading the prebuilt $release_arch binary instead of building from source"
+      if download_release_binary "$release_tag" "$release_arch"; then
+        BUILT_FROM_SOURCE=false
+      else
+        warn "prebuilt binary download failed - falling back to building from source"
+      fi
+    fi
   fi
 fi
 
-if $need_go_install; then
-  case "$(uname -m)" in
-    x86_64) go_arch=amd64 ;;
-    aarch64) go_arch=arm64 ;;
-    *) die "unsupported architecture $(uname -m) for automatic Go install - install Go $REQUIRED_GO_VERSION+ yourself and re-run" ;;
-  esac
-  log "Installing Go $REQUIRED_GO_VERSION (apt's golang-go is usually too old for this project)"
-  tmp_tar="$(mktemp)"
-  curl -fsSL "https://go.dev/dl/go${REQUIRED_GO_VERSION}.linux-${go_arch}.tar.gz" -o "$tmp_tar"
-  rm -rf /usr/local/go
-  tar -C /usr/local -xzf "$tmp_tar"
-  rm -f "$tmp_tar"
-else
-  log "Go $current_go already satisfies the $REQUIRED_GO_VERSION+ requirement, skipping Go install"
-fi
-export PATH="/usr/local/go/bin:$PATH"
+# gowitness (below) always needs a Go toolchain on a full install, regardless
+# of whether porttorch itself was just downloaded.
+if $BUILT_FROM_SOURCE || ! $REBUILD_ONLY; then
+  # --- Go toolchain (needed to build; not needed at runtime afterward) ---
+  # Checked both on $PATH and at /usr/local/go/bin directly - a prior run of
+  # this script put it there, but that directory is only added to *this*
+  # process's PATH below, not persisted anywhere, so plain "command -v go"
+  # alone would look for it and always miss it on every re-run.
+  need_go_install=true
+  go_bin=""
+  if command -v go >/dev/null 2>&1; then
+    go_bin="$(command -v go)"
+  elif [[ -x /usr/local/go/bin/go ]]; then
+    go_bin="/usr/local/go/bin/go"
+  fi
+  if [[ -n "$go_bin" ]]; then
+    current_go="$("$go_bin" version | awk '{print $3}' | sed 's/^go//')"
+    if [[ "$(printf '%s\n%s\n' "$REQUIRED_GO_VERSION" "$current_go" | sort -V | head -1)" == "$REQUIRED_GO_VERSION" ]]; then
+      need_go_install=false
+    fi
+  fi
 
-# --- build the scanner binary -------------------------------------------
-log "Building porttorch -> $BIN_PATH"
-go build -o "$BIN_PATH" ./cmd/scanner
-chmod 755 "$BIN_PATH"
+  if $need_go_install; then
+    case "$(uname -m)" in
+      x86_64) go_arch=amd64 ;;
+      aarch64) go_arch=arm64 ;;
+      *) die "unsupported architecture $(uname -m) for automatic Go install - install Go $REQUIRED_GO_VERSION+ yourself and re-run" ;;
+    esac
+    log "Installing Go $REQUIRED_GO_VERSION (apt's golang-go is usually too old for this project)"
+    tmp_tar="$(mktemp)"
+    curl -fsSL "https://go.dev/dl/go${REQUIRED_GO_VERSION}.linux-${go_arch}.tar.gz" -o "$tmp_tar"
+    rm -rf /usr/local/go
+    tar -C /usr/local -xzf "$tmp_tar"
+    rm -f "$tmp_tar"
+  else
+    log "Go $current_go already satisfies the $REQUIRED_GO_VERSION+ requirement, skipping Go install"
+  fi
+  export PATH="/usr/local/go/bin:$PATH"
+fi
+
+# --- build the scanner binary (skipped if downloaded above) --------------
+if $BUILT_FROM_SOURCE; then
+  log "Building porttorch -> $BIN_PATH"
+  go build -o "$BIN_PATH" ./cmd/scanner
+  chmod 755 "$BIN_PATH"
+fi
 
 if $REBUILD_ONLY; then
   log "--rebuild-only: skipping gowitness rebuild, setcap, user/config/systemd-unit setup"
@@ -214,3 +293,9 @@ echo "  Config:        $CONFIG_PATH"
 echo "  Manual scan:   sudo -u $SERVICE_USER $BIN_PATH scan --config $CONFIG_PATH --target <ip/range> --ports <spec>"
 echo "  Re-run this script any time (e.g. after 'git pull') to rebuild and restart the service -"
 echo "  add --rebuild-only to skip the apt-get/gowitness/config/systemd steps and just do that."
+if $BUILT_FROM_SOURCE; then
+  echo "  This install was built from source. Checking out a 'scanner-vX.Y.Z' tag"
+  echo "  next time downloads a prebuilt binary instead (add --from-source to opt out)."
+else
+  echo "  This install used the prebuilt binary from release $release_tag."
+fi

@@ -241,12 +241,20 @@ any container network.
 ### Automated install (Debian)
 
 `scanner/install.sh` automates everything below for Debian (and
-Debian-derivatives): installs the required and optional packages, builds
-Go itself if the distro's `golang-go` is too old, builds the scanner and
-`gowitness` binaries, grants `masscan`/`nmap` their capabilities, prompts
-for the webserver URL/API key to write `config.yaml`, and installs a
-systemd service (`porttorch-scanner.service`) running `porttorch serve` so
-rescans and recurring schedules work unattended.
+Debian-derivatives): installs the required and optional packages, gets the
+`porttorch` binary, builds `gowitness`, grants `masscan`/`nmap` their
+capabilities, prompts for the webserver URL/API key to write
+`config.yaml`, and installs a systemd service (`porttorch-scanner.service`)
+running `porttorch serve` so rescans and recurring schedules work
+unattended.
+
+If the checkout is exactly at a `scanner-vX.Y.Z` tag, the `porttorch`
+binary is downloaded (checksum-verified) from that tag's GitHub Release
+instead of being built - no Go toolchain needed on the target host at all.
+Any other checkout (a branch, or commits ahead of the last tag) always
+builds from source instead, same as before; `gowitness` is still always
+built from source since it isn't part of this project's own releases. Pass
+`--from-source` to force a local build even at a tagged release.
 
 ```bash
 git clone <this repo> && cd <this repo>/scanner
