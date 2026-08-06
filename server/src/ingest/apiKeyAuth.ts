@@ -17,16 +17,35 @@ export function hashApiKey(key: string): string {
   return crypto.createHash("sha256").update(key, "utf8").digest("hex");
 }
 
+// Plain string ops instead of /^Bearer\s+(.+)$/i - that regex was
+// vulnerable to polynomial ReDoS on attacker-controlled header input: \s+
+// and .+ overlap on whitespace characters, so a header engineered to fail
+// the match only at the very end (confirmed by testing - e.g. a long run
+// of spaces followed by a newline) forces the engine to backtrack through
+// every possible split between the two quantifiers before giving up,
+// O(n^2) in the header length. Shared by tokenAuth.ts for the same reason.
+export function parseBearerToken(header: string): string | null {
+  const prefix = "bearer";
+  if (header.length <= prefix.length || header.slice(0, prefix.length).toLowerCase() !== prefix) {
+    return null;
+  }
+  const rest = header.slice(prefix.length);
+  const afterLeadingSpace = rest.trimStart();
+  if (afterLeadingSpace.length === rest.length) return null; // no whitespace after "Bearer"
+  const token = afterLeadingSpace.trimEnd();
+  return token.length > 0 ? token : null;
+}
+
 export async function apiKeyAuth(req: Request, res: Response, next: NextFunction) {
   const header = req.header("authorization") ?? "";
-  const match = /^Bearer\s+(.+)$/i.exec(header);
-  if (!match) {
+  const providedKey = parseBearerToken(header);
+  if (!providedKey) {
     logger.warn({ event: "auth.api_key_missing", source_ip: req.ip, path: req.path }, "Ingest request without bearer api key");
     res.status(401).json({ error: "missing bearer api key" });
     return;
   }
 
-  const providedHash = hashApiKey(match[1]);
+  const providedHash = hashApiKey(providedKey);
   const agent = await db
     .selectFrom("scanner_agents")
     .select(["id", "name", "api_key_hash"])

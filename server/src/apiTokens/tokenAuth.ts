@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { db } from "../db";
 import { logger } from "../logger";
-import { hashApiKey } from "../ingest/apiKeyAuth";
+import { hashApiKey, parseBearerToken } from "../ingest/apiKeyAuth";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -21,14 +21,14 @@ declare global {
 // keys are scoped to a specific scanner submitting its own scan results).
 export async function tokenAuth(req: Request, res: Response, next: NextFunction) {
   const header = req.header("authorization") ?? "";
-  const match = /^Bearer\s+(.+)$/i.exec(header);
-  if (!match) {
+  const providedToken = parseBearerToken(header);
+  if (!providedToken) {
     logger.warn({ event: "auth.api_token_missing", source_ip: req.ip, path: req.path }, "API request without bearer token");
     res.status(401).json({ error: "missing bearer api token" });
     return;
   }
 
-  const providedHash = hashApiKey(match[1]);
+  const providedHash = hashApiKey(providedToken);
   const token = await db
     .selectFrom("api_tokens")
     .select(["id", "name"])

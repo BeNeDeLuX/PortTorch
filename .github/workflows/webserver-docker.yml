@@ -8,6 +8,9 @@ on:
       - ".github/workflows/webserver-docker.yml"
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest

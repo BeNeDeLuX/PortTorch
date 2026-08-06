@@ -12,6 +12,9 @@ on:
       - ".github/workflows/scanner-ci.yml"
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: scanner

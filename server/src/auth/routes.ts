@@ -427,10 +427,21 @@ authRouter.post("/2fa/confirm", requireAuth, asyncHandler(async (req, res) => {
     res.status(400).json({ error: "call /auth/2fa/setup first" });
     return;
   }
+
+  const confirmIpKey = `ip:${req.ip}`;
+  const confirmKey = `totpsetup:${user.username}`;
+  if (isLockedOut(confirmIpKey) || isLockedOut(confirmKey)) {
+    res.status(429).json({ error: "too many failed 2FA attempts, try again in 15 minutes" });
+    return;
+  }
   if (!verifyToken(user.totp_secret, parsed.data.code)) {
+    recordFailure(confirmIpKey);
+    recordFailure(confirmKey);
     res.status(400).json({ error: "invalid code" });
     return;
   }
+  recordSuccess(confirmIpKey);
+  recordSuccess(confirmKey);
 
   const recoveryCodes = generateRecoveryCodes();
   await db
@@ -463,10 +474,21 @@ authRouter.post("/2fa/disable", requireAuth, asyncHandler(async (req, res) => {
     res.status(409).json({ error: "2FA is not enabled" });
     return;
   }
+
+  const disableIpKey = `ip:${req.ip}`;
+  const disableKey = `disable2fa:${user.username}`;
+  if (isLockedOut(disableIpKey) || isLockedOut(disableKey)) {
+    res.status(429).json({ error: "too many failed attempts, try again in 15 minutes" });
+    return;
+  }
   if (!(await verifyPassword(parsed.data.password, user.password_hash))) {
+    recordFailure(disableIpKey);
+    recordFailure(disableKey);
     res.status(401).json({ error: "invalid password" });
     return;
   }
+  recordSuccess(disableIpKey);
+  recordSuccess(disableKey);
 
   await db
     .updateTable("users")
@@ -496,10 +518,21 @@ authRouter.post("/2fa/recovery-codes/regenerate", requireAuth, asyncHandler(asyn
     res.status(409).json({ error: "2FA is not enabled" });
     return;
   }
+
+  const regenIpKey = `ip:${req.ip}`;
+  const regenKey = `totpregen:${user.username}`;
+  if (isLockedOut(regenIpKey) || isLockedOut(regenKey)) {
+    res.status(429).json({ error: "too many failed 2FA attempts, try again in 15 minutes" });
+    return;
+  }
   if (!verifyToken(user.totp_secret, parsed.data.code)) {
+    recordFailure(regenIpKey);
+    recordFailure(regenKey);
     res.status(400).json({ error: "invalid code" });
     return;
   }
+  recordSuccess(regenIpKey);
+  recordSuccess(regenKey);
 
   const recoveryCodes = generateRecoveryCodes();
   await db
