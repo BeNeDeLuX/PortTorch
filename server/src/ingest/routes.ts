@@ -11,6 +11,7 @@ import { apiKeyAuth } from "./apiKeyAuth";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { dispatchWebhook } from "../webhooks/dispatch";
+import { zIp } from "../lib/zodIp";
 
 export const ingestRouter = Router();
 ingestRouter.use(asyncHandler(apiKeyAuth));
@@ -171,7 +172,7 @@ const ingestHostsSchema = z.object({
   scanJobId: z.string().uuid(),
   hosts: z.array(
     z.object({
-      ip: z.string().ip(),
+      ip: zIp(),
       hostname: z.string().optional(),
       osName: z.string().optional(),
       osFamily: z.string().optional(),
@@ -349,7 +350,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 
 const screenshotFieldsSchema = z.object({
   scanJobId: z.string().uuid(),
-  hostIp: z.string().ip(),
+  hostIp: zIp(),
   port: z.coerce.number().int().min(1).max(65535),
   url: z.string().min(1),
   httpStatus: z.coerce.number().int().optional(),
@@ -459,7 +460,7 @@ ingestRouter.post("/screenshots", upload.single("image"), asyncHandler(async (re
 
 const rdpScreenshotFieldsSchema = z.object({
   scanJobId: z.string().uuid(),
-  hostIp: z.string().ip(),
+  hostIp: zIp(),
   port: z.coerce.number().int().min(1).max(65535),
   ocrText: z.string().optional(),
 });
@@ -611,7 +612,7 @@ ingestRouter.patch("/scan-requests/:id", asyncHandler(async (req, res) => {
 
 const tlsCertificateFieldsSchema = z.object({
   scanJobId: z.string().uuid(),
-  hostIp: z.string().ip(),
+  hostIp: zIp(),
   port: z.number().int().min(1).max(65535),
   subjectCn: z.string().optional(),
   issuerCn: z.string().optional(),

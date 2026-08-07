@@ -7,6 +7,7 @@ import { recordAudit } from "../audit/log";
 import { requestRescan } from "../rescan";
 import { requestScanCancel } from "../scanCancel";
 import { tokenAuth } from "../apiTokens/tokenAuth";
+import { zIp } from "../lib/zodIp";
 
 // External, non-interactive API for SOAR/enrichment tools - token auth
 // (tokenAuth), not session auth or scanner API keys. Kept as its own
@@ -26,7 +27,7 @@ integrationsRouter.use(tokenAuth);
 // on one network) is unambiguous without it - this never breaks an
 // existing caller that doesn't know the concept yet.
 const lookupSchema = z.object({
-  ip: z.string().ip().optional(),
+  ip: zIp().optional(),
   hostname: z.string().min(1).optional(),
   scannerAgent: z.string().min(1).optional(),
 });
@@ -55,7 +56,7 @@ integrationsRouter.get("/hosts/lookup", asyncHandler(async (req, res) => {
 }));
 
 const rescanSchema = z.object({
-  ip: z.string().ip().optional(),
+  ip: zIp().optional(),
   hostname: z.string().min(1).optional(),
   scannerAgent: z.string().min(1).optional(),
 });
@@ -106,7 +107,7 @@ integrationsRouter.post("/hosts/rescan", asyncHandler(async (req, res) => {
 }));
 
 const cancelScanSchema = z.object({
-  ip: z.string().ip().optional(),
+  ip: zIp().optional(),
   hostname: z.string().min(1).optional(),
   scannerAgent: z.string().min(1).optional(),
 });
