@@ -30,6 +30,12 @@ jobs:
     steps:
       - name: Resolve tag
         id: tag
+        # Overrides the job-level "scanner" default: this runs before
+        # Checkout below, so that directory doesn't exist yet on a fresh
+        # runner - a real failure caught by actually running this workflow,
+        # not just reading it ("No such file or directory" trying to start
+        # bash in scanner/).
+        working-directory: .
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           case "$TAG" in
