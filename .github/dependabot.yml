@@ -1,0 +1,63 @@
+version: 2
+updates:
+  # Routine (non-security) dependency updates - Dependabot's separate
+  # security-alert PRs (what fixed the npm/go vulnerabilities earlier this
+  # session) are unaffected by anything below and keep firing regardless,
+  # since a security fix can't wait for a weekly schedule.
+  #
+  # Minor/patch bumps are grouped into one PR per ecosystem per week -
+  # low-risk, safe to review/merge in bulk. Major bumps are deliberately
+  # left out of the group (Dependabot only groups the update-types listed,
+  # so majors still open as their own individual PR) rather than ignored
+  # outright - ignoring them would just recreate the exact problem this
+  # file exists to prevent: frontend/vite drifted 3 majors behind (5.x vs.
+  # the 8.x this session moved it to) before anything surfaced it. An
+  # individual major-bump PR is a visible backlog item that needs a human
+  # look (and often real testing, per this session's vite/react-router
+  # moves) rather than a blind merge - but it's still visible, not hidden.
+
+  # Webserver backend (server/package.json)
+  - package-ecosystem: "npm"
+    directory: "/server"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # Dashboard frontend (server/frontend/package.json) - separate npm
+  # project, own lockfile, so its own dependabot entry.
+  - package-ecosystem: "npm"
+    directory: "/server/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # Scanner (Go module)
+  - package-ecosystem: "gomod"
+    directory: "/scanner"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # Webserver Docker base image (server/Dockerfile)
+  - package-ecosystem: "docker"
+    directory: "/server"
+    schedule:
+      interval: "weekly"
+
+  # Actions used in .github/workflows/*.yml
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]
