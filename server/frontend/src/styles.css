@@ -1582,6 +1582,59 @@ th {
   font-weight: 600;
 }
 
+.scan-phase-2 {
+  margin: 0 0 1rem;
+}
+
+.scan-phase-2-label {
+  margin: 0 0 0.4rem;
+  font-weight: 600;
+}
+
+.scan-activity-checklist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.scan-activity-checklist li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.scan-activity-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+  flex-shrink: 0;
+}
+
+.scan-activity-checklist li.seen {
+  color: var(--text);
+}
+
+.scan-activity-checklist li.seen .scan-activity-dot {
+  background: var(--muted);
+  border-color: var(--muted);
+}
+
+.scan-activity-checklist li.active {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.scan-activity-checklist li.active .scan-activity-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
 .scan-phase-detail {
   color: var(--muted);
   font-size: 0.9rem;
