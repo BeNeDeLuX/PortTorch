@@ -190,8 +190,8 @@ This brings up the webserver + PostgreSQL. You still need at least one
 scanner (see below) to actually populate it with data.
 
 ```bash
-git clone <this-repo>
-cd porttorch
+git clone https://github.com/BeNeDeLuX/PortTorch.git
+cd PortTorch
 cp .env.example .env
 ```
 
@@ -249,7 +249,7 @@ built from source since it isn't part of this project's own releases. Pass
 `--from-source` to force a local build even at a tagged release.
 
 ```bash
-git clone <this repo> && cd <this repo>/scanner
+git clone https://github.com/BeNeDeLuX/PortTorch.git && cd PortTorch/scanner
 sudo ./install.sh
 ```
 
