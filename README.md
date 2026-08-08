@@ -1,5 +1,7 @@
 # PortTorch
 
+![PortTorch Logo](server/frontend/public/porttorch-logo-transparent.svg)
+
 [![License](https://img.shields.io/github/license/BeNeDeLuX/PortTorch)](https://github.com/BeNeDeLuX/PortTorch/blob/master/LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/BeNeDeLuX/PortTorch)](https://github.com/BeNeDeLuX/PortTorch/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/BeNeDeLuX/PortTorch)](https://github.com/BeNeDeLuX/PortTorch/commits/master/)
@@ -13,7 +15,7 @@
 > documentation - was built entirely with AI (Claude Code), with no
 > hand-written code. Review it yourself before relying on it, especially
 > for anything security-sensitive.
-
+## Screenshots
 ![Scan results dashboard](screenshots/PortTorch_scan_results.png)
 
 ![Host detail page](screenshots/PortTorch_host_details.png)
