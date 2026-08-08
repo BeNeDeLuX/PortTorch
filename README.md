@@ -222,15 +222,7 @@ time - that's expected for a self-signed cert (see [Scanner
 configuration](#scanner-configuration) below for how to trust it from the
 scanner side instead of just clicking through).
 
-To update after a new release:
-
-```bash
-docker compose pull && docker compose up -d
-```
-
-(or `docker compose up -d --build` if you're running from a local checkout
-of the source instead). Migrations run automatically on every boot; only
-new/changed ones actually execute.
+See [Updating](#updating) below for how to pick up a new release later.
 
 ## Scanner installation
 
@@ -262,10 +254,9 @@ sudo ./install.sh
 ```
 
 Create the scanner agent first (**Dashboard → Scanner Agents → Create**)
-so you have an API key ready when the script asks for it. Re-run the
-script any time (e.g. after `git pull`) to rebuild and restart the
-service - it leaves an existing `config.yaml` untouched rather than
-prompting again. Other distros still need the manual steps below.
+so you have an API key ready when the script asks for it. Other distros
+still need the manual steps below. See [Updating](#updating) below for
+how to pick up a new version later.
 
 ### Manual install (other distros, or running without systemd)
 
@@ -488,6 +479,56 @@ this means a scan that's killed, cancelled, or crashes partway through
 doesn't lose everything - whatever hosts had already streamed in stay in
 the database. A host whose submission fails is logged and skipped; the
 rest of the scan keeps running.
+
+## Updating
+
+Webserver and scanner are versioned and updated independently (see
+[Versioning](#versioning) below) - updating one doesn't require updating
+the other, and different scanners can run different versions against the
+same webserver.
+
+### Webserver
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+Pulls the latest published image and recreates the `webserver` container
+(briefly restarting it; `postgres` is untouched unless its own pinned
+image version changed). Database migrations run automatically on every
+boot - only new/changed ones actually execute, so this is safe to run
+repeatedly, including against an already-up-to-date install.
+
+If you're running from a local checkout of the source instead of the
+published image (see [Quick start](#quick-start-docker-compose) above),
+`git pull` first, then `docker compose up -d --build` instead - the
+`image:`/`build:` combo in `docker-compose.yml` makes `--build` override
+the pulled image with a freshly built, identically-tagged one.
+
+### Scanner
+
+```bash
+cd <scanner checkout>
+git pull
+sudo ./install.sh --rebuild-only
+```
+
+`--rebuild-only` skips the apt-get/gowitness/config/systemd-unit steps
+from a full install and just gets the current `porttorch` binary -
+downloaded from that commit's GitHub Release if the checkout is exactly
+at a `scanner-vX.Y.Z` tag, otherwise built from source (see [Automated
+install](#automated-install-debian) above) - and restarts
+`porttorch-scanner.service`. Drop `--rebuild-only` (a plain `sudo
+./install.sh`) instead if the update also needs new required/optional
+system packages (a fresh `git pull` that added a new dependency, for
+example) - it's always safe to re-run, since it leaves an existing
+`config.yaml` untouched rather than prompting again.
+
+To move to a specific released version rather than whatever's on the
+branch tip: `git fetch --tags && git checkout scanner-vX.Y.Z` before
+running the installer - that's what makes `--rebuild-only` (or a full
+install) take the prebuilt-binary download path instead of building from
+source.
 
 ## External API (SOAR / enrichment integrations)
 
