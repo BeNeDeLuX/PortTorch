@@ -16,9 +16,9 @@
 > hand-written code. Review it yourself before relying on it, especially
 > for anything security-sensitive.
 ## Screenshots
-![Scan results dashboard](screenshots/PortTorch_scan_results.png)
+![Scan results dashboard](.screenshots/PortTorch_scan_results.png)
 
-![Host detail page](screenshots/PortTorch_host_details.png)
+![Host detail page](.screenshots/PortTorch_host_details.png)
 
 > **Disclaimer:** This entire project - scanner, webserver, dashboard, and
 > documentation - was built entirely with AI (Claude Code), with no
