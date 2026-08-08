@@ -518,7 +518,10 @@ export const api = {
   vulnerabilities: () => request<FleetVulnerability[]>("/api/vulnerabilities"),
   digest: (from: string, to: string) =>
     request<DigestResult>(`/api/digest?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
-  trends: (days: number) => request<TrendsResult>(`/api/trends?days=${days}`),
+  trends: (days: number, scannerAgentIds: string[] = []) =>
+    request<TrendsResult>(
+      `/api/trends?days=${days}${scannerAgentIds.length ? `&scannerAgentId=${scannerAgentIds.join(",")}` : ""}`
+    ),
   audit: (limit = 200, q = "", from = "", until = "") =>
     request<AuditEntry[]>(
       `/api/audit?limit=${limit}${q ? `&q=${encodeURIComponent(q)}` : ""}${from ? `&from=${from}` : ""}${

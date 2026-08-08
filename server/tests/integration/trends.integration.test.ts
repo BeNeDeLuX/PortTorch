@@ -111,4 +111,27 @@ describe("GET /api/trends", () => {
     const res = await request(getApp()).get("/api/trends");
     expect(res.status).toBe(401);
   });
+
+  it("the scannerAgentId filter scopes an unrestricted admin down to just the picked scanner(s)", async () => {
+    const onlyA = await adminClient.get("/api/trends").query({ days: 7, scannerAgentId: agentA.id });
+    const todayA = onlyA.body.series.find((d: { date: string }) => d.date === todayKey());
+    expect(todayA.newHosts).toBe(1);
+    expect(todayA.scans).toBe(1);
+    expect(todayA.openPorts).toBe(1);
+
+    const both = await adminClient.get("/api/trends").query({ days: 7, scannerAgentId: `${agentA.id},${agentB.id}` });
+    const todayBoth = both.body.series.find((d: { date: string }) => d.date === todayKey());
+    expect(todayBoth.newHosts).toBeGreaterThanOrEqual(2);
+  });
+
+  it("the scannerAgentId filter can only narrow a restricted session, never widen it past agentA", async () => {
+    // restrictedOperator is scoped to agentA only - explicitly asking for
+    // agentB too must not leak its data in (the session restriction and
+    // the picked filter are AND'd, not OR'd).
+    const res = await restrictedClient.get("/api/trends").query({ days: 7, scannerAgentId: `${agentA.id},${agentB.id}` });
+    const today = res.body.series.find((d: { date: string }) => d.date === todayKey());
+    expect(today.newHosts).toBe(1);
+    expect(today.scans).toBe(1);
+    expect(today.openPorts).toBe(1);
+  });
 });

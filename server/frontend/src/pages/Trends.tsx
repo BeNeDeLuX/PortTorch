@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, Me, TrendsResult } from "../api";
+import { api, Me, ScannerAgent, TrendsResult } from "../api";
 import PageHeader from "../components/PageHeader";
+import ScannerMultiSelect from "../components/ScannerMultiSelect";
 
 type SeriesKey = "totalHosts" | "newHosts" | "scans" | "openPorts";
 
@@ -184,14 +185,20 @@ export default function Trends({ me, onLogout }: { me: Me; onLogout: () => void 
   const [trends, setTrends] = useState<TrendsResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [showTable, setShowTable] = useState(false);
+  const [agents, setAgents] = useState<ScannerAgent[]>([]);
+  const [scannerFilterIds, setScannerFilterIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    api.agents().then(setAgents);
+  }, []);
 
   useEffect(() => {
     setLoading(true);
     api
-      .trends(days)
+      .trends(days, scannerFilterIds)
       .then(setTrends)
       .finally(() => setLoading(false));
-  }, [days]);
+  }, [days, scannerFilterIds]);
 
   const formatDateShort = useMemo(
     () => (date: string) => {
@@ -218,8 +225,17 @@ export default function Trends({ me, onLogout }: { me: Me; onLogout: () => void 
           ))}
         </div>
         <div className="list-controls-filters">
-          <button className="link-button" onClick={() => setShowTable((v) => !v)}>
-            {showTable ? "View as chart" : "View as table"}
+          <label className="hide-empty-toggle">
+            Scanner
+            <ScannerMultiSelect agents={agents} selectedIds={scannerFilterIds} onChange={setScannerFilterIds} align="right" />
+          </label>
+        </div>
+        <div className="view-toggle">
+          <button className={!showTable ? "active" : ""} onClick={() => setShowTable(false)}>
+            Chart
+          </button>
+          <button className={showTable ? "active" : ""} onClick={() => setShowTable(true)}>
+            Table
           </button>
         </div>
       </div>

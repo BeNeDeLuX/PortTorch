@@ -17,6 +17,17 @@ function parseDays(value: unknown): number {
   return Math.min(n, MAX_DAYS);
 }
 
+// Comma-joined, same convention as the Dashboard's own scannerAgentId
+// filter (see CLAUDE.md's "Database shape" section) - kept as its own
+// independent AND'd condition alongside the session restriction below
+// (getAllowedScannerAgentIds), not merged into one array, so a restricted
+// session narrowing further with this filter can only ever narrow, never
+// widen past what the restriction already allows.
+function parseScannerAgentIds(value: unknown): string[] {
+  if (typeof value !== "string" || !value.trim()) return [];
+  return value.split(",").map((v) => v.trim()).filter(Boolean);
+}
+
 interface DailyCountRow {
   date: Date;
   count: string | number;
@@ -50,6 +61,8 @@ trendsRouter.get("/", asyncHandler(async (req, res) => {
   const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const since = new Date(todayUTC.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
   const allowed = getAllowedScannerAgentIds(req);
+  const filterIds = parseScannerAgentIds(req.query.scannerAgentId);
+  const needsHostJoin = allowed !== null || filterIds.length > 0;
 
   const [newHostsRows, totalHostsBefore, scanRows, openPortRows] = await Promise.all([
     sql<DailyCountRow>`
@@ -57,6 +70,7 @@ trendsRouter.get("/", asyncHandler(async (req, res) => {
       FROM hosts
       WHERE first_seen_at >= ${since.toISOString()}
         ${allowed ? sql`AND scanner_agent_id = ANY(${allowed})` : sql``}
+        ${filterIds.length > 0 ? sql`AND scanner_agent_id = ANY(${filterIds})` : sql``}
       GROUP BY 1
       ORDER BY 1
     `.execute(db),
@@ -69,6 +83,7 @@ trendsRouter.get("/", asyncHandler(async (req, res) => {
       .select(({ fn }) => fn.countAll<number>().as("count"))
       .where("first_seen_at", "<", since)
       .$if(allowed !== null, (qb) => qb.where("scanner_agent_id", "in", allowed!))
+      .$if(filterIds.length > 0, (qb) => qb.where("scanner_agent_id", "in", filterIds))
       .executeTakeFirstOrThrow(),
 
     sql<DailyCountRow>`
@@ -76,6 +91,7 @@ trendsRouter.get("/", asyncHandler(async (req, res) => {
       FROM scan_jobs
       WHERE started_at >= ${since.toISOString()}
         ${allowed ? sql`AND scanner_agent_id = ANY(${allowed})` : sql``}
+        ${filterIds.length > 0 ? sql`AND scanner_agent_id = ANY(${filterIds})` : sql``}
       GROUP BY 1
       ORDER BY 1
     `.execute(db),
@@ -83,9 +99,10 @@ trendsRouter.get("/", asyncHandler(async (req, res) => {
     sql<DailyCountRow>`
       SELECT date_trunc('day', hpo.observed_at)::date AS date, count(DISTINCT (hpo.host_id, hpo.port, hpo.protocol)) AS count
       FROM host_port_observations hpo
-      ${allowed ? sql`JOIN hosts h ON h.id = hpo.host_id` : sql``}
+      ${needsHostJoin ? sql`JOIN hosts h ON h.id = hpo.host_id` : sql``}
       WHERE hpo.state = 'open' AND hpo.observed_at >= ${since.toISOString()}
         ${allowed ? sql`AND h.scanner_agent_id = ANY(${allowed})` : sql``}
+        ${filterIds.length > 0 ? sql`AND h.scanner_agent_id = ANY(${filterIds})` : sql``}
       GROUP BY 1
       ORDER BY 1
     `.execute(db),
