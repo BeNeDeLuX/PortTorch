@@ -1,9 +1,11 @@
-# Pinned explicitly so the project directory can be renamed (it was
-# originally "claude-code", the repo folder name Compose would otherwise
-# derive this from) without Compose creating a second, empty set of
-# containers/volumes/network under a new name - existing data stays
-# attached regardless of what the directory itself is called.
-name: claude-code
+# Pinned explicitly so the project directory can be renamed without Compose
+# creating a second, empty set of containers/volumes/network under a new
+# name - existing data stays attached regardless of what the directory
+# itself is called. (Previously "claude-code", an artifact of an old
+# checkout path that made every container/volume name misleading about
+# which project they belonged to - renamed since there was no real data
+# in those volumes yet to carry forward.)
+name: porttorch
 
 services:
   postgres:
