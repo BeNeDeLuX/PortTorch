@@ -8,6 +8,22 @@
   --accent: #35d07f;
   --danger: #ff6b6b;
   --warning: #f0b429;
+  /* Dataviz skill's validated 3-slot categorical palette (blue/orange/aqua),
+     dark-mode steps - re-validated against this app's actual --bg (#0b0f14),
+     not the skill's own default dark surface, via
+     scripts/validate_palette.js: all checks pass. */
+  --chart-series-1: #3987e5;
+  --chart-series-2: #d95926;
+  --chart-series-3: #199e70;
+  /* Single-series "headline" charts (Trends' Total hosts) deliberately do
+     NOT use --accent: --accent is user-selectable (green/orange/blue, see
+     Account preferences) and orange/blue both collide with chart-series-2/1
+     above - a blue-accent user would see "Total hosts" and "New hosts"
+     rendered in the exact same hue across two unrelated charts, coincidental
+     color identity the dataviz skill rules against. Violet (categorical
+     slot 7) is distinct from every accent choice and from all 3 activity
+     series - validated standalone via scripts/validate_palette.js. */
+  --chart-headline: #9085e9;
 }
 
 :root[data-theme="light"] {
@@ -20,6 +36,16 @@
   --accent: #1f9d5a;
   --danger: #c0392b;
   --warning: #96690a;
+  /* Same palette's light-mode steps - validated against this app's actual
+     --bg (#f4f6f8). Contrast vs surface WARNs for series-2/3 (2.95/2.60,
+     just under the 3:1 target) - the relief rule applies here: the trend
+     legend and tooltip both carry a text label alongside every swatch
+     (never color-only identity), and the table-view toggle is the full
+     relief valve. */
+  --chart-series-1: #2a78d6;
+  --chart-series-2: #eb6834;
+  --chart-series-3: #1baf7a;
+  --chart-headline: #4a3aa7;
 }
 
 /* Same specificity as the data-theme rules above (one :root + one
@@ -1369,4 +1395,109 @@ th {
 
 .active-scan-excludes {
   flex-basis: 100%;
+}
+
+/* Trends page charts (src/pages/Trends.tsx) - plain inline SVG, no chart
+   library. See the dataviz skill: gridlines/axes are one hairline step off
+   the panel surface, lines are 2px, the end-marker gets a 2px ring in the
+   panel color so it stays legible crossing the line, and text (legend/
+   tooltip/axis) always uses text tokens, never a series color, so identity
+   comes from the swatch beside it, not the text itself. */
+.trend-chart {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem 1rem 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.trend-hero {
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: var(--text);
+  margin-left: 0.5rem;
+}
+
+.trend-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.trend-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.trend-legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 3px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.trend-gridline {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.trend-axis {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.trend-axis-label {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+.trend-crosshair {
+  stroke: var(--muted);
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+.trend-tooltip {
+  position: absolute;
+  top: 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.8rem;
+  pointer-events: none;
+  min-width: 140px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.trend-tooltip-date {
+  color: var(--muted);
+  margin-bottom: 0.3rem;
+}
+
+.trend-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  justify-content: space-between;
+}
+
+.trend-tooltip-label {
+  color: var(--muted);
+  margin-right: auto;
+}
+
+.trend-tooltip-value {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.table-scroll {
+  overflow-x: auto;
 }

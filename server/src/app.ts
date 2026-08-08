@@ -20,6 +20,7 @@ import { certificatesRouter } from "./certificates/routes";
 import { vulnerabilitiesRouter } from "./vulnerabilities/routes";
 import { usersRouter } from "./users/routes";
 import { digestRouter } from "./digest/routes";
+import { trendsRouter } from "./trends/routes";
 import { webhooksRouter } from "./webhooks/routes";
 import { auditRouter } from "./audit/routes";
 import { excludesRouter } from "./excludes/routes";
@@ -69,6 +70,7 @@ export function buildApp() {
   app.use("/api/vulnerabilities", vulnerabilitiesRouter);
   app.use("/api/users", usersRouter);
   app.use("/api/digest", digestRouter);
+  app.use("/api/trends", trendsRouter);
   app.use("/api/webhooks", webhooksRouter);
   app.use("/api/audit", auditRouter);
   app.use("/api/excludes", excludesRouter);

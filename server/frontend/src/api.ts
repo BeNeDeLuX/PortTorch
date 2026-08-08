@@ -245,6 +245,12 @@ export interface DigestResult {
   generatedAt: string;
 }
 
+export interface TrendsResult {
+  days: number;
+  since: string;
+  series: Array<{ date: string; newHosts: number; totalHosts: number; scans: number; openPorts: number }>;
+}
+
 export interface FleetVulnerability {
   host_id: string;
   host_ip: string;
@@ -503,6 +509,7 @@ export const api = {
   vulnerabilities: () => request<FleetVulnerability[]>("/api/vulnerabilities"),
   digest: (from: string, to: string) =>
     request<DigestResult>(`/api/digest?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+  trends: (days: number) => request<TrendsResult>(`/api/trends?days=${days}`),
   audit: (limit = 200, q = "", from = "", until = "") =>
     request<AuditEntry[]>(
       `/api/audit?limit=${limit}${q ? `&q=${encodeURIComponent(q)}` : ""}${from ? `&from=${from}` : ""}${

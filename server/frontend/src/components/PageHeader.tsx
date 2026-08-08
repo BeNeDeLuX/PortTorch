@@ -40,6 +40,7 @@ export default function PageHeader({
         <NavLink to="/certificates">Certificates</NavLink>
         <NavLink to="/vulnerabilities">Vulnerabilities</NavLink>
         <NavLink to="/digest">Digest</NavLink>
+        <NavLink to="/trends">Trends</NavLink>
         <NavLink to="/webhooks">Webhooks</NavLink>
         {me.role === "admin" && <NavLink to="/users">Users</NavLink>}
         {me.role === "admin" && <NavLink to="/audit">Audit</NavLink>}

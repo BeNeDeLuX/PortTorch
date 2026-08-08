@@ -14,6 +14,7 @@ import Certificates from "./pages/Certificates";
 import Vulnerabilities from "./pages/Vulnerabilities";
 import Users from "./pages/Users";
 import Digest from "./pages/Digest";
+import Trends from "./pages/Trends";
 import Webhooks from "./pages/Webhooks";
 import Audit from "./pages/Audit";
 import Excludes from "./pages/Excludes";
@@ -99,6 +100,10 @@ export default function App() {
       <Route
         path="/digest"
         element={me ? <Digest me={me} onLogout={() => setMe(null)} /> : <Navigate to="/login" replace />}
+      />
+      <Route
+        path="/trends"
+        element={me ? <Trends me={me} onLogout={() => setMe(null)} /> : <Navigate to="/login" replace />}
       />
       <Route
         path="/webhooks"
