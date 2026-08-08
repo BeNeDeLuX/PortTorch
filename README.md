@@ -199,7 +199,7 @@ Edit `.env` and set real values - at minimum, change `POSTGRES_PASSWORD`,
 `SESSION_SECRET` (`openssl rand -hex 32`), and `ADMIN_PASSWORD`:
 
 ```bash
-docker compose up -d
+sudo docker compose up -d
 ```
 
 This pulls the prebuilt webserver image from [Docker
@@ -212,9 +212,10 @@ own self-signed TLS certificate on first start (persisted in a volume, so
 it survives restarts).
 
 If you've made local changes to `/server` and want to run those instead of
-the published image, build from source with `docker compose up -d --build`
-(the `image:`/`build:` combo in `docker-compose.yml` means `--build`
-overrides the pulled image with a freshly built, identically-tagged one).
+the published image, build from source with `sudo docker compose up -d
+--build` (the `image:`/`build:` combo in `docker-compose.yml` means
+`--build` overrides the pulled image with a freshly built,
+identically-tagged one).
 
 Open **`https://<host>/`** and log in with the admin credentials from
 `.env`. Your browser will warn about the self-signed certificate the first
@@ -490,7 +491,7 @@ same webserver.
 ### Webserver
 
 ```bash
-docker compose pull && docker compose up -d
+sudo docker compose pull && sudo docker compose up -d
 ```
 
 Pulls the latest published image and recreates the `webserver` container
@@ -501,7 +502,7 @@ repeatedly, including against an already-up-to-date install.
 
 If you're running from a local checkout of the source instead of the
 published image (see [Quick start](#quick-start-docker-compose) above),
-`git pull` first, then `docker compose up -d --build` instead - the
+`git pull` first, then `sudo docker compose up -d --build` instead - the
 `image:`/`build:` combo in `docker-compose.yml` makes `--build` override
 the pulled image with a freshly built, identically-tagged one.
 
