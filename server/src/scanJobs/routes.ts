@@ -202,6 +202,53 @@ scanJobsRouter.get("/active", asyncHandler(async (req, res) => {
   );
 }));
 
+// Live-ish progress for one running (or just-finished) scan job - the
+// "Details" popup on the dashboard's Active Scans banner / Scanner
+// Agents' active-scan column polls this while open. Backed by
+// scan_job_progress, pushed by the scanner itself every few seconds while
+// it runs (see ingest/routes.ts's PATCH .../progress) - this route only
+// ever reads whatever the scanner last sent, it never talks to the
+// scanner directly (all communication is scanner-initiated). Same
+// read-only access level as /active (any authenticated role, not
+// operator-gated) since this is just a more detailed view of the same
+// already-visible data, not a new capability.
+scanJobsRouter.get("/:id/progress", asyncHandler(async (req, res) => {
+  if (!z.string().uuid().safeParse(req.params.id).success) {
+    res.status(400).json({ error: "invalid scan job id" });
+    return;
+  }
+
+  const job = await db
+    .selectFrom("scan_jobs")
+    .select(["id", "scanner_agent_id"])
+    .where("id", "=", req.params.id)
+    .executeTakeFirst();
+  if (!job) {
+    res.status(404).json({ error: "scan job not found" });
+    return;
+  }
+  const allowed = getAllowedScannerAgentIds(req);
+  if (allowed && (!job.scanner_agent_id || !allowed.includes(job.scanner_agent_id))) {
+    res.status(404).json({ error: "scan job not found" });
+    return;
+  }
+
+  const progress = await db
+    .selectFrom("scan_job_progress")
+    .select(["current_stage", "stage_detail", "recent_logs", "updated_at"])
+    .where("scan_job_id", "=", req.params.id)
+    .executeTakeFirst();
+
+  // No row yet just means the scanner hasn't pushed its first update -
+  // a real, common state (e.g. right after a scan starts), not an error.
+  res.json({
+    currentStage: progress?.current_stage ?? null,
+    stageDetail: progress?.stage_detail ?? null,
+    logs: progress?.recent_logs ?? [],
+    updatedAt: progress?.updated_at ?? null,
+  });
+}));
+
 // scan_requests waiting for their scanner to pick them up - a "serve"
 // scanner's polling loop blocks for the whole duration of whatever it's
 // currently running (see StartPolling/pollOnce), so a rescan or scheduled

@@ -366,6 +366,15 @@ export interface ActiveScanJob {
   cancel_requested: boolean;
 }
 
+export interface ScanJobProgress {
+  // null until the scanner's first push after the job starts - a normal,
+  // common state, not an error (see server/src/scanJobs/routes.ts).
+  currentStage: string | null;
+  stageDetail: string | null;
+  logs: Array<{ time: string; stage: string; message: string }>;
+  updatedAt: string | null;
+}
+
 export interface QueuedScanRequest {
   id: string;
   scanner_agent_id: string | null;
@@ -519,6 +528,7 @@ export const api = {
 
   agents: () => request<ScannerAgent[]>("/api/agents"),
   activeScanJobs: () => request<ActiveScanJob[]>("/api/scan-jobs/active"),
+  scanJobProgress: (id: string) => request<ScanJobProgress>(`/api/scan-jobs/${id}/progress`),
   scanQueue: () => request<QueuedScanRequest[]>("/api/scan-jobs/queue"),
   dismissScanJob: (id: string) => request<void>(`/api/scan-jobs/${id}/dismiss`, { method: "POST" }),
   cancelScanJob: (id: string) => request<void>(`/api/scan-jobs/${id}/cancel`, { method: "POST" }),

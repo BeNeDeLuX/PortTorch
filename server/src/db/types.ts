@@ -76,6 +76,26 @@ export interface ScanJobsTable {
   cancel_requested_at: ColumnType<Date | null, string | undefined, string>;
 }
 
+// Live-ish progress pushed by the scanner itself while a scan runs (see
+// "Scan pipeline" in CLAUDE.md) - separate from ScanJobsTable since this
+// updates far more often and holds nothing worth keeping once the job
+// finishes. current_stage/stage_detail are null until the scanner's first
+// push; recent_logs is a capped rolling buffer (scanner-side cap, not
+// enforced again here - the scanner already sends at most maxLogLines).
+export interface ScanJobProgressTable {
+  scan_job_id: string;
+  current_stage: string | null;
+  stage_detail: string | null;
+  recent_logs: ColumnType<ScanProgressLogLine[], string, string>;
+  updated_at: ColumnType<Date, string | undefined, string>;
+}
+
+export interface ScanProgressLogLine {
+  time: string;
+  stage: string;
+  message: string;
+}
+
 export interface HostsTable {
   id: Generated<string>;
   ip: string;
@@ -328,6 +348,7 @@ export interface Database {
   scanner_agents: ScannerAgentsTable;
   api_tokens: ApiTokensTable;
   scan_jobs: ScanJobsTable;
+  scan_job_progress: ScanJobProgressTable;
   hosts: HostsTable;
   host_port_observations: HostPortObservationsTable;
   current_host_ports: CurrentHostPortsTable;

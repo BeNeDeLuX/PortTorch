@@ -17,6 +17,7 @@ import (
 	"porttorch/scanner/internal/config"
 	"porttorch/scanner/internal/logging"
 	"porttorch/scanner/internal/pipeline"
+	"porttorch/scanner/internal/progress"
 	"porttorch/scanner/internal/tui"
 	"porttorch/scanner/internal/version"
 )
@@ -179,6 +180,13 @@ func runScan(configPath, target, ports string) error {
 	}
 	log.Info("scan started", "event", "scan.started", "scan_job_id", jobID, "target", target, "ports", ports)
 
+	// Pushes stage/log snapshots to the webserver every few seconds while
+	// the scan runs, independent of and in addition to the local slog line
+	// below - see internal/progress's doc comment for why this can't be
+	// the other way around (webserver polling the scanner).
+	tracker := progress.NewTracker(c, jobID, progress.DefaultPushInterval)
+	defer tracker.Close()
+
 	// Each host is submitted as soon as its own nmap+gowitness/RDP/TLS
 	// work finishes, rather than batching the whole target range into one
 	// submission after the entire scan completes - see pipeline.RunScan's
@@ -193,6 +201,7 @@ func runScan(configPath, target, ports string) error {
 	result, scanErr := pipeline.RunScan(ctx, cfg.Pipeline(), target, ports, excludes, probeHostnames,
 		func(stage, message string) {
 			log.Info(message, "event", "scan.progress", "scan_job_id", jobID, "stage", stage)
+			tracker.Progress(stage, message)
 		},
 		func(host pipeline.HostResult) {
 			defer pipeline.CleanupScreenshots([]pipeline.HostResult{host})
@@ -201,9 +210,11 @@ func runScan(configPath, target, ports string) error {
 			defer cancel()
 			err := c.SubmitHostResult(submitCtx, jobID, host, func(kind string, port int, err error) {
 				log.Warn(kind+" submission failed", "event", "scan."+kind+"_submit_failed", "scan_job_id", jobID, "target_ip", host.IP, "port", port, "error", err.Error())
+				tracker.Progress(kind, fmt.Sprintf("submission for %s failed: %v", host.IP, err))
 			})
 			if err != nil {
 				log.Warn("host submission failed, skipping", "event", "scan.host_submit_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", err.Error())
+				tracker.Progress("submit", fmt.Sprintf("host submission for %s failed: %v", host.IP, err))
 				return
 			}
 
@@ -216,6 +227,7 @@ func runScan(configPath, target, ports string) error {
 			tallyMu.Unlock()
 
 			log.Info("host submitted", "event", "scan.host_submitted", "scan_job_id", jobID, "target_ip", host.IP, "open_ports", len(host.Ports))
+			tracker.Progress("submit", fmt.Sprintf("submitted %s (%d open port(s))", host.IP, len(host.Ports)))
 		},
 	)
 

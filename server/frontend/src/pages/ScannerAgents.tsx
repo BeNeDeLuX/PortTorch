@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { ActiveScanJob, api, Me, QueuedScanRequest, ScannerAgent } from "../api";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
+import ScanProgressModal from "../components/ScanProgressModal";
 import { formatDateTime } from "../lib/formatDate";
 import { elapsedLabel } from "../lib/elapsed";
 
@@ -82,6 +83,7 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
   const [queueSortKey, setQueueSortKey] = useState<QueueSortKey>("created_at");
   const [queueSortDirection, setQueueSortDirection] = useState<SortDirection>("asc");
   const [activeScanJobs, setActiveScanJobs] = useState<ActiveScanJob[]>([]);
+  const [detailsJobId, setDetailsJobId] = useState<string | null>(null);
   const [scanQueue, setScanQueue] = useState<QueuedScanRequest[]>([]);
   const [queueScannerFilterIds, setQueueScannerFilterIds] = useState<string[]>([]);
   // Forces a re-render every few seconds so elapsedLabel's "running for
@@ -321,6 +323,9 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
                       {canEdit && (
                         <td>
                           <div className="actions-cell">
+                            {activeJob && (
+                              <button onClick={() => setDetailsJobId(activeJob.id)}>Details</button>
+                            )}
                             {activeJob?.is_stale && (
                               <button onClick={() => handleDismissScanJob(activeJob.id)}>Dismiss</button>
                             )}
@@ -462,6 +467,8 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
           )}
         </>
       )}
+
+      {detailsJobId && <ScanProgressModal jobId={detailsJobId} onClose={() => setDetailsJobId(null)} />}
     </div>
   );
 }

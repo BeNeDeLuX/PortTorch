@@ -12,6 +12,7 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { dispatchWebhook } from "../webhooks/dispatch";
 import { zIp } from "../lib/zodIp";
+import { singleParam } from "../lib/reqParams";
 
 export const ingestRouter = Router();
 ingestRouter.use(asyncHandler(apiKeyAuth));
@@ -145,6 +146,70 @@ ingestRouter.get("/scan-jobs/:id/cancel-requested", asyncHandler(async (req, res
     return;
   }
   res.json({ cancelRequested: job.cancel_requested_at !== null });
+}));
+
+const progressLogLineSchema = z.object({
+  time: z.string(),
+  stage: z.string(),
+  message: z.string(),
+});
+
+const scanProgressSchema = z.object({
+  stage: z.string().min(1),
+  stageDetail: z.string().optional(),
+  logs: z.array(progressLogLineSchema).max(200),
+});
+
+// Pushed periodically (every few seconds) by the scanner itself while a
+// scan runs - see CLAUDE.md's "Scan progress" section for why this has to
+// be scanner-initiated rather than the webserver polling the scanner (all
+// communication is scanner-initiated, the webserver can't dial back into
+// a scanner that may be behind NAT/a firewall). recent_logs is replaced
+// wholesale on every push rather than appended - the scanner already
+// keeps its own capped rolling buffer (maxLogLines) and sends the current
+// snapshot of it, so there's no need to also cap/merge server-side.
+ingestRouter.patch("/scan-jobs/:id/progress", asyncHandler(async (req, res) => {
+  if (!z.string().uuid().safeParse(req.params.id).success) {
+    res.status(400).json({ error: "invalid scan job id" });
+    return;
+  }
+  const parsed = scanProgressSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const job = await db
+    .selectFrom("scan_jobs")
+    .select(["id"])
+    .where("id", "=", req.params.id)
+    .where("scanner_agent_id", "=", req.scannerAgentId!)
+    .executeTakeFirst();
+  if (!job) {
+    res.status(404).json({ error: "scan job not found" });
+    return;
+  }
+
+  await db
+    .insertInto("scan_job_progress")
+    .values({
+      scan_job_id: singleParam(req.params.id),
+      current_stage: parsed.data.stage,
+      stage_detail: parsed.data.stageDetail ?? null,
+      recent_logs: JSON.stringify(parsed.data.logs),
+      updated_at: new Date().toISOString(),
+    })
+    .onConflict((oc) =>
+      oc.column("scan_job_id").doUpdateSet({
+        current_stage: parsed.data.stage,
+        stage_detail: parsed.data.stageDetail ?? null,
+        recent_logs: JSON.stringify(parsed.data.logs),
+        updated_at: new Date().toISOString(),
+      })
+    )
+    .execute();
+
+  res.status(204).end();
 }));
 
 const sshHostKeySchema = z.object({

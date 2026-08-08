@@ -15,6 +15,7 @@ import (
 
 	"porttorch/scanner/internal/client"
 	"porttorch/scanner/internal/pipeline"
+	"porttorch/scanner/internal/progress"
 )
 
 // Server is the scanner's REST API, through which scans can be triggered
@@ -312,10 +313,17 @@ func (s *Server) runScan(jobID, target, ports string, state *scanState) {
 	var tallyMu sync.Mutex
 	var hostsSubmitted, openPorts, screenshots, rdpScreenshots, tlsCertificates int
 
+	// Independent of state.appendLog above: that one backs this scanner's
+	// own local /scans/:id (queried locally), this pushes to the webserver
+	// instead - see internal/progress's doc comment.
+	tracker := progress.NewTracker(s.client, jobID, progress.DefaultPushInterval)
+	defer tracker.Close()
+
 	result, err := pipeline.RunScan(scanCtx, s.pcfg, target, ports, excludes, probeHostnames,
 		func(stage, message string) {
 			state.appendLog("[" + stage + "] " + message)
 			s.logger.Info(message, "event", "scan.progress", "scan_job_id", jobID, "stage", stage)
+			tracker.Progress(stage, message)
 		},
 		func(host pipeline.HostResult) {
 			defer pipeline.CleanupScreenshots([]pipeline.HostResult{host})
@@ -325,10 +333,12 @@ func (s *Server) runScan(jobID, target, ports string, state *scanState) {
 			err := s.client.SubmitHostResult(submitCtx, jobID, host, func(kind string, port int, err error) {
 				state.appendLog(fmt.Sprintf("[%s] submission for %s failed", kind, host.IP))
 				s.logger.Warn(kind+" submission failed", "event", "scan."+kind+"_submit_failed", "scan_job_id", jobID, "target_ip", host.IP, "port", port, "error", err.Error())
+				tracker.Progress(kind, fmt.Sprintf("submission for %s failed: %v", host.IP, err))
 			})
 			if err != nil {
 				state.appendLog("host submission for " + host.IP + " failed")
 				s.logger.Warn("host submission failed, skipping", "event", "scan.host_submit_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", err.Error())
+				tracker.Progress("submit", fmt.Sprintf("host submission for %s failed: %v", host.IP, err))
 				return
 			}
 
@@ -339,6 +349,7 @@ func (s *Server) runScan(jobID, target, ports string, state *scanState) {
 			rdpScreenshots += len(host.RDPScreenshots)
 			tlsCertificates += len(host.TLSCertificates)
 			tallyMu.Unlock()
+			tracker.Progress("submit", fmt.Sprintf("submitted %s (%d open port(s))", host.IP, len(host.Ports)))
 
 			s.logger.Info("host submitted", "event", "scan.host_submitted", "scan_job_id", jobID, "target_ip", host.IP, "open_ports", len(host.Ports))
 		},

@@ -15,6 +15,7 @@ import {
 } from "../api";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
+import ScanProgressModal from "../components/ScanProgressModal";
 import { elapsedLabel } from "../lib/elapsed";
 import { formatDateTime } from "../lib/formatDate";
 
@@ -193,6 +194,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
   const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
   const [saveSearchName, setSaveSearchName] = useState("");
   const [activeScanJobs, setActiveScanJobs] = useState<ActiveScanJob[]>([]);
+  const [detailsJobId, setDetailsJobId] = useState<string | null>(null);
   // Forces a re-render every few seconds so elapsedLabel's "running for
   // Xm Ys" stays live between polls, not just when the job list changes.
   const [, setClockTick] = useState(0);
@@ -556,6 +558,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                     stale
                   </span>
                 )}
+                <button onClick={() => setDetailsJobId(j.id)}>Details</button>
                 {j.is_stale && canEdit && (
                   <button onClick={() => handleDismissScanJob(j.id)}>Dismiss</button>
                 )}
@@ -970,6 +973,8 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
           )}
         </main>
       </div>
+
+      {detailsJobId && <ScanProgressModal jobId={detailsJobId} onClose={() => setDetailsJobId(null)} />}
     </div>
   );
 }

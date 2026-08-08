@@ -17,6 +17,7 @@ import (
 
 	"porttorch/scanner/internal/config"
 	"porttorch/scanner/internal/pipeline"
+	"porttorch/scanner/internal/progress"
 	"porttorch/scanner/internal/version"
 )
 
@@ -107,6 +108,14 @@ func (c *Client) CheckCancelRequested(ctx context.Context, jobID string) (bool, 
 		return false, err
 	}
 	return resp.CancelRequested, nil
+}
+
+// PushScanProgress sends the current stage/detail/recent-log-lines
+// snapshot for a running scan - see progress.Tracker, which calls this
+// periodically while a scan is in progress. Satisfies progress.Pusher.
+func (c *Client) PushScanProgress(ctx context.Context, jobID, stage, detail string, logs []progress.LogLine) error {
+	body := map[string]any{"stage": stage, "stageDetail": detail, "logs": logs}
+	return c.doJSON(ctx, http.MethodPatch, "/api/ingest/scan-jobs/"+jobID+"/progress", body, nil)
 }
 
 type ingestSSHHostKey struct {

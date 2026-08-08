@@ -10,6 +10,10 @@ import (
 
 	"porttorch/scanner/internal/client"
 	"porttorch/scanner/internal/pipeline"
+	// Aliased - this file already uses "progress" as the naming prefix for
+	// its own bubbletea message type (progressMsg/progressCh/waitForProgress),
+	// unrelated to this package.
+	scanprogress "porttorch/scanner/internal/progress"
 )
 
 func createScanJobCmd(c *client.Client, target, ports string) tea.Cmd {
@@ -58,9 +62,13 @@ func runScanCmd(c *client.Client, pcfg pipeline.Config, jobID, target, ports str
 		var tallyMu sync.Mutex
 		var screenshotErrors int
 
+		tracker := scanprogress.NewTracker(c, jobID, scanprogress.DefaultPushInterval)
+		defer tracker.Close()
+
 		result, scanErr := pipeline.RunScan(context.Background(), pcfg, target, ports, excludes, probeHostnames,
 			func(stage, message string) {
 				progressCh <- progressMsg{stage: stage, message: message}
+				tracker.Progress(stage, message)
 			},
 			func(host pipeline.HostResult) {
 				defer pipeline.CleanupScreenshots([]pipeline.HostResult{host})
@@ -71,13 +79,19 @@ func runScanCmd(c *client.Client, pcfg pipeline.Config, jobID, target, ports str
 					tallyMu.Lock()
 					screenshotErrors++
 					tallyMu.Unlock()
-					progressCh <- progressMsg{stage: kind, message: fmt.Sprintf("submission for %s failed: %v", host.IP, err)}
+					msg := fmt.Sprintf("submission for %s failed: %v", host.IP, err)
+					progressCh <- progressMsg{stage: kind, message: msg}
+					tracker.Progress(kind, msg)
 				})
 				if err != nil {
-					progressCh <- progressMsg{stage: "submit", message: fmt.Sprintf("host submission for %s failed: %v", host.IP, err)}
+					msg := fmt.Sprintf("host submission for %s failed: %v", host.IP, err)
+					progressCh <- progressMsg{stage: "submit", message: msg}
+					tracker.Progress("submit", msg)
 					return
 				}
-				progressCh <- progressMsg{stage: "submit", message: fmt.Sprintf("submitted %s (%d open port(s))", host.IP, len(host.Ports))}
+				submittedMsg := fmt.Sprintf("submitted %s (%d open port(s))", host.IP, len(host.Ports))
+				progressCh <- progressMsg{stage: "submit", message: submittedMsg}
+				tracker.Progress("submit", submittedMsg)
 			},
 		)
 
