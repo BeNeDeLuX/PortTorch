@@ -10,6 +10,7 @@ import { startCveSync } from "./cve/sync";
 import { startEpssSync } from "./cve/epssSync";
 import { startScheduler } from "./scheduler";
 import { startRetention } from "./retention";
+import { startDailyDigestEmail } from "./digest/emailDigest";
 
 // An error on an idle pool client would otherwise arrive as an
 // uncaughtException on the process and take down the entire server.
@@ -30,3 +31,4 @@ startRetention();
 startSavedSearchAlerts();
 startCveSync();
 startEpssSync();
+startDailyDigestEmail();

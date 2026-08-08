@@ -42,4 +42,13 @@ export const config = {
     password: process.env.SMTP_PASSWORD,
     from: process.env.SMTP_FROM,
   },
+  // A CVE's EPSS score (see src/cve/epssSync.ts) at or above this fires a
+  // "vulnerability.high_epss" webhook once. 0.5 = 50% predicted exploit
+  // probability in the next 30 days - FIRST.org's own docs note the
+  // overall dataset's mean is well under 1%, so 50% is already a strong
+  // signal, not a low bar that'd fire constantly.
+  epssAlertThreshold: parseFloat(process.env.EPSS_ALERT_THRESHOLD ?? "0.5"),
+  // UTC hour (0-23) the daily digest email fires at, if any webhook/email
+  // channel is subscribed to "digest.daily" - see src/digest/emailDigest.ts.
+  digestEmailHourUtc: parseInt(process.env.DIGEST_EMAIL_HOUR_UTC ?? "8", 10),
 };

@@ -317,6 +317,23 @@ export interface EpssCacheTable {
   epss: number;
   percentile: number;
   checked_at: ColumnType<Date, string | undefined, string>;
+  // Set once a "vulnerability.high_epss" webhook has fired for this CVE
+  // (config.epssAlertThreshold) - never re-armed, so a score that
+  // fluctuates around the threshold day to day doesn't re-alert on every
+  // crossing, same "fire once per row" reasoning as
+  // tls_certificates.expiry_alert_sent_at.
+  alert_sent_at: ColumnType<Date | null, string | null | undefined, string | null>;
+}
+
+// Singleton row (id always 1) - see migration
+// 1741100000000_epss_alert_and_digest_email.js.
+export interface DigestEmailStateTable {
+  id: Generated<number>;
+  // Read back as a JS Date (midnight UTC), not the plain "YYYY-MM-DD"
+  // string it's written as - node-postgres's default parser for a `date`
+  // column, confirmed by testing (see digest/emailDigest.ts's
+  // toDateOnlyString, which exists specifically to normalize this).
+  last_sent_date: ColumnType<Date | null, string | null | undefined, string | null>;
 }
 
 export interface ScanExcludesTable {
@@ -378,6 +395,7 @@ export interface Database {
   user_scanner_agents: UserScannerAgentsTable;
   cve_cache: CveCacheTable;
   epss_cache: EpssCacheTable;
+  digest_email_state: DigestEmailStateTable;
   webhooks: WebhooksTable;
   audit_log: AuditLogTable;
   rdp_screenshots: RdpScreenshotsTable;

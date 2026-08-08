@@ -119,7 +119,10 @@ The project has two independently deployed components:
   port, CVE, severity, description - instead of having to check each
   host's detail page individually.
 - :bar_chart: **Digest** - a fleet-wide "what changed" view (newly discovered hosts,
-  newly opened/closed ports) over the last 24 hours or 7 days.
+  newly opened/closed ports) over the last 24 hours or 7 days. Also available
+  as a daily email/webhook (`digest.daily`, see Webhooks below) - a fixed UTC
+  hour (`DIGEST_EMAIL_HOUR_UTC` in `.env`, default 8) rather than a
+  per-schedule picker.
 - :chart_with_upwards_trend: **Trends** - fleet-wide time series (cumulative total
   hosts, and daily new hosts/scans/open-ports-seen/CVE-matches-seen) over a
   selectable range (7/30/90/365 days), filterable to one or more scanner
@@ -128,7 +131,9 @@ The project has two independently deployed components:
 - :bell: **Webhooks & email alerts** - fire a JSON POST (compatible with
   Slack/Discord incoming webhooks) or an email to one or more addresses when
   a new host appears, a port newly opens, a certificate is about to expire,
-  or a saved search matches a new host. Email requires `SMTP_HOST` (and
+  a saved search matches a new host, a known CVE's EPSS (exploit prediction)
+  score crosses a threshold (`EPSS_ALERT_THRESHOLD` in `.env`, default 0.5),
+  or once a day for the fleet-wide digest. Email requires `SMTP_HOST` (and
   friends) set in `.env` - webhook channels need no extra configuration.
 - :dna: **Vulnerability correlation** - a daily background job matches every
   CPE (service/version fingerprint) nmap has detected against the NVD

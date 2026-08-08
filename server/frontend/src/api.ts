@@ -218,7 +218,13 @@ export interface SavedSearch {
   created_at: string;
 }
 
-export type WebhookEvent = "host.new" | "port.opened" | "certificate.expiring_soon" | "saved_search.match";
+export type WebhookEvent =
+  | "host.new"
+  | "port.opened"
+  | "certificate.expiring_soon"
+  | "saved_search.match"
+  | "vulnerability.high_epss"
+  | "digest.daily";
 
 export type WebhookChannelType = "webhook" | "email";
 

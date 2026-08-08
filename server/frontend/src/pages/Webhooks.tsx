@@ -7,6 +7,8 @@ const ALL_EVENTS: Array<{ key: WebhookEvent; label: string }> = [
   { key: "port.opened", label: "Port newly open" },
   { key: "certificate.expiring_soon", label: "Certificate expiring soon" },
   { key: "saved_search.match", label: "Saved search matched a new host" },
+  { key: "vulnerability.high_epss", label: "High EPSS score on a known CVE" },
+  { key: "digest.daily", label: "Daily digest (fleet-wide, once a day)" },
 ];
 
 export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => void }) {

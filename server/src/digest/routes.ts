@@ -24,6 +24,22 @@ function parseDate(value: unknown, fallback: Date): Date {
   return Number.isNaN(parsed.getTime()) ? fallback : parsed;
 }
 
+export interface DigestResult {
+  from: string;
+  to: string;
+  newHosts: Array<{ id: string; ip: string; hostname: string | null; observedAt: string; scannerAgentName: string | null }>;
+  changedHosts: Array<{
+    id: string;
+    ip: string;
+    hostname: string | null;
+    observedAt: string;
+    scannerAgentName: string | null;
+    newlyOpen: Array<{ port: number; service_name: string | null }>;
+    newlyClosed: Array<{ port: number; service_name: string | null }>;
+  }>;
+  generatedAt: string;
+}
+
 // Fleet-wide "what changed" view: for every host that had at least one
 // observation within [from, to], compares its two most recent distinct
 // scan runs as of "to" (same newly-open/newly-closed idea as the per-host
@@ -34,16 +50,12 @@ function parseDate(value: unknown, fallback: Date): Date {
 // comparing against whatever the actual latest scan is today. A host with
 // no previous scan run at all (as of "to") is reported as newly
 // discovered rather than diffed.
-digestRouter.get("/", asyncHandler(async (req, res) => {
-  const to = parseDate(req.query.to, new Date());
-  let from = parseDate(req.query.from, new Date(to.getTime() - DEFAULT_RANGE_MS));
-  if (from >= to) {
-    from = new Date(to.getTime() - DEFAULT_RANGE_MS);
-  }
-  if (to.getTime() - from.getTime() > MAX_RANGE_MS) {
-    from = new Date(to.getTime() - MAX_RANGE_MS);
-  }
-
+//
+// Exported (not just used inline by the GET route below) so
+// digest/emailDigest.ts's daily email ticker computes the exact same
+// thing the dashboard's Digest page would show for the same range,
+// rather than a second, potentially-drifting implementation.
+export async function computeDigest(from: Date, to: Date, allowedScannerAgentIds: string[] | null): Promise<DigestResult> {
   const candidates = await sql<ScanJobPair>`
     WITH recent_hosts AS (
       SELECT DISTINCT host_id
@@ -70,10 +82,9 @@ digestRouter.get("/", asyncHandler(async (req, res) => {
     WHERE latest.rn = 1
   `.execute(db);
 
-  const allowed = getAllowedScannerAgentIds(req);
   let hostsQuery = db.selectFrom("hosts").select(["id", "ip", "hostname", "first_seen_at"]);
-  if (allowed) {
-    hostsQuery = hostsQuery.where("scanner_agent_id", "in", allowed);
+  if (allowedScannerAgentIds) {
+    hostsQuery = hostsQuery.where("scanner_agent_id", "in", allowedScannerAgentIds);
   }
   const hosts = await hostsQuery.execute();
   const hostsById = new Map(hosts.map((h) => [h.id, h]));
@@ -153,5 +164,22 @@ digestRouter.get("/", asyncHandler(async (req, res) => {
     }
   }
 
-  res.json({ from: from.toISOString(), to: to.toISOString(), newHosts, changedHosts, generatedAt: new Date().toISOString() });
-}));
+  return { from: from.toISOString(), to: to.toISOString(), newHosts, changedHosts, generatedAt: new Date().toISOString() };
+}
+
+digestRouter.get(
+  "/",
+  asyncHandler(async (req, res) => {
+    const to = parseDate(req.query.to, new Date());
+    let from = parseDate(req.query.from, new Date(to.getTime() - DEFAULT_RANGE_MS));
+    if (from >= to) {
+      from = new Date(to.getTime() - DEFAULT_RANGE_MS);
+    }
+    if (to.getTime() - from.getTime() > MAX_RANGE_MS) {
+      from = new Date(to.getTime() - MAX_RANGE_MS);
+    }
+
+    const result = await computeDigest(from, to, getAllowedScannerAgentIds(req));
+    res.json(result);
+  })
+);

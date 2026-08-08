@@ -11,7 +11,14 @@ import { recordAudit } from "../audit/log";
 export const webhooksRouter = Router();
 webhooksRouter.use(requireAuth);
 
-const EVENTS: WebhookEvent[] = ["host.new", "port.opened", "certificate.expiring_soon", "saved_search.match"];
+const EVENTS: WebhookEvent[] = [
+  "host.new",
+  "port.opened",
+  "certificate.expiring_soon",
+  "saved_search.match",
+  "vulnerability.high_epss",
+  "digest.daily",
+];
 const uuidSchema = z.string().uuid();
 const WEBHOOK_COLUMNS = ["id", "name", "channel_type", "url", "email_to", "enabled", "events", "created_at"] as const;
 
@@ -43,7 +50,9 @@ const createWebhookSchema = z
     channelType: z.enum(["webhook", "email"]).default("webhook"),
     url: z.string().url().optional(),
     emailTo: emailListSchema.optional(),
-    events: z.array(z.enum(["host.new", "port.opened", "certificate.expiring_soon", "saved_search.match"])).min(1),
+    events: z
+      .array(z.enum(["host.new", "port.opened", "certificate.expiring_soon", "saved_search.match", "vulnerability.high_epss", "digest.daily"]))
+      .min(1),
   })
   .refine((data) => (data.channelType === "webhook" ? !!data.url : !!data.emailTo), {
     message: "url is required for a webhook channel, emailTo is required for an email channel",

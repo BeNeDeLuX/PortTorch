@@ -1,6 +1,8 @@
 import { sql } from "kysely";
 import { db } from "../db";
+import { config } from "../config";
 import { logger } from "../logger";
+import { dispatchWebhook } from "../webhooks/dispatch";
 
 // Unlike cve_cache (see sync.ts), EPSS scores genuinely change day to day -
 // FIRST.org recomputes the underlying model daily - so this re-checks every
@@ -52,40 +54,109 @@ async function tick(): Promise<void> {
     const checkedAt = checkedAtByCveId.get(id);
     return !checkedAt || new Date(checkedAt).getTime() < staleThreshold;
   });
-  if (toRefresh.length === 0) return;
 
-  logger.info({ event: "epss_sync.started", cve_count: toRefresh.length });
-  let synced = 0;
-  let failed = 0;
+  if (toRefresh.length > 0) {
+    logger.info({ event: "epss_sync.started", cve_count: toRefresh.length });
+    let synced = 0;
+    let failed = 0;
 
-  for (let i = 0; i < toRefresh.length; i += BATCH_SIZE) {
-    const batch = toRefresh.slice(i, i + BATCH_SIZE);
-    try {
-      const scores = await fetchEpssForCves(batch);
-      const now = new Date().toISOString();
-      const rowsToUpsert = batch
-        .filter((id) => scores.has(id))
-        .map((id) => ({ cve_id: id, epss: scores.get(id)!.epss, percentile: scores.get(id)!.percentile, checked_at: now }));
-      // A CVE with no EPSS entry (e.g. reserved/rejected in the model)
-      // simply isn't upserted - leaves any prior cached value in place
-      // rather than deleting it, same "don't erase a previously-captured
-      // value on an inconclusive re-check" reasoning as the OS/MAC upserts.
-      if (rowsToUpsert.length > 0) {
-        await db
-          .insertInto("epss_cache")
-          .values(rowsToUpsert)
-          .onConflict((oc) => oc.column("cve_id").doUpdateSet((eb) => ({ epss: eb.ref("excluded.epss"), percentile: eb.ref("excluded.percentile"), checked_at: eb.ref("excluded.checked_at") })))
-          .execute();
+    for (let i = 0; i < toRefresh.length; i += BATCH_SIZE) {
+      const batch = toRefresh.slice(i, i + BATCH_SIZE);
+      try {
+        const scores = await fetchEpssForCves(batch);
+        const now = new Date().toISOString();
+        const rowsToUpsert = batch
+          .filter((id) => scores.has(id))
+          .map((id) => ({ cve_id: id, epss: scores.get(id)!.epss, percentile: scores.get(id)!.percentile, checked_at: now }));
+        // A CVE with no EPSS entry (e.g. reserved/rejected in the model)
+        // simply isn't upserted - leaves any prior cached value in place
+        // rather than deleting it, same "don't erase a previously-captured
+        // value on an inconclusive re-check" reasoning as the OS/MAC upserts.
+        if (rowsToUpsert.length > 0) {
+          await db
+            .insertInto("epss_cache")
+            .values(rowsToUpsert)
+            .onConflict((oc) => oc.column("cve_id").doUpdateSet((eb) => ({ epss: eb.ref("excluded.epss"), percentile: eb.ref("excluded.percentile"), checked_at: eb.ref("excluded.checked_at") })))
+            .execute();
+        }
+        synced += rowsToUpsert.length;
+      } catch (err) {
+        failed += batch.length;
+        logger.warn({ event: "epss_sync.batch_failed", batch_size: batch.length, err: err instanceof Error ? err.message : String(err) });
       }
-      synced += rowsToUpsert.length;
-    } catch (err) {
-      failed += batch.length;
-      logger.warn({ event: "epss_sync.batch_failed", batch_size: batch.length, err: err instanceof Error ? err.message : String(err) });
+      await sleep(BATCH_DELAY_MS);
     }
-    await sleep(BATCH_DELAY_MS);
+
+    logger.info({ event: "epss_sync.completed", synced, failed });
   }
 
-  logger.info({ event: "epss_sync.completed", synced, failed });
+  // Runs every tick regardless of whether anything above needed a refresh
+  // (not just inside the toRefresh branch) - a previous alert attempt that
+  // failed to send, or a lowered EPSS_ALERT_THRESHOLD, should still get
+  // picked up on the very next tick rather than waiting for the next score
+  // change.
+  await checkHighEpssAlerts().catch((err) =>
+    logger.error({ event: "epss_sync.alert_check_failed", err: err instanceof Error ? err.message : String(err) })
+  );
+}
+
+// Fires "vulnerability.high_epss" once per CVE the first time its cached
+// score reaches config.epssAlertThreshold (alert_sent_at is never re-armed
+// - see db/types.ts's EpssCacheTable - so a score oscillating around the
+// threshold day to day can't spam repeated alerts for the same CVE).
+// Exported so tests can exercise the alert-firing logic directly against a
+// real database without going through tick()'s network-calling refresh
+// loop (see epssAlert.integration.test.ts).
+export async function checkHighEpssAlerts(): Promise<void> {
+  const highScoring = await db
+    .selectFrom("epss_cache")
+    .select(["cve_id", "epss", "percentile"])
+    .where("epss", ">=", config.epssAlertThreshold)
+    .where("alert_sent_at", "is", null)
+    .execute();
+  if (highScoring.length === 0) return;
+
+  for (const cve of highScoring) {
+    // Which currently-open host+port pairs this specific CVE affects -
+    // same cve_cache/current_host_ports join vulnerabilities/routes.ts
+    // uses for the fleet-wide view, just filtered to one CVE id instead of
+    // returned as one row per match.
+    const affected = await sql<{ ip: string; hostname: string | null; port: number }>`
+      SELECT DISTINCT h.ip AS ip, h.hostname AS hostname, chp.port AS port
+      FROM current_host_ports chp
+      JOIN hosts h ON h.id = chp.host_id
+      JOIN cve_cache cc ON cc.cpe = ANY(chp.cpes)
+      CROSS JOIN LATERAL jsonb_array_elements(cc.cves) AS cve_elem
+      WHERE chp.state = 'open' AND cve_elem->>'id' = ${cve.cve_id}
+    `.execute(db);
+
+    // A cve_cache entry can outlive the port it was fingerprinted from
+    // (the port closes, or the CPE simply stops appearing) - nothing to
+    // alert about, but still mark it seen so it isn't rechecked forever.
+    if (affected.rows.length === 0) {
+      await db.updateTable("epss_cache").set({ alert_sent_at: new Date().toISOString() }).where("cve_id", "=", cve.cve_id).execute();
+      continue;
+    }
+
+    const preview = affected.rows
+      .slice(0, 5)
+      .map((h) => `${h.hostname ? `${h.hostname} (${h.ip})` : h.ip}:${h.port}`)
+      .join(", ");
+    const more = affected.rows.length > 5 ? ` and ${affected.rows.length - 5} more` : "";
+    const message = `${cve.cve_id} has an EPSS score of ${(cve.epss * 100).toFixed(1)}% (${Math.round(
+      cve.percentile * 100
+    )}th percentile, predicted exploit probability in the next 30 days) - affects ${affected.rows.length} host(s): ${preview}${more}`;
+
+    await dispatchWebhook("vulnerability.high_epss", message, {
+      cveId: cve.cve_id,
+      epssScore: cve.epss,
+      epssPercentile: cve.percentile,
+      affectedHosts: affected.rows.map((h) => ({ ip: h.ip, hostname: h.hostname, port: h.port })),
+    });
+
+    await db.updateTable("epss_cache").set({ alert_sent_at: new Date().toISOString() }).where("cve_id", "=", cve.cve_id).execute();
+    logger.info({ event: "epss_sync.high_epss_alerted", cve_id: cve.cve_id, epss: cve.epss, affected_hosts: affected.rows.length });
+  }
 }
 
 async function fetchEpssForCves(cveIds: string[]): Promise<Map<string, { epss: number; percentile: number }>> {

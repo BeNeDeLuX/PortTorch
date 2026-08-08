@@ -2,7 +2,13 @@ import { db } from "../db";
 import { logger } from "../logger";
 import { sendEmailAlert } from "./email";
 
-export type WebhookEvent = "host.new" | "port.opened" | "certificate.expiring_soon" | "saved_search.match";
+export type WebhookEvent =
+  | "host.new"
+  | "port.opened"
+  | "certificate.expiring_soon"
+  | "saved_search.match"
+  | "vulnerability.high_epss"
+  | "digest.daily";
 
 // Plain-English subject line for an email channel - a webhook channel has
 // no equivalent need, since "event"/"data" already ride along in the JSON
@@ -12,6 +18,8 @@ const EVENT_SUBJECTS: Record<WebhookEvent, string> = {
   "port.opened": "Port newly open",
   "certificate.expiring_soon": "Certificate expiring soon",
   "saved_search.match": "Saved search matched a new host",
+  "vulnerability.high_epss": "High EPSS score on a known CVE",
+  "digest.daily": "Daily digest",
 };
 
 // Fire-and-forget: dispatch must never slow down or fail the request that
