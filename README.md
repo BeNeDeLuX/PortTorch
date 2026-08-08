@@ -90,7 +90,8 @@ The project has two independently deployed components:
   (including across a page boundary), so you can click through a search's
   results without going back to the list each time. Its own **Export data**
   popup exports just this host - CSV (one row per open port, including
-  banners/CPEs/CVE ids) or JSON (the full host record plus its ports).
+  banners/CPEs/CVE ids), JSON (the full host record plus its ports), or a
+  PDF snapshot of the page as shown, screenshots included.
 - :arrows_counterclockwise: **Rescan button** - triggers an on-demand rescan of a host's currently
   known open ports, picked up by whichever scanner last scanned it.
 - :alarm_clock: **Schedule Scans** - schedule a target/port spec to be scanned on a plain

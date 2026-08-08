@@ -36,6 +36,14 @@ export default function HostExportModal({ data, onClose }: { data: HostDetail; o
     downloadBlob(`host-${data.host.ip}.json`, JSON.stringify({ host: data.host, ports: data.ports }, null, 2), "application/json");
   }
 
+  function exportPdf() {
+    // No PDF library - the browser's own print-to-PDF against this page's
+    // current DOM (styles.css's @media print block hides nav/forms/buttons
+    // and forces light-mode colors) already produces exactly "the page's
+    // view, with the screenshots" this option is for.
+    window.print();
+  }
+
   return (
     <Modal title="Export data" onClose={onClose}>
       <p className="host-meta">Exports this host's current open ports and details.</p>
@@ -56,6 +64,15 @@ export default function HostExportModal({ data, onClose }: { data: HostDetail; o
           </div>
           <button type="button" className="export-link" onClick={exportJson}>
             Download
+          </button>
+        </div>
+        <div className="export-option">
+          <div>
+            <strong>PDF</strong>
+            <div className="host-meta">A snapshot of this page as shown, including screenshots.</div>
+          </div>
+          <button type="button" className="export-link" onClick={exportPdf}>
+            Print / Save as PDF
           </button>
         </div>
       </div>
