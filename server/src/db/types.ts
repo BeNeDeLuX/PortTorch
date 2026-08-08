@@ -310,6 +310,15 @@ export interface CveCacheTable {
   checked_at: ColumnType<Date, string | undefined, string>;
 }
 
+// Keyed by CVE id (unlike cve_cache, which is keyed by CPE) since EPSS
+// scores a specific CVE, not a product/version - see src/cve/epssSync.ts.
+export interface EpssCacheTable {
+  cve_id: string;
+  epss: number;
+  percentile: number;
+  checked_at: ColumnType<Date, string | undefined, string>;
+}
+
 export interface ScanExcludesTable {
   id: Generated<string>;
   kind: string;
@@ -326,7 +335,15 @@ export interface ScanExcludesTable {
 export interface WebhooksTable {
   id: Generated<string>;
   name: string;
-  url: string;
+  // Exactly one of url/email_to is set, enforced by
+  // webhooks_channel_type_fields_check - see migration
+  // 1741000000000_webhook_email_channel.js.
+  channel_type: ColumnType<string, string | undefined, string>;
+  url: string | null;
+  // Comma-joined recipient list for an "email" channel, same convention as
+  // every other comma-joined multi-value field in this app (see
+  // scannerAgentId filters, port/service/tag search params).
+  email_to: string | null;
   enabled: ColumnType<boolean, boolean | undefined, boolean>;
   events: string[];
   created_at: ColumnType<Date, string | undefined, never>;
@@ -360,6 +377,7 @@ export interface Database {
   saved_search_matches: SavedSearchMatchesTable;
   user_scanner_agents: UserScannerAgentsTable;
   cve_cache: CveCacheTable;
+  epss_cache: EpssCacheTable;
   webhooks: WebhooksTable;
   audit_log: AuditLogTable;
   rdp_screenshots: RdpScreenshotsTable;

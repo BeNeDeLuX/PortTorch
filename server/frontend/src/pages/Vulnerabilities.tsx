@@ -4,7 +4,7 @@ import { api, FleetVulnerability, Me } from "../api";
 import { cveSeverityClass } from "../lib/cveSeverity";
 import PageHeader from "../components/PageHeader";
 
-type SortKey = "host" | "port" | "cve_id" | "cvss_score";
+type SortKey = "host" | "port" | "cve_id" | "cvss_score" | "epss_score";
 type SortDirection = "asc" | "desc";
 
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -31,6 +31,8 @@ function compareVulns(a: FleetVulnerability, b: FleetVulnerability, key: SortKey
       if (av !== bv) return sign * (av - bv);
       return sign * ((b.cvss_score ?? 0) - (a.cvss_score ?? 0));
     }
+    case "epss_score":
+      return sign * ((b.epss_score ?? -1) - (a.epss_score ?? -1));
     default:
       return 0;
   }
@@ -91,7 +93,9 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
       <h2>Vulnerabilities</h2>
       <p className="host-meta">
         Known CVEs matched against detected service versions across the whole fleet, most severe first. Synced daily
-        from the NVD database - see a host's detail page for per-port context.
+        from the NVD database - see a host's detail page for per-port context. EPSS (Exploit Prediction Scoring
+        System, synced daily from FIRST.org) estimates the probability a CVE is exploited in the wild within the
+        next 30 days - useful for prioritizing among CVEs of the same severity.
       </p>
 
       {vulns.length > 0 && (
@@ -137,6 +141,7 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
               <th onClick={() => setSort("port")}>Port{sortIndicator("port")}</th>
               <th onClick={() => setSort("cve_id")}>CVE{sortIndicator("cve_id")}</th>
               <th onClick={() => setSort("cvss_score")}>Severity{sortIndicator("cvss_score")}</th>
+              <th onClick={() => setSort("epss_score")}>EPSS{sortIndicator("epss_score")}</th>
               <th>Description</th>
             </tr>
           </thead>
@@ -160,6 +165,9 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
                 <td>
                   {severityOf(v)}
                   {v.cvss_score != null && ` (${v.cvss_score})`}
+                </td>
+                <td title={v.epss_percentile != null ? `${Math.round(v.epss_percentile * 100)}th percentile` : undefined}>
+                  {v.epss_score != null ? `${(v.epss_score * 100).toFixed(1)}%` : "-"}
                 </td>
                 <td className="audit-details">{v.description}</td>
               </tr>

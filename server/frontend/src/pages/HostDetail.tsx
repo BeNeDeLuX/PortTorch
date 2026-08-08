@@ -411,10 +411,15 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
                             href={`https://nvd.nist.gov/vuln/detail/${v.id}`}
                             target="_blank"
                             rel="noreferrer"
-                            title={v.description}
+                            title={
+                              v.epssScore != null
+                                ? `${v.description}\nEPSS: ${(v.epssScore * 100).toFixed(1)}% likely to be exploited (${Math.round((v.epssPercentile ?? 0) * 100)}th percentile)`
+                                : v.description
+                            }
                           >
                             {v.id}
                             {v.cvssScore != null && ` (${v.cvssScore})`}
+                            {v.epssScore != null && ` · EPSS ${(v.epssScore * 100).toFixed(1)}%`}
                           </a>
                         ))}
                       </div>

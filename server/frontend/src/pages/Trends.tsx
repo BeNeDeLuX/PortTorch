@@ -3,7 +3,7 @@ import { api, Me, ScannerAgent, TrendsResult } from "../api";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 
-type SeriesKey = "totalHosts" | "newHosts" | "scans" | "openPorts";
+type SeriesKey = "totalHosts" | "newHosts" | "scans" | "openPorts" | "cveMatches";
 
 interface SeriesDef {
   key: SeriesKey;
@@ -19,6 +19,7 @@ const ACTIVITY_SERIES: SeriesDef[] = [
   { key: "newHosts", label: "New hosts", color: "var(--chart-series-1)" },
   { key: "scans", label: "Scans", color: "var(--chart-series-2)" },
   { key: "openPorts", label: "Open ports seen", color: "var(--chart-series-3)" },
+  { key: "cveMatches", label: "CVE matches seen", color: "var(--chart-series-4)" },
 ];
 
 const DAY_PRESETS = [7, 30, 90, 365];
@@ -269,6 +270,7 @@ export default function Trends({ me, onLogout }: { me: Me; onLogout: () => void 
                   { key: "newHosts", label: "New hosts" },
                   { key: "scans", label: "Scans" },
                   { key: "openPorts", label: "Open ports seen" },
+                  { key: "cveMatches", label: "CVE matches seen" },
                 ]}
               />
             ) : (

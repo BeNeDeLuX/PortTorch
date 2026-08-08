@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, Me, Webhook, WebhookEvent } from "../api";
+import { api, Me, Webhook, WebhookChannelType, WebhookEvent } from "../api";
 import PageHeader from "../components/PageHeader";
 
 const ALL_EVENTS: Array<{ key: WebhookEvent; label: string }> = [
@@ -13,7 +13,9 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
   const isAdmin = me.role === "admin";
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
   const [name, setName] = useState("");
+  const [channelType, setChannelType] = useState<WebhookChannelType>("webhook");
   const [url, setUrl] = useState("");
+  const [emailTo, setEmailTo] = useState("");
   const [events, setEvents] = useState<WebhookEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, string>>({});
@@ -38,12 +40,21 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
-    if (!name.trim() || !url.trim() || events.length === 0) return;
+    if (!name.trim() || events.length === 0) return;
+    if (channelType === "webhook" && !url.trim()) return;
+    if (channelType === "email" && !emailTo.trim()) return;
     setError(null);
     try {
-      await api.createWebhook({ name: name.trim(), url: url.trim(), events });
+      await api.createWebhook({
+        name: name.trim(),
+        channelType,
+        url: channelType === "webhook" ? url.trim() : undefined,
+        emailTo: channelType === "email" ? emailTo.trim() : undefined,
+        events,
+      });
       setName("");
       setUrl("");
+      setEmailTo("");
       setEvents([]);
       await load();
     } catch (err) {
@@ -73,7 +84,8 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
 
       <h2>Webhooks</h2>
       <p className="host-meta">
-        Sends a JSON POST (compatible with Slack/Discord incoming webhooks) when a subscribed event occurs.
+        Sends a JSON POST (compatible with Slack/Discord incoming webhooks), or an email, when a subscribed event
+        occurs.
       </p>
 
       {error && <p className="error">{error}</p>}
@@ -85,9 +97,27 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
             <input placeholder="e.g. security-team-slack" value={name} onChange={(e) => setName(e.target.value)} />
           </label>
           <label>
-            URL
-            <input placeholder="https://hooks.slack.com/..." value={url} onChange={(e) => setUrl(e.target.value)} />
+            Channel type
+            <select value={channelType} onChange={(e) => setChannelType(e.target.value as WebhookChannelType)}>
+              <option value="webhook">Webhook (Slack/Discord-compatible)</option>
+              <option value="email">Email</option>
+            </select>
           </label>
+          {channelType === "webhook" ? (
+            <label>
+              URL
+              <input placeholder="https://hooks.slack.com/..." value={url} onChange={(e) => setUrl(e.target.value)} />
+            </label>
+          ) : (
+            <label>
+              Email address(es)
+              <input
+                placeholder="alerts@example.com, security@example.com"
+                value={emailTo}
+                onChange={(e) => setEmailTo(e.target.value)}
+              />
+            </label>
+          )}
           <div className="column-toggles">
             Events:
             {ALL_EVENTS.map((e) => (
@@ -110,7 +140,8 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
           <thead>
             <tr>
               <th>Name</th>
-              <th>URL</th>
+              <th>Channel</th>
+              <th>Target</th>
               <th>Events</th>
               <th>Status</th>
               {isAdmin && <th></th>}
@@ -120,7 +151,8 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
             {webhooks.map((w) => (
               <tr key={w.id}>
                 <td>{w.name}</td>
-                <td className="banner">{w.url}</td>
+                <td>{w.channel_type === "email" ? "Email" : "Webhook"}</td>
+                <td className="banner">{w.channel_type === "email" ? w.email_to : w.url}</td>
                 <td>{w.events.join(", ")}</td>
                 <td>{w.enabled ? "active" : "paused"}</td>
                 {isAdmin && (

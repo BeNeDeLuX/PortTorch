@@ -220,10 +220,14 @@ export interface SavedSearch {
 
 export type WebhookEvent = "host.new" | "port.opened" | "certificate.expiring_soon" | "saved_search.match";
 
+export type WebhookChannelType = "webhook" | "email";
+
 export interface Webhook {
   id: string;
   name: string;
-  url: string;
+  channel_type: WebhookChannelType;
+  url: string | null;
+  email_to: string | null;
   enabled: boolean;
   events: WebhookEvent[];
   created_at: string;
@@ -248,7 +252,7 @@ export interface DigestResult {
 export interface TrendsResult {
   days: number;
   since: string;
-  series: Array<{ date: string; newHosts: number; totalHosts: number; scans: number; openPorts: number }>;
+  series: Array<{ date: string; newHosts: number; totalHosts: number; scans: number; openPorts: number; cveMatches: number }>;
 }
 
 export interface FleetVulnerability {
@@ -260,6 +264,8 @@ export interface FleetVulnerability {
   cvss_score: number | null;
   cvss_severity: string | null;
   description: string;
+  epss_score: number | null;
+  epss_percentile: number | null;
 }
 
 export interface ExpiringCertificate {
@@ -310,6 +316,11 @@ export interface CveEntry {
   cvssScore: number | null;
   cvssSeverity: string | null;
   published: string | null;
+  // EPSS (exploit prediction) - synced/cached separately from the CVSS
+  // fields above, see cve/epssSync.ts; null until the sync catches up or
+  // if FIRST has no scored entry for this CVE.
+  epssScore: number | null;
+  epssPercentile: number | null;
 }
 
 export interface ScanRequest {
@@ -596,7 +607,7 @@ export const api = {
     }),
 
   webhooks: () => request<Webhook[]>("/api/webhooks"),
-  createWebhook: (input: { name: string; url: string; events: WebhookEvent[] }) =>
+  createWebhook: (input: { name: string; channelType: WebhookChannelType; url?: string; emailTo?: string; events: WebhookEvent[] }) =>
     request<Webhook>("/api/webhooks", { method: "POST", body: JSON.stringify(input) }),
   setWebhookEnabled: (id: string, enabled: boolean) =>
     request<void>(`/api/webhooks/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),

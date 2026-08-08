@@ -26,4 +26,20 @@ export const config = {
   // (see src/cve/sync.ts). Works fine without one, just slower to sync
   // many distinct CPEs.
   nvdApiKey: process.env.NVD_API_KEY,
+  // Optional - only needed if an admin actually creates an "email" alert
+  // channel (see src/webhooks/email.ts). Deliberately not required() like
+  // databaseUrl/sessionSecret: a deployment that only ever uses webhook
+  // channels (the pre-existing default) shouldn't be forced to configure
+  // SMTP it'll never use.
+  smtp: {
+    host: process.env.SMTP_HOST,
+    port: parseInt(process.env.SMTP_PORT ?? "587", 10),
+    // STARTTLS (the common case on port 587) is negotiated after connect
+    // regardless of this flag; `secure: true` is only for implicit-TLS
+    // ports like 465 - matches nodemailer's own documented behavior.
+    secure: process.env.SMTP_SECURE === "true",
+    user: process.env.SMTP_USER,
+    password: process.env.SMTP_PASSWORD,
+    from: process.env.SMTP_FROM,
+  },
 };

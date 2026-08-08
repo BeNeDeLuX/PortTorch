@@ -64,7 +64,7 @@ trendsRouter.get("/", asyncHandler(async (req, res) => {
   const filterIds = parseScannerAgentIds(req.query.scannerAgentId);
   const needsHostJoin = allowed !== null || filterIds.length > 0;
 
-  const [newHostsRows, totalHostsBefore, scanRows, openPortRows] = await Promise.all([
+  const [newHostsRows, totalHostsBefore, scanRows, openPortRows, cveRows] = await Promise.all([
     sql<DailyCountRow>`
       SELECT date_trunc('day', first_seen_at)::date AS date, count(*) AS count
       FROM hosts
@@ -106,13 +106,34 @@ trendsRouter.get("/", asyncHandler(async (req, res) => {
       GROUP BY 1
       ORDER BY 1
     `.execute(db),
+
+    // Same "seen open that day" honesty tradeoff as openPorts above, plus
+    // the same caveat one layer further: cve_cache itself is a daily
+    // snapshot per CPE (see cve/sync.ts), not a historized-per-day record,
+    // so this counts distinct (host, port, CVE) combinations that were
+    // both open *and* matched a cached CVE on that day - a CVE newly added
+    // to NVD for an already-open, unchanged port shows up on the day the
+    // sync noticed it, not the day the port was first seen open.
+    sql<DailyCountRow>`
+      SELECT date_trunc('day', hpo.observed_at)::date AS date, count(DISTINCT (hpo.host_id, hpo.port, cve_elem->>'id')) AS count
+      FROM host_port_observations hpo
+      JOIN cve_cache cc ON cc.cpe = ANY(hpo.cpes)
+      CROSS JOIN LATERAL jsonb_array_elements(cc.cves) AS cve_elem
+      ${needsHostJoin ? sql`JOIN hosts h ON h.id = hpo.host_id` : sql``}
+      WHERE hpo.state = 'open' AND hpo.observed_at >= ${since.toISOString()}
+        ${allowed ? sql`AND h.scanner_agent_id = ANY(${allowed})` : sql``}
+        ${filterIds.length > 0 ? sql`AND h.scanner_agent_id = ANY(${filterIds})` : sql``}
+      GROUP BY 1
+      ORDER BY 1
+    `.execute(db),
   ]);
 
   const newHostsByDate = new Map(newHostsRows.rows.map((r) => [r.date.toISOString().slice(0, 10), Number(r.count)]));
   const scansByDate = new Map(scanRows.rows.map((r) => [r.date.toISOString().slice(0, 10), Number(r.count)]));
   const openPortsByDate = new Map(openPortRows.rows.map((r) => [r.date.toISOString().slice(0, 10), Number(r.count)]));
+  const cvesByDate = new Map(cveRows.rows.map((r) => [r.date.toISOString().slice(0, 10), Number(r.count)]));
 
-  const series: Array<{ date: string; newHosts: number; totalHosts: number; scans: number; openPorts: number }> = [];
+  const series: Array<{ date: string; newHosts: number; totalHosts: number; scans: number; openPorts: number; cveMatches: number }> = [];
   let runningTotal = Number(totalHostsBefore.count);
   for (let i = 0; i < days; i++) {
     const d = new Date(since.getTime() + i * 24 * 60 * 60 * 1000);
@@ -125,6 +146,7 @@ trendsRouter.get("/", asyncHandler(async (req, res) => {
       totalHosts: runningTotal,
       scans: scansByDate.get(key) ?? 0,
       openPorts: openPortsByDate.get(key) ?? 0,
+      cveMatches: cvesByDate.get(key) ?? 0,
     });
   }
 

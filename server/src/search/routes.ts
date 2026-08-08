@@ -659,11 +659,20 @@ hostsRouter.get("/:id", asyncHandler(async (req, res) => {
   const cveRows = allCpes.length > 0 ? await db.selectFrom("cve_cache").select(["cpe", "cves"]).where("cpe", "in", allCpes).execute() : [];
   const cvesByCpe = new Map(cveRows.map((r) => [r.cpe, r.cves]));
 
+  // EPSS is synced/cached separately, keyed by CVE id rather than CPE (see
+  // cve/epssSync.ts) - looked up for every distinct CVE id these ports'
+  // cached CVE entries reference, same "read from cache, no live call on
+  // the request path" pattern as the NVD data above.
+  const allCveIds = [...new Set([...cvesByCpe.values()].flatMap((cves) => cves.map((c) => c.id)))];
+  const epssRows = allCveIds.length > 0 ? await db.selectFrom("epss_cache").select(["cve_id", "epss", "percentile"]).where("cve_id", "in", allCveIds).execute() : [];
+  const epssByCveId = new Map(epssRows.map((r) => [r.cve_id, r]));
+
   const ports = rawPorts.map((p) => {
-    const vulnerabilities = new Map<string, (typeof cveRows)[number]["cves"][number]>();
+    const vulnerabilities = new Map<string, (typeof cveRows)[number]["cves"][number] & { epssScore: number | null; epssPercentile: number | null }>();
     for (const cpe of p.cpes ?? []) {
       for (const cve of cvesByCpe.get(cpe) ?? []) {
-        vulnerabilities.set(cve.id, cve);
+        const epss = epssByCveId.get(cve.id);
+        vulnerabilities.set(cve.id, { ...cve, epssScore: epss?.epss ?? null, epssPercentile: epss?.percentile ?? null });
       }
     }
     return { ...p, vulnerabilities: [...vulnerabilities.values()] };

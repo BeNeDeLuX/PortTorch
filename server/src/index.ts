@@ -7,6 +7,7 @@ import { buildApp } from "./app";
 import { startCertificateExpiryAlerts } from "./webhooks/expiryAlerts";
 import { startSavedSearchAlerts } from "./savedSearches/checker";
 import { startCveSync } from "./cve/sync";
+import { startEpssSync } from "./cve/epssSync";
 import { startScheduler } from "./scheduler";
 import { startRetention } from "./retention";
 
@@ -28,3 +29,4 @@ startCertificateExpiryAlerts();
 startRetention();
 startSavedSearchAlerts();
 startCveSync();
+startEpssSync();

@@ -114,19 +114,25 @@ The project has two independently deployed components:
 - :bar_chart: **Digest** - a fleet-wide "what changed" view (newly discovered hosts,
   newly opened/closed ports) over the last 24 hours or 7 days.
 - :chart_with_upwards_trend: **Trends** - fleet-wide time series (cumulative total
-  hosts, and daily new hosts/scans/open-ports-seen) over a selectable range (7/30/90/365
-  days), filterable to one or more scanner agents. Chart or table view, same
-  toggle style as the main dashboard's Grid/Table switch.
-- :bell: **Webhooks** - fire a JSON POST (compatible with Slack/Discord incoming
-  webhooks) when a new host appears, a port newly opens, a certificate is
-  about to expire, or a saved search matches a new host.
+  hosts, and daily new hosts/scans/open-ports-seen/CVE-matches-seen) over a
+  selectable range (7/30/90/365 days), filterable to one or more scanner
+  agents. Chart or table view, same toggle style as the main dashboard's
+  Grid/Table switch.
+- :bell: **Webhooks & email alerts** - fire a JSON POST (compatible with
+  Slack/Discord incoming webhooks) or an email to one or more addresses when
+  a new host appears, a port newly opens, a certificate is about to expire,
+  or a saved search matches a new host. Email requires `SMTP_HOST` (and
+  friends) set in `.env` - webhook channels need no extra configuration.
 - :dna: **Vulnerability correlation** - a daily background job matches every
   CPE (service/version fingerprint) nmap has detected against the NVD
   vulnerability database and caches the result; the host detail page
   shows known CVEs per port with severity-colored badges linking to the
   NVD entry. Set `NVD_API_KEY` in `.env` to raise the sync rate limit
   from 5 to 50 requests/30s (works fine without one, just slower for a
-  large number of distinct CPEs).
+  large number of distinct CPEs). A second daily sync fetches each known
+  CVE's **EPSS score** (exploit prediction, from FIRST.org) - shown next to
+  the CVSS severity on the Vulnerabilities page and per-port CVE badges, for
+  prioritizing among CVEs that share the same severity rating.
 - :robot: **Scanner agent management** - create/revoke API keys; revoking
   invalidates the key without deleting that scanner's scan history. A
   revoked agent can also be deleted from the list entirely - this only

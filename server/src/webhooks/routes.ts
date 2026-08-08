@@ -5,6 +5,7 @@ import { requireAuth, requireAdmin } from "../auth/middleware";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { WebhookEvent } from "./dispatch";
+import { sendEmailAlert } from "./email";
 import { recordAudit } from "../audit/log";
 
 export const webhooksRouter = Router();
@@ -12,21 +13,41 @@ webhooksRouter.use(requireAuth);
 
 const EVENTS: WebhookEvent[] = ["host.new", "port.opened", "certificate.expiring_soon", "saved_search.match"];
 const uuidSchema = z.string().uuid();
+const WEBHOOK_COLUMNS = ["id", "name", "channel_type", "url", "email_to", "enabled", "events", "created_at"] as const;
 
 webhooksRouter.get("/", asyncHandler(async (_req, res) => {
   const webhooks = await db
     .selectFrom("webhooks")
-    .select(["id", "name", "url", "enabled", "events", "created_at"])
+    .select(WEBHOOK_COLUMNS)
     .orderBy("created_at", "desc")
     .execute();
   res.json(webhooks);
 }));
 
-const createWebhookSchema = z.object({
-  name: z.string().trim().min(1).max(100),
-  url: z.string().url(),
-  events: z.array(z.enum(["host.new", "port.opened", "certificate.expiring_soon", "saved_search.match"])).min(1),
-});
+// Comma-joined list, same convention as every other multi-value field in
+// this app - each address individually validated so a typo in one of
+// several recipients is caught at creation time, not at first delivery
+// failure.
+const emailListSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(1000)
+  .refine((val) => val.split(",").every((addr) => z.string().trim().email().safeParse(addr.trim()).success), {
+    message: "one or more email addresses are invalid",
+  });
+
+const createWebhookSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100),
+    channelType: z.enum(["webhook", "email"]).default("webhook"),
+    url: z.string().url().optional(),
+    emailTo: emailListSchema.optional(),
+    events: z.array(z.enum(["host.new", "port.opened", "certificate.expiring_soon", "saved_search.match"])).min(1),
+  })
+  .refine((data) => (data.channelType === "webhook" ? !!data.url : !!data.emailTo), {
+    message: "url is required for a webhook channel, emailTo is required for an email channel",
+  });
 
 webhooksRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
   const parsed = createWebhookSchema.safeParse(req.body);
@@ -34,15 +55,22 @@ webhooksRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
+  const { name, channelType, url, emailTo, events } = parsed.data;
 
   const webhook = await db
     .insertInto("webhooks")
-    .values({ name: parsed.data.name, url: parsed.data.url, events: parsed.data.events })
-    .returning(["id", "name", "url", "enabled", "events", "created_at"])
+    .values({
+      name,
+      channel_type: channelType,
+      url: channelType === "webhook" ? url! : null,
+      email_to: channelType === "email" ? emailTo! : null,
+      events,
+    })
+    .returning(WEBHOOK_COLUMNS)
     .executeTakeFirstOrThrow();
 
-  logger.info({ event: "webhook.created", webhook_id: webhook.id, name: webhook.name, created_by: req.session.username });
-  recordAudit("webhook.created", req.session.username, req.ip, { webhook_id: webhook.id, name: webhook.name });
+  logger.info({ event: "webhook.created", webhook_id: webhook.id, name: webhook.name, channel_type: webhook.channel_type, created_by: req.session.username });
+  recordAudit("webhook.created", req.session.username, req.ip, { webhook_id: webhook.id, name: webhook.name, channel_type: webhook.channel_type });
 
   res.status(201).json(webhook);
 }));
@@ -96,14 +124,24 @@ webhooksRouter.post("/:id/test", requireAdmin, asyncHandler(async (req, res) => 
     res.status(400).json({ error: "invalid webhook id" });
     return;
   }
-  const webhook = await db.selectFrom("webhooks").select(["url"]).where("id", "=", req.params.id).executeTakeFirst();
+  const webhook = await db.selectFrom("webhooks").select(["channel_type", "url", "email_to"]).where("id", "=", req.params.id).executeTakeFirst();
   if (!webhook) {
     res.status(404).json({ error: "webhook not found" });
     return;
   }
 
+  if (webhook.channel_type === "email") {
+    try {
+      await sendEmailAlert(webhook.email_to!, "PortTorch test notification", "PortTorch test notification");
+      res.json({ ok: true });
+    } catch (err) {
+      res.json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
   try {
-    const testResponse = await fetch(webhook.url, {
+    const testResponse = await fetch(webhook.url!, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

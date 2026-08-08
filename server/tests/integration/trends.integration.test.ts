@@ -19,8 +19,12 @@ import {
 const IP_A = "240.6.1.1";
 const IP_B = "240.6.1.2";
 const PORT = 22;
+// Fake, never-real CPEs so the cve_cache rows this test seeds can't collide
+// with anything a real NVD sync would ever cache.
+const CPE_A = "cpe:/a:porttorch-test:trend-a:1.0";
+const CPE_B = "cpe:/a:porttorch-test:trend-b:1.0";
 
-async function ingestOpenPort(agent: TestAgent, ip: string): Promise<void> {
+async function ingestOpenPort(agent: TestAgent, ip: string, cpe: string): Promise<void> {
   const jobRes = await request(getApp())
     .post("/api/ingest/scan-jobs")
     .set("Authorization", `Bearer ${agent.apiKey}`)
@@ -28,7 +32,7 @@ async function ingestOpenPort(agent: TestAgent, ip: string): Promise<void> {
   await request(getApp())
     .post("/api/ingest/hosts")
     .set("Authorization", `Bearer ${agent.apiKey}`)
-    .send({ scanJobId: jobRes.body.id, hosts: [{ ip, ports: [{ port: PORT, protocol: "tcp", state: "open" }] }] });
+    .send({ scanJobId: jobRes.body.id, hosts: [{ ip, ports: [{ port: PORT, protocol: "tcp", state: "open", cpes: [cpe] }] }] });
 }
 
 function todayKey(): string {
@@ -54,12 +58,24 @@ describe("GET /api/trends", () => {
     adminClient = await loginAs(admin.username, admin.password);
     restrictedClient = await loginAs(restrictedOperator.username, restrictedOperator.password);
 
-    await ingestOpenPort(agentA, IP_A);
-    await ingestOpenPort(agentB, IP_B);
+    await ingestOpenPort(agentA, IP_A, CPE_A);
+    await ingestOpenPort(agentB, IP_B, CPE_B);
+
+    // Seed cve_cache directly rather than waiting on the real (rate-limited,
+    // external) NVD sync - trends/routes.ts only ever reads this table, it
+    // doesn't care how a row got there.
+    await db
+      .insertInto("cve_cache")
+      .values([
+        { cpe: CPE_A, cves: JSON.stringify([{ id: "CVE-1999-0001", description: "test", cvssScore: 9.8, cvssSeverity: "CRITICAL", published: null }]) },
+        { cpe: CPE_B, cves: JSON.stringify([{ id: "CVE-1999-0002", description: "test", cvssScore: 5.0, cvssSeverity: "MEDIUM", published: null }]) },
+      ])
+      .execute();
   });
 
   afterAll(async () => {
     await db.deleteFrom("hosts").where("ip", "in", [IP_A, IP_B]).execute();
+    await db.deleteFrom("cve_cache").where("cpe", "in", [CPE_A, CPE_B]).execute();
     await deleteTestUser(admin.id);
     await deleteTestUser(restrictedOperator.id);
     await deleteTestAgent(agentA.id);
@@ -79,6 +95,7 @@ describe("GET /api/trends", () => {
     expect(today.newHosts).toBeGreaterThanOrEqual(2);
     expect(today.scans).toBeGreaterThanOrEqual(2);
     expect(today.openPorts).toBeGreaterThanOrEqual(2);
+    expect(today.cveMatches).toBeGreaterThanOrEqual(2);
     expect(today.totalHosts).toBeGreaterThanOrEqual(today.newHosts);
   });
 
@@ -105,6 +122,7 @@ describe("GET /api/trends", () => {
     expect(today.newHosts).toBe(1);
     expect(today.scans).toBe(1);
     expect(today.openPorts).toBe(1);
+    expect(today.cveMatches).toBe(1);
   });
 
   it("requires authentication", async () => {
@@ -118,6 +136,7 @@ describe("GET /api/trends", () => {
     expect(todayA.newHosts).toBe(1);
     expect(todayA.scans).toBe(1);
     expect(todayA.openPorts).toBe(1);
+    expect(todayA.cveMatches).toBe(1);
 
     const both = await adminClient.get("/api/trends").query({ days: 7, scannerAgentId: `${agentA.id},${agentB.id}` });
     const todayBoth = both.body.series.find((d: { date: string }) => d.date === todayKey());
@@ -133,5 +152,6 @@ describe("GET /api/trends", () => {
     expect(today.newHosts).toBe(1);
     expect(today.scans).toBe(1);
     expect(today.openPorts).toBe(1);
+    expect(today.cveMatches).toBe(1);
   });
 });

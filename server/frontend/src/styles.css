@@ -8,13 +8,19 @@
   --accent: #35d07f;
   --danger: #ff6b6b;
   --warning: #f0b429;
-  /* Dataviz skill's validated 3-slot categorical palette (blue/orange/aqua),
-     dark-mode steps - re-validated against this app's actual --bg (#0b0f14),
-     not the skill's own default dark surface, via
-     scripts/validate_palette.js: all checks pass. */
+  /* Dataviz skill's validated categorical palette (blue/orange/aqua/yellow,
+     slots 1-4), dark-mode steps - re-validated against this app's actual
+     --bg (#0b0f14), not the skill's own default dark surface, via
+     scripts/validate_palette.js: all checks pass. Slot 4 (yellow) was added
+     for the Trends "CVE matches" series - re-run against all 4 slots
+     together, not just appended on faith, since the reference palette's own
+     docs warn slot 4 can fail *all-pairs* validation for scatter/bubble/
+     choropleth forms; this app's line chart only needs the *adjacent*
+     pairlist, which passes. */
   --chart-series-1: #3987e5;
   --chart-series-2: #d95926;
   --chart-series-3: #199e70;
+  --chart-series-4: #c98500;
   /* Single-series "headline" charts (Trends' Total hosts) deliberately do
      NOT use --accent: --accent is user-selectable (green/orange/blue, see
      Account preferences) and orange/blue both collide with chart-series-2/1
@@ -37,14 +43,15 @@
   --danger: #c0392b;
   --warning: #96690a;
   /* Same palette's light-mode steps - validated against this app's actual
-     --bg (#f4f6f8). Contrast vs surface WARNs for series-2/3 (2.95/2.60,
-     just under the 3:1 target) - the relief rule applies here: the trend
+     --bg (#f4f6f8). Contrast vs surface WARNs for series-2/3/4 (2.95/2.60/2.0,
+     under the 3:1 target) - the relief rule applies here: the trend
      legend and tooltip both carry a text label alongside every swatch
      (never color-only identity), and the table-view toggle is the full
      relief valve. */
   --chart-series-1: #2a78d6;
   --chart-series-2: #eb6834;
   --chart-series-3: #1baf7a;
+  --chart-series-4: #eda100;
   --chart-headline: #4a3aa7;
 }
 

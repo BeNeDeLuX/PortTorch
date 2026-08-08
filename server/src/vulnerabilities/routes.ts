@@ -25,6 +25,8 @@ vulnerabilitiesRouter.get("/", asyncHandler(async (req, res) => {
     cvss_score: number | null;
     cvss_severity: string | null;
     description: string;
+    epss_score: number | null;
+    epss_percentile: number | null;
   }>`
     SELECT DISTINCT
       h.id AS host_id,
@@ -34,11 +36,17 @@ vulnerabilitiesRouter.get("/", asyncHandler(async (req, res) => {
       cve_elem->>'id' AS cve_id,
       (cve_elem->>'cvssScore')::float AS cvss_score,
       cve_elem->>'cvssSeverity' AS cvss_severity,
-      cve_elem->>'description' AS description
+      cve_elem->>'description' AS description,
+      ec.epss AS epss_score,
+      ec.percentile AS epss_percentile
     FROM current_host_ports chp
     JOIN hosts h ON h.id = chp.host_id
     JOIN cve_cache cc ON cc.cpe = ANY(chp.cpes)
     CROSS JOIN LATERAL jsonb_array_elements(cc.cves) AS cve_elem
+    -- Left, not inner: a CVE without a cached EPSS score yet (sync hasn't
+    -- caught up, or FIRST has no entry for it) still needs to show up here,
+    -- same "absence isn't an error" reasoning as a 404 from NVD itself.
+    LEFT JOIN epss_cache ec ON ec.cve_id = cve_elem->>'id'
     WHERE chp.state = 'open'
     ${restriction}
   `.execute(db);
