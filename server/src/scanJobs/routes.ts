@@ -9,6 +9,7 @@ import { isStale } from "../lib/staleness";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { requestScanCancel } from "../scanCancel";
+import { singleParam } from "../lib/reqParams";
 
 export const scanJobsRouter = Router();
 scanJobsRouter.use(requireAuth);
@@ -357,7 +358,7 @@ scanJobsRouter.post("/:id/cancel", requireOperator, asyncHandler(async (req, res
     }
   }
 
-  const outcome = await requestScanCancel(req.params.id);
+  const outcome = await requestScanCancel(singleParam(req.params.id));
   if (!outcome.ok) {
     res.status(outcome.status).json({ error: outcome.error });
     return;

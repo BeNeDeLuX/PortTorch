@@ -6,6 +6,7 @@ import { hashPassword } from "../auth/password";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
+import { singleParam } from "../lib/reqParams";
 
 export const usersRouter = Router();
 usersRouter.use(requireAdmin);
@@ -111,7 +112,7 @@ const setScannerAgentsSchema = z.object({ scannerAgentIds: z.array(z.string().uu
 // incremental add/remove - simpler to reason about from the frontend's
 // checkbox-list UI, which always holds the full current selection anyway.
 usersRouter.patch("/:id/scanner-agents", asyncHandler(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(singleParam(req.params.id), 10);
   if (Number.isNaN(id)) {
     res.status(400).json({ error: "invalid user id" });
     return;
@@ -161,7 +162,7 @@ usersRouter.patch("/:id/scanner-agents", asyncHandler(async (req, res) => {
 }));
 
 usersRouter.delete("/:id", asyncHandler(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(singleParam(req.params.id), 10);
   if (Number.isNaN(id)) {
     res.status(400).json({ error: "invalid user id" });
     return;
@@ -206,7 +207,7 @@ usersRouter.delete("/:id", asyncHandler(async (req, res) => {
 // device isn't, so this is the one place an admin can act on another
 // user's 2FA at all: turning it back off, never turning it on for them.
 usersRouter.post("/:id/reset-2fa", asyncHandler(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(singleParam(req.params.id), 10);
   if (Number.isNaN(id)) {
     res.status(400).json({ error: "invalid user id" });
     return;

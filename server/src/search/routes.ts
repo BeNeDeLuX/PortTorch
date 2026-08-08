@@ -12,6 +12,7 @@ import { parseDateOnly } from "../lib/dateOnly";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { requestRescan } from "../rescan";
+import { singleParam } from "../lib/reqParams";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -797,7 +798,7 @@ hostsRouter.post("/:id/tags", requireOperator, asyncHandler(async (req, res) => 
 
   await db
     .insertInto("host_tags")
-    .values({ host_id: req.params.id, tag: parsed.data.tag })
+    .values({ host_id: singleParam(req.params.id), tag: parsed.data.tag })
     .onConflict((oc) => oc.columns(["host_id", "tag"]).doNothing())
     .execute();
 
@@ -871,7 +872,7 @@ hostsRouter.patch("/:id/probe-hostname", requireOperator, asyncHandler(async (re
 }));
 
 hostsRouter.post("/:id/rescan", requireOperator, asyncHandler(async (req, res) => {
-  const outcome = await requestRescan(req.params.id, req.session.username ?? null);
+  const outcome = await requestRescan(singleParam(req.params.id), req.session.username ?? null);
   if (!outcome.ok) {
     res.status(outcome.status).json({ error: outcome.error });
     return;
@@ -939,7 +940,7 @@ hostsRouter.post("/:id/comments", requireOperator, asyncHandler(async (req, res)
 
   const comment = await db
     .insertInto("host_comments")
-    .values({ host_id: req.params.id, author: req.session.username!, body: parsed.data.body })
+    .values({ host_id: singleParam(req.params.id), author: req.session.username!, body: parsed.data.body })
     .returning(["id", "author", "body", "created_at"])
     .executeTakeFirstOrThrow();
 

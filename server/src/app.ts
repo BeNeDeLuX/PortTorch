@@ -80,7 +80,13 @@ export function buildApp() {
   const frontendDist = path.join(__dirname, "..", "..", "frontend", "dist");
   if (fs.existsSync(frontendDist)) {
     app.use(express.static(frontendDist));
-    app.get("*", (_req, res) => {
+    // Express 5's router (path-to-regexp v6+) rejects a bare "*" outright
+    // ("Missing parameter name") - confirmed by actually hitting this at
+    // startup, not just reading the changelog. "/*splat" is the documented
+    // replacement: a named wildcard that still matches any nested client-
+    // side route (verified against real requests down to multiple path
+    // segments deep, e.g. /some/deeply/nested/route).
+    app.get("/*splat", (_req, res) => {
       res.sendFile(path.join(frontendDist, "index.html"));
     });
   }
