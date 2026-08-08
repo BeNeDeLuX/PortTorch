@@ -129,12 +129,14 @@ The project has two independently deployed components:
   agents. Chart or table view, same toggle style as the main dashboard's
   Grid/Table switch.
 - :bell: **Webhooks & email alerts** - fire a JSON POST (compatible with
-  Slack/Discord incoming webhooks) or an email to one or more addresses when
-  a new host appears, a port newly opens, a certificate is about to expire,
-  a saved search matches a new host, a known CVE's EPSS (exploit prediction)
-  score crosses a threshold (`EPSS_ALERT_THRESHOLD` in `.env`, default 0.5),
-  or once a day for the fleet-wide digest. Email requires `SMTP_HOST` (and
-  friends) set in `.env` - webhook channels need no extra configuration.
+  Slack/Discord incoming webhooks), a Microsoft Teams Adaptive Card (the
+  current "Workflows" webhook, not the deprecated classic connector), or an
+  email to one or more addresses when a new host appears, a port newly
+  opens, a certificate is about to expire, a saved search matches a new
+  host, a known CVE's EPSS (exploit prediction) score crosses a threshold
+  (`EPSS_ALERT_THRESHOLD` in `.env`, default 0.5), or once a day for the
+  fleet-wide digest. Email requires `SMTP_HOST` (and friends) set in `.env`
+  - webhook/Teams channels need no extra configuration.
 - :dna: **Vulnerability correlation** - a daily background job matches every
   CPE (service/version fingerprint) nmap has detected against the NVD
   vulnerability database and caches the result; the host detail page

@@ -4,7 +4,7 @@ import { db } from "../db";
 import { requireAuth, requireAdmin } from "../auth/middleware";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
-import { WebhookEvent } from "./dispatch";
+import { buildTeamsAdaptiveCardBody, WebhookEvent } from "./dispatch";
 import { sendEmailAlert } from "./email";
 import { recordAudit } from "../audit/log";
 
@@ -47,15 +47,15 @@ const emailListSchema = z
 const createWebhookSchema = z
   .object({
     name: z.string().trim().min(1).max(100),
-    channelType: z.enum(["webhook", "email"]).default("webhook"),
+    channelType: z.enum(["webhook", "email", "teams"]).default("webhook"),
     url: z.string().url().optional(),
     emailTo: emailListSchema.optional(),
     events: z
       .array(z.enum(["host.new", "port.opened", "certificate.expiring_soon", "saved_search.match", "vulnerability.high_epss", "digest.daily"]))
       .min(1),
   })
-  .refine((data) => (data.channelType === "webhook" ? !!data.url : !!data.emailTo), {
-    message: "url is required for a webhook channel, emailTo is required for an email channel",
+  .refine((data) => (data.channelType === "email" ? !!data.emailTo : !!data.url), {
+    message: "url is required for a webhook/teams channel, emailTo is required for an email channel",
   });
 
 webhooksRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
@@ -71,7 +71,7 @@ webhooksRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
     .values({
       name,
       channel_type: channelType,
-      url: channelType === "webhook" ? url! : null,
+      url: channelType === "email" ? null : url!,
       email_to: channelType === "email" ? emailTo! : null,
       events,
     })
@@ -149,17 +149,22 @@ webhooksRouter.post("/:id/test", requireAdmin, asyncHandler(async (req, res) => 
     return;
   }
 
+  const testBody =
+    webhook.channel_type === "teams"
+      ? buildTeamsAdaptiveCardBody("PortTorch test notification", "PortTorch test notification")
+      : JSON.stringify({
+          text: "PortTorch test notification",
+          content: "PortTorch test notification",
+          event: "test",
+          data: {},
+          timestamp: new Date().toISOString(),
+        });
+
   try {
     const testResponse = await fetch(webhook.url!, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text: "PortTorch test notification",
-        content: "PortTorch test notification",
-        event: "test",
-        data: {},
-        timestamp: new Date().toISOString(),
-      }),
+      body: testBody,
     });
     res.json({ ok: testResponse.ok, status: testResponse.status });
   } catch (err) {

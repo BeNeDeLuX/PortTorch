@@ -2,6 +2,12 @@ import { FormEvent, useEffect, useState } from "react";
 import { api, Me, Webhook, WebhookChannelType, WebhookEvent } from "../api";
 import PageHeader from "../components/PageHeader";
 
+const CHANNEL_LABELS: Record<WebhookChannelType, string> = {
+  webhook: "Webhook",
+  teams: "Microsoft Teams",
+  email: "Email",
+};
+
 const ALL_EVENTS: Array<{ key: WebhookEvent; label: string }> = [
   { key: "host.new", label: "New host discovered" },
   { key: "port.opened", label: "Port newly open" },
@@ -43,14 +49,14 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     if (!name.trim() || events.length === 0) return;
-    if (channelType === "webhook" && !url.trim()) return;
+    if (channelType !== "email" && !url.trim()) return;
     if (channelType === "email" && !emailTo.trim()) return;
     setError(null);
     try {
       await api.createWebhook({
         name: name.trim(),
         channelType,
-        url: channelType === "webhook" ? url.trim() : undefined,
+        url: channelType === "email" ? undefined : url.trim(),
         emailTo: channelType === "email" ? emailTo.trim() : undefined,
         events,
       });
@@ -86,8 +92,8 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
 
       <h2>Webhooks</h2>
       <p className="host-meta">
-        Sends a JSON POST (compatible with Slack/Discord incoming webhooks), or an email, when a subscribed event
-        occurs.
+        Sends a JSON POST (compatible with Slack/Discord incoming webhooks), a Microsoft Teams Adaptive Card, or an
+        email, when a subscribed event occurs.
       </p>
 
       {error && <p className="error">{error}</p>}
@@ -102,21 +108,26 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
             Channel type
             <select value={channelType} onChange={(e) => setChannelType(e.target.value as WebhookChannelType)}>
               <option value="webhook">Webhook (Slack/Discord-compatible)</option>
+              <option value="teams">Microsoft Teams</option>
               <option value="email">Email</option>
             </select>
           </label>
-          {channelType === "webhook" ? (
-            <label>
-              URL
-              <input placeholder="https://hooks.slack.com/..." value={url} onChange={(e) => setUrl(e.target.value)} />
-            </label>
-          ) : (
+          {channelType === "email" ? (
             <label>
               Email address(es)
               <input
                 placeholder="alerts@example.com, security@example.com"
                 value={emailTo}
                 onChange={(e) => setEmailTo(e.target.value)}
+              />
+            </label>
+          ) : (
+            <label>
+              URL
+              <input
+                placeholder={channelType === "teams" ? "https://.../workflows/..." : "https://hooks.slack.com/..."}
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
               />
             </label>
           )}
@@ -153,7 +164,7 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
             {webhooks.map((w) => (
               <tr key={w.id}>
                 <td>{w.name}</td>
-                <td>{w.channel_type === "email" ? "Email" : "Webhook"}</td>
+                <td>{CHANNEL_LABELS[w.channel_type]}</td>
                 <td className="banner">{w.channel_type === "email" ? w.email_to : w.url}</td>
                 <td>{w.events.join(", ")}</td>
                 <td>{w.enabled ? "active" : "paused"}</td>

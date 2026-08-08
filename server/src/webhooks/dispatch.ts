@@ -22,12 +22,41 @@ const EVENT_SUBJECTS: Record<WebhookEvent, string> = {
   "digest.daily": "Daily digest",
 };
 
+// A Teams "Workflows" webhook (the current replacement for the classic,
+// now-deprecated "Incoming Webhook" connector - the classic connector
+// happened to also accept the same plain {text: ...} shape the generic
+// "webhook" channel already sends, but that path is being retired) expects
+// its POST body wrapped as a bot-framework "message" activity carrying an
+// Adaptive Card attachment, not a bare {text} object - confirmed against
+// Microsoft's own Adaptive Card + Workflows documentation, not guessed.
+// Exported so webhooks/routes.ts's "/test" endpoint sends the exact same
+// shape a real event would, rather than a second, hand-rolled test body.
+export function buildTeamsAdaptiveCardBody(title: string, message: string): string {
+  return JSON.stringify({
+    type: "message",
+    attachments: [
+      {
+        contentType: "application/vnd.microsoft.card.adaptive",
+        content: {
+          $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+          type: "AdaptiveCard",
+          version: "1.4",
+          body: [
+            { type: "TextBlock", text: title, weight: "bolder", size: "medium", wrap: true },
+            { type: "TextBlock", text: message, wrap: true },
+          ],
+        },
+      },
+    ],
+  });
+}
+
 // Fire-and-forget: dispatch must never slow down or fail the request that
 // triggered it (scanner ingest, in particular), so failures are only
 // logged, never thrown. Sends both "text" and "content" so the same
 // payload renders in Slack and Discord incoming webhooks without needing
 // per-target payload shapes; "data" carries the structured fields for
-// anything else consuming it directly. Fans out to both channel types
+// anything else consuming it directly. Fans out to all three channel types
 // (see db/types.ts's WebhooksTable) from one query and one events filter -
 // they share everything except how the message is actually delivered.
 export async function dispatchWebhook(event: WebhookEvent, message: string, data: Record<string, unknown>): Promise<void> {
@@ -44,7 +73,8 @@ export async function dispatchWebhook(event: WebhookEvent, message: string, data
   }
 
   const targets = channels.filter((c) => c.events.includes(event));
-  const body = JSON.stringify({ text: message, content: message, event, data, timestamp: new Date().toISOString() });
+  const slackDiscordBody = JSON.stringify({ text: message, content: message, event, data, timestamp: new Date().toISOString() });
+  const teamsBody = buildTeamsAdaptiveCardBody(`PortTorch: ${EVENT_SUBJECTS[event]}`, message);
   const subject = `PortTorch: ${EVENT_SUBJECTS[event]}`;
 
   for (const channel of targets) {
@@ -66,7 +96,7 @@ export async function dispatchWebhook(event: WebhookEvent, message: string, data
     fetch(channel.url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body,
+      body: channel.channel_type === "teams" ? teamsBody : slackDiscordBody,
     })
       .then((res) => {
         if (!res.ok) {

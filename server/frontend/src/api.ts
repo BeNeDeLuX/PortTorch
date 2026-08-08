@@ -226,7 +226,7 @@ export type WebhookEvent =
   | "vulnerability.high_epss"
   | "digest.daily";
 
-export type WebhookChannelType = "webhook" | "email";
+export type WebhookChannelType = "webhook" | "email" | "teams";
 
 export interface Webhook {
   id: string;

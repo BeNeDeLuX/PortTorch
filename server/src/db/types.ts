@@ -352,9 +352,13 @@ export interface ScanExcludesTable {
 export interface WebhooksTable {
   id: Generated<string>;
   name: string;
-  // Exactly one of url/email_to is set, enforced by
-  // webhooks_channel_type_fields_check - see migration
-  // 1741000000000_webhook_email_channel.js.
+  // 'webhook' | 'email' | 'teams' - 'teams' shares the url column with
+  // 'webhook' (both are just a POST target), only the body shape differs
+  // (see webhooks/dispatch.ts's buildTeamsAdaptiveCardBody). Exactly one
+  // of url/email_to is set per type, enforced by
+  // webhooks_channel_type_fields_check - see migrations
+  // 1741000000000_webhook_email_channel.js and
+  // 1741200000000_webhook_teams_channel.js.
   channel_type: ColumnType<string, string | undefined, string>;
   url: string | null;
   // Comma-joined recipient list for an "email" channel, same convention as

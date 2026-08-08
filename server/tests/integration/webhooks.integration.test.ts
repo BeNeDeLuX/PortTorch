@@ -74,6 +74,22 @@ describe("Webhooks (webhook + email channels)", () => {
     expect(res.status).toBe(400);
   });
 
+  it("creates a teams channel, which shares the url column with a plain webhook channel", async () => {
+    const res = await adminClient
+      .post("/api/webhooks")
+      .send({ name: "it-teams-channel", channelType: "teams", url: "https://example.test/workflows/abc123", events: ["host.new"] });
+    expect(res.status).toBe(201);
+    expect(res.body.channel_type).toBe("teams");
+    expect(res.body.url).toBe("https://example.test/workflows/abc123");
+    expect(res.body.email_to).toBeNull();
+    createdIds.push(res.body.id);
+  });
+
+  it("rejects a teams channel with no url", async () => {
+    const res = await adminClient.post("/api/webhooks").send({ name: "it-bad-teams", channelType: "teams", events: ["host.new"] });
+    expect(res.status).toBe(400);
+  });
+
   it("lists both channel types with their type-specific target field populated", async () => {
     const created = await adminClient
       .post("/api/webhooks")
@@ -97,6 +113,17 @@ describe("Webhooks (webhook + email channels)", () => {
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(false);
     expect(res.body.error).toMatch(/SMTP is not configured/i);
+  });
+
+  it("a teams channel's /test endpoint sends the Adaptive Card body and reports failure gracefully against an unreachable URL", async () => {
+    const created = await adminClient
+      .post("/api/webhooks")
+      .send({ name: "it-test-teams", channelType: "teams", url: "https://127.0.0.1:1/unreachable", events: ["host.new"] });
+    createdIds.push(created.body.id);
+
+    const res = await adminClient.post(`/api/webhooks/${created.body.id}/test`);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(false);
   });
 
   it("requires authentication to list webhooks", async () => {
