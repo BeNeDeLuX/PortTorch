@@ -3,19 +3,13 @@ import { api, Me } from "../api";
 import Brand from "./Brand";
 import ThemeToggle from "./ThemeToggle";
 
-export default function PageHeader({
-  me,
-  onLogout,
-  linkHome = true,
-}: {
-  me: Me;
-  onLogout: () => void;
-  linkHome?: boolean;
-}) {
+export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => void }) {
   return (
     <>
       <header>
-        <h1>{linkHome ? <Link to="/"><Brand /></Link> : <Brand />}</h1>
+        <h1>
+          <Brand />
+        </h1>
         <div className="user-bar">
           <ThemeToggle />
           <Link to="/account">

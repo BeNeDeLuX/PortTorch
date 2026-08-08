@@ -538,7 +538,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
 
   return (
     <div className="dashboard">
-      <PageHeader me={me} onLogout={onLogout} linkHome={false} />
+      <PageHeader me={me} onLogout={onLogout} />
 
       {me.preferences.showActiveScansBanner && activeScanJobs.length > 0 && (
         <div className="active-scans">
