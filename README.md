@@ -1,5 +1,14 @@
 # PortTorch
 
+[![License](https://img.shields.io/github/license/BeNeDeLuX/PortTorch)](https://github.com/BeNeDeLuX/PortTorch/blob/master/LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/BeNeDeLuX/PortTorch)](https://github.com/BeNeDeLuX/PortTorch/stargazers)
+[![Last commit](https://img.shields.io/github/last-commit/BeNeDeLuX/PortTorch)](https://github.com/BeNeDeLuX/PortTorch/commits/master/)
+[![Docker Build](https://img.shields.io/github/actions/workflow/status/BeNeDeLuX/PortTorch/webserver-docker.yml?label=docker%20build)](https://github.com/BeNeDeLuX/PortTorch/actions/workflows/webserver-docker.yml)
+[![Docker Pulls](https://img.shields.io/docker/pulls/benedelux/porttorch-server)](https://hub.docker.com/r/benedelux/porttorch-server)
+[![Go Version](https://img.shields.io/badge/scanner-Go%201.26%2B-00ADD8?logo=go)](https://github.com/BeNeDeLuX/PortTorch/tree/master/scanner)
+[![Node/TypeScript](https://img.shields.io/badge/server-Node%2FTypeScript-3178C6?logo=typescript&logoColor=white)](https://github.com/BeNeDeLuX/PortTorch/tree/master/server)
+[![Open issues](https://img.shields.io/github/issues/BeNeDeLuX/PortTorch)](https://github.com/BeNeDeLuX/PortTorch/issues)
+
 > **Disclaimer:** This entire project - scanner, webserver, dashboard, and
 > documentation - was built entirely with AI (Claude Code), with no
 > hand-written code. Review it yourself before relying on it, especially
