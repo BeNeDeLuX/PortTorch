@@ -1,5 +1,11 @@
 name: Webserver Docker image
 
+# Builds and pushes the webserver's Docker image on every push to master
+# that touches server/** - unlike the scanner's release workflow, this is
+# NOT tag-triggered, so a webserver-vX.Y.Z git tag (if one exists) is
+# purely a historical marker and has no effect here. Publishes three tags:
+# :latest, the commit SHA, and the version read from package.json (below).
+
 on:
   push:
     branches: [master]
@@ -27,6 +33,15 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # Read straight from package.json rather than a git tag - this way
+      # the version tag on Docker Hub stays in sync automatically on every
+      # push, with no separate step to remember to run when cutting a
+      # release (see the file header comment above for why this doesn't
+      # use a git tag at all).
+      - name: Read webserver version
+        id: version
+        run: echo "version=$(jq -r .version server/package.json)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
@@ -35,5 +50,6 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/porttorch-server:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/porttorch-server:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/porttorch-server:${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

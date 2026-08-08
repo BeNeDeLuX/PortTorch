@@ -242,7 +242,8 @@ sudo docker compose up -d
 This pulls the prebuilt webserver image from [Docker
 Hub](https://hub.docker.com/r/benedelux/porttorch-server) (published
 automatically by `.github/workflows/webserver-docker.yml` on every push to
-`master` that touches `server/**`), starts PostgreSQL, runs the database
+`master` that touches `server/**`, tagged `:latest`, the commit SHA, and
+the current version, e.g. `:0.3.0`), starts PostgreSQL, runs the database
 migrations, and seeds the initial admin login from `ADMIN_USERNAME`/
 `ADMIN_PASSWORD` - all automatically on boot. The webserver generates its
 own self-signed TLS certificate on first start (persisted in a volume, so
