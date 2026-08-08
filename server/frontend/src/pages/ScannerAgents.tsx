@@ -322,9 +322,7 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
                         <td>
                           <div className="actions-cell">
                             {activeJob?.is_stale && (
-                              <button className="link-button" onClick={() => handleDismissScanJob(activeJob.id)}>
-                                dismiss
-                              </button>
+                              <button onClick={() => handleDismissScanJob(activeJob.id)}>Dismiss</button>
                             )}
                             {activeJob?.cancellable && (
                               <button

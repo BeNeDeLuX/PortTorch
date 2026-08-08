@@ -557,9 +557,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                   </span>
                 )}
                 {j.is_stale && canEdit && (
-                  <button className="link-button" onClick={() => handleDismissScanJob(j.id)}>
-                    dismiss
-                  </button>
+                  <button onClick={() => handleDismissScanJob(j.id)}>Dismiss</button>
                 )}
                 {j.cancellable && canEdit && (
                   <button onClick={() => handleCancelScanJob(j.id)} disabled={j.cancel_requested}>
