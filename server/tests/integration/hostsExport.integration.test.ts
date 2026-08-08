@@ -89,4 +89,17 @@ describe("hosts CSV export - host vs port detail", () => {
     expect(res.status).toBe(200);
     expect(res.text.split("\r\n")[0]).toBe("ip,hostname,scanner_agent,os_family,device_type,open_port_count,last_seen_at");
   });
+
+  it("export.json returns one object per host with a nested openPorts list", async () => {
+    const res = await client.get("/api/hosts/export.json").query({ q: IP });
+    expect(res.status).toBe(200);
+    const rows = res.body as Array<{ ip: string; hostname: string | null; scannerAgent: string | null; openPorts: Array<{ port: number; serviceName: string | null }> }>;
+    const row = rows.find((r) => r.ip === IP);
+    expect(row).toBeDefined();
+    expect(row?.hostname).toBe("it-export-host");
+    expect(row?.scannerAgent).toBe(agent.name);
+    expect(row?.openPorts).toHaveLength(2);
+    expect(row?.openPorts.some((p) => p.port === 22 && p.serviceName === "ssh")).toBe(true);
+    expect(row?.openPorts.some((p) => p.port === 443 && p.serviceName === "https")).toBe(true);
+  });
 });

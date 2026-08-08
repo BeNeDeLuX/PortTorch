@@ -506,6 +506,75 @@ hostsRouter.get("/export.csv", asyncHandler(async (req, res) => {
   res.status(200).send(lines.join("\r\n"));
 }));
 
+// JSON's third shape alongside the two CSV ones above: one object per host
+// (same filters, same host set as the "host" CSV detail level) with a
+// nested `openPorts` array - CSV can't express that nesting without either
+// flattening to one row per port (the "port" detail level) or losing the
+// port data entirely (the "host" summary level), so JSON exists
+// specifically for a caller that wants both the host-level fields and the
+// full port list in one file, structured rather than flattened.
+hostsRouter.get("/export.json", asyncHandler(async (req, res) => {
+  const filters = parseHostFilterParams(req.query as Record<string, unknown>);
+  const allowed = getAllowedScannerAgentIds(req);
+
+  let hostsQuery = db
+    .selectFrom("hosts")
+    .leftJoin("scanner_agents", "scanner_agents.id", "hosts.scanner_agent_id")
+    .select([
+      "hosts.id as id",
+      "hosts.ip as ip",
+      "hosts.hostname as hostname",
+      "hosts.last_seen_at as last_seen_at",
+      "hosts.os_family as os_family",
+      "hosts.os_name as os_name",
+      "hosts.device_type as device_type",
+      "scanner_agents.name as scanner_agent_name",
+    ])
+    .orderBy("hosts.last_seen_at", "desc");
+
+  hostsQuery = applyHostFilters(hostsQuery, filters, allowed);
+
+  // Same cap as the "host" CSV detail level above - one row per host here too.
+  const hosts = await hostsQuery.limit(2000).execute();
+
+  const hostIds = hosts.map((h) => h.id);
+  const ports =
+    hostIds.length > 0
+      ? await db
+          .selectFrom("current_host_ports")
+          .select(["host_id", "port", "protocol", "service_name", "service_product", "service_version"])
+          .where("host_id", "in", hostIds)
+          .where("state", "=", "open")
+          .execute()
+      : [];
+  const portsByHostId = new Map<string, typeof ports>();
+  for (const p of ports) {
+    const list = portsByHostId.get(p.host_id) ?? [];
+    list.push(p);
+    portsByHostId.set(p.host_id, list);
+  }
+
+  const result = hosts.map((h) => ({
+    ip: h.ip,
+    hostname: h.hostname,
+    scannerAgent: h.scanner_agent_name,
+    osFamily: h.os_family,
+    osName: h.os_name,
+    deviceType: h.device_type,
+    lastSeenAt: h.last_seen_at,
+    openPorts: (portsByHostId.get(h.id) ?? []).map((p) => ({
+      port: p.port,
+      protocol: p.protocol,
+      serviceName: p.service_name,
+      serviceProduct: p.service_product,
+      serviceVersion: p.service_version,
+    })),
+  }));
+
+  res.setHeader("Content-Disposition", 'attachment; filename="hosts.json"');
+  res.status(200).json(result);
+}));
+
 // Whether any dashboard filter is actually active - used by the facets
 // endpoints below to skip the extra filtering work entirely on a plain,
 // unfiltered page load (the overwhelmingly common case), rather than

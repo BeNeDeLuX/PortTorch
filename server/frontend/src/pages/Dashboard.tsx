@@ -10,9 +10,8 @@ import {
   Me,
   SavedSearch,
   ScannerAgent,
-  HostsExportDetail,
-  hostsExportUrl,
 } from "../api";
+import ExportModal from "../components/ExportModal";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanProgressModal from "../components/ScanProgressModal";
@@ -178,7 +177,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
   const [allPorts, setAllPorts] = useState<Facets["ports"] | null>(null);
   const [showAllPorts, setShowAllPorts] = useState(false);
   const [agents, setAgents] = useState<ScannerAgent[]>([]);
-  const [exportDetail, setExportDetail] = useState<HostsExportDetail>("host");
+  const [showExportModal, setShowExportModal] = useState(false);
   const [loading, setLoading] = useState(true);
   // View mode / column visibility / sort are display preferences, not
   // search filters, so they live in localStorage rather than the URL.
@@ -666,20 +665,13 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
           </form>
         )}
         <div className="csv-export-controls">
-          <select
-            className="export-detail-select"
-            value={exportDetail}
-            onChange={(e) => setExportDetail(e.target.value as HostsExportDetail)}
-            title="Export CSV row shape"
-          >
-            <option value="host">1 row per host (summary)</option>
-            <option value="port">1 row per host+port (detailed)</option>
-          </select>
-          <a className="export-link" href={hostsExportUrl(filters, exportDetail)} download>
-            Export CSV
-          </a>
+          <button type="button" className="link-button" onClick={() => setShowExportModal(true)}>
+            Export data
+          </button>
         </div>
       </div>
+
+      {showExportModal && <ExportModal filters={filters} onClose={() => setShowExportModal(false)} />}
 
       {activeChips.length > 0 && (
         <div className="filter-chips">

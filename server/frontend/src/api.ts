@@ -480,6 +480,11 @@ export function hostsExportUrl(filters: HostFilters, detail: HostsExportDetail =
   return `/api/hosts/export.csv${qs}${qs ? "&" : "?"}detail=${detail}`;
 }
 
+export function hostsExportJsonUrl(filters: HostFilters): string {
+  const qs = hostsQueryString(filters);
+  return `/api/hosts/export.json${qs}`;
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<LoginResult>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),

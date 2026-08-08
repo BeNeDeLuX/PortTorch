@@ -72,10 +72,11 @@ The project has two independently deployed components:
   background check every 5 minutes fires a `saved_search.match` webhook
   the first time a host newly starts matching (not repeatedly for hosts
   that already matched).
-- :outbox_tray: **CSV export** - respects whatever filters are currently active. Choose
-  either a one-row-per-host summary (with an open-port count) or a
-  one-row-per-open-port detailed export (port/protocol/service columns) for
-  a flat asset-inventory shape.
+- :outbox_tray: **Export data** - respects whatever filters are currently active. A popup
+  offers a one-row-per-host CSV summary (with an open-port count), a
+  one-row-per-open-port detailed CSV (port/protocol/service columns) for a
+  flat asset-inventory shape, or a JSON export (one object per host with a
+  nested list of its open ports).
 - :desktop_computer: **Host detail page** - open ports with banners/CPE/OS hints and known
   CVEs (matched against detected service versions, synced daily from the
   NVD database - see below), OS/device classification and MAC address

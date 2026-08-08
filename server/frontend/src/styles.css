@@ -1562,6 +1562,23 @@ th {
   overflow-y: auto;
 }
 
+/* Export modal (components/ExportModal.tsx) */
+.export-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.export-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
 /* Scan progress modal (components/ScanProgressModal.tsx) */
 .scan-phase-tracker {
   display: flex;
