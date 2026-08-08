@@ -113,6 +113,10 @@ The project has two independently deployed components:
   host's detail page individually.
 - :bar_chart: **Digest** - a fleet-wide "what changed" view (newly discovered hosts,
   newly opened/closed ports) over the last 24 hours or 7 days.
+- :chart_with_upwards_trend: **Trends** - fleet-wide time series (cumulative total
+  hosts, and daily new hosts/scans/open-ports-seen) over a selectable range (7/30/90/365
+  days), filterable to one or more scanner agents. Chart or table view, same
+  toggle style as the main dashboard's Grid/Table switch.
 - :bell: **Webhooks** - fire a JSON POST (compatible with Slack/Discord incoming
   webhooks) when a new host appears, a port newly opens, a certificate is
   about to expire, or a saved search matches a new host.
@@ -140,7 +144,12 @@ The project has two independently deployed components:
   nothing is running. Scans running under a `serve` scanner (its own
   `POST /scans` API or the rescan/schedule queue) show a **Stop** button -
   a `scan`/`menu` run has nothing checking for a stop signal while it's
-  running, so those can't be stopped remotely and show no button.
+  running, so those can't be stopped remotely and show no button. A **Details**
+  button opens a live-updating popup with the scanner's own recent log lines -
+  discovery (masscan/nmap) shown as a single done/active step, followed by a
+  checklist of what's running concurrently after that (nmap enrichment,
+  screenshots, TLS certificate probes, RDP capture, result submission), each
+  marked not-started/seen/in-progress as the scanner streams progress in.
 - :no_entry_sign: **Scan excludes** (admin only) - IPs (single address, CIDR, or an
   address range like `10.0.0.1-10.0.0.10`), ports/port ranges, or a
   specific IP+port combination (e.g. `10.0.0.5:3389`) that a scanner will
