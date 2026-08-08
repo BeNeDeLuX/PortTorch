@@ -276,15 +276,26 @@ The scanner runs natively on Linux (not in Docker) since it needs raw
 socket access for `masscan`/`nmap`, and may need to reach machines outside
 any container network.
 
-### Automated install (Debian)
+### Automated install (Debian/Ubuntu)
 
 `scanner/install.sh` automates everything below for Debian (and
-Debian-derivatives): installs the required and optional packages, gets the
+Debian-derivatives, **including Ubuntu** - it checks `ID`/`ID_LIKE` in
+`/etc/os-release`, and Ubuntu's `ID_LIKE=debian` passes that check without a
+warning): installs the required and optional packages, gets the
 `porttorch` binary, builds `gowitness`, grants `masscan`/`nmap` their
 capabilities, prompts for the webserver URL/API key to write
 `config.yaml`, and installs a systemd service (`porttorch-scanner.service`)
 running `porttorch serve` so rescans and recurring schedules work
 unattended.
+
+> [!NOTE]
+> On Ubuntu, the *required* packages (`masscan`, `nmap`, `libcap2-bin`) install
+> the same as on Debian - core scanning needs nothing extra. The *optional*
+> ones (screenshots/RDP capture/OCR, best-effort - a failure only warns, it
+> never aborts the install) can differ: `chromium` on Ubuntu 22.04+ pulls in
+> a snap-based package instead of a native `.deb`, unlike Debian's. Run
+> `porttorch doctor` after installing to confirm which optional features
+> actually came up working.
 
 If the checkout is exactly at a `scanner-vX.Y.Z` tag, the `porttorch`
 binary is downloaded (checksum-verified) from that tag's GitHub Release
