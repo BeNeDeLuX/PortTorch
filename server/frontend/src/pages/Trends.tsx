@@ -218,18 +218,21 @@ export default function Trends({ me, onLogout }: { me: Me; onLogout: () => void 
       <h2>Trends</h2>
 
       <div className="list-controls">
+        <div className="list-controls-filters">
+          <label className="hide-empty-toggle">
+            Scanner
+            <ScannerMultiSelect agents={agents} selectedIds={scannerFilterIds} onChange={setScannerFilterIds} align="left" />
+          </label>
+        </div>
+      </div>
+
+      <div className="list-controls">
         <div className="filter-chips">
           {DAY_PRESETS.map((d) => (
             <button key={d} className={`chip ${days === d ? "active" : ""}`} onClick={() => setDays(d)}>
               Last {d} days
             </button>
           ))}
-        </div>
-        <div className="list-controls-filters">
-          <label className="hide-empty-toggle">
-            Scanner
-            <ScannerMultiSelect agents={agents} selectedIds={scannerFilterIds} onChange={setScannerFilterIds} align="right" />
-          </label>
         </div>
         <div className="view-toggle">
           <button className={!showTable ? "active" : ""} onClick={() => setShowTable(false)}>
