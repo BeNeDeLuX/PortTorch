@@ -88,7 +88,9 @@ The project has two independently deployed components:
   comment log (each comment keeps its author and timestamp). Prev/next
   buttons step through whichever filtered/sorted host list you came from
   (including across a page boundary), so you can click through a search's
-  results without going back to the list each time.
+  results without going back to the list each time. Its own **Export data**
+  popup exports just this host - CSV (one row per open port, including
+  banners/CPEs/CVE ids) or JSON (the full host record plus its ports).
 - :arrows_counterclockwise: **Rescan button** - triggers an on-demand rescan of a host's currently
   known open ports, picked up by whichever scanner last scanned it.
 - :alarm_clock: **Schedule Scans** - schedule a target/port spec to be scanned on a plain

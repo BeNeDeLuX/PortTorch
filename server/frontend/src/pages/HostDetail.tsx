@@ -6,6 +6,7 @@ import { cveSeverityClass } from "../lib/cveSeverity";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime, formatDateOnly } from "../lib/formatDate";
 import Lightbox, { LightboxItem } from "../components/Lightbox";
+import HostExportModal from "../components/HostExportModal";
 
 // Router state Dashboard.tsx hands off when navigating to a host - see
 // the prev/next wiring further down for how each field is used.
@@ -108,6 +109,7 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
   }
   const [data, setData] = useState<HostDetailData | null>(null);
   const [rescanError, setRescanError] = useState<string | null>(null);
+  const [showExportModal, setShowExportModal] = useState(false);
   const [newTag, setNewTag] = useState("");
   const [newComment, setNewComment] = useState("");
   const [probeHostnameInput, setProbeHostnameInput] = useState("");
@@ -251,12 +253,16 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
         <h1>
           {data.host.ip} {data.host.hostname && <span className="host-hostname">({data.host.hostname})</span>}
         </h1>
+        <button type="button" className="link-button" onClick={() => setShowExportModal(true)}>
+          Export data
+        </button>
         {canEdit && (
           <button onClick={handleRescan} disabled={rescanInFlight}>
             {rescanInFlight ? "Rescan running..." : "Rescan"}
           </button>
         )}
       </div>
+      {showExportModal && <HostExportModal data={data} onClose={() => setShowExportModal(false)} />}
       <p className="host-meta host-seen-summary">
         First seen {formatDateTime(data.host.first_seen_at, me.preferences)} · last seen{" "}
         {formatDateTime(data.host.last_seen_at, me.preferences)}

@@ -370,6 +370,18 @@ header h1 {
   text-decoration: underline;
 }
 
+/* .export-link is also used on <button> elements (HostExportModal.tsx,
+   whose downloads are built client-side rather than linking to a backend
+   URL) - reset the button chrome so it reads identically to the <a>
+   version used elsewhere (Dashboard's ExportModal.tsx). */
+button.export-link {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+}
+
 .link-button {
   background: none;
   border: none;
