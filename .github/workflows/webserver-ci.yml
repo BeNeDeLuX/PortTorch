@@ -1,0 +1,123 @@
+name: Webserver CI
+
+# Typecheck/build/test gate for server/ and server/frontend/, run on every
+# push and PR - there was no automated signal here before this (only
+# CodeQL on PRs), so every Dependabot dependency bump had to be typechecked
+# and tested by hand to find real breaks (TypeScript 7's removed
+# moduleResolution, zod 4's removed z.string().ip(), Express 5's router
+# rejecting a bare "*" route). This exists to catch that class of problem
+# automatically, before merge, instead of after.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "server/**"
+      - ".github/workflows/webserver-ci.yml"
+  pull_request:
+    paths:
+      - "server/**"
+      - ".github/workflows/webserver-ci.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc -p tsconfig.json --noEmit
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npx tsc -p tsconfig.build.json
+
+  backend-integration:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    # Same postgres:16-alpine image and porttorch_test credentials as
+    # docker-compose.yml's postgres-test service (see CLAUDE.md's
+    # "Integration tests" section) - a GitHub Actions service container
+    # instead of docker compose here, since the runner already manages the
+    # container lifecycle. Mapped to 5433 specifically so it matches
+    # vitest.integration.config.ts's own default TEST_DATABASE_URL without
+    # needing to override it.
+    services:
+      postgres-test:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: porttorch_test
+          POSTGRES_PASSWORD: porttorch_test
+          POSTGRES_DB: porttorch_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U porttorch_test -d porttorch_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://porttorch_test:porttorch_test@localhost:5433/porttorch_test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Migrate test database
+        run: npm run migrate:up
+
+      - name: Integration tests
+        run: npm run test:integration
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: server/frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck + build
+        run: npm run build
