@@ -47,6 +47,9 @@ The project has two independently deployed components:
   dashboard, authentication, and the database. This is the only component
   end users interact with directly.
 
+> [!TIP]
+> Want to get started quickly? Jump straight to [Quick start (Docker Compose)](#quick-start-docker-compose).
+
 ## Dashboard features
 
 - :mag: **Search** - free text across IP, hostname, service name/product,
@@ -216,6 +219,10 @@ The project has two independently deployed components:
 
 ## Quick start (Docker Compose)
 
+> [!TIP]
+> This is the fastest way to get the webserver running. You'll still need
+> at least one scanner (see below) to populate it with data.
+
 This brings up the webserver + PostgreSQL. You still need at least one
 scanner (see below) to actually populate it with data.
 
@@ -290,6 +297,10 @@ still need the manual steps below. See [Updating](#updating) below for
 how to pick up a new version later.
 
 ### Manual install (other distros, or running without systemd)
+
+> [!NOTE]
+> Only needed if you're not on Debian/Debian-derivatives — `install.sh`
+> already automates everything below.
 
 The sections below are what `install.sh` automates for Debian - skip them if
 you already ran it above. They also use a different config location: the
