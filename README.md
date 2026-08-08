@@ -520,7 +520,7 @@ the pulled image with a freshly built, identically-tagged one.
 ### Scanner
 
 ```bash
-cd <scanner checkout>
+cd PortTorch/scanner
 git pull
 sudo ./install.sh --rebuild-only
 ```
