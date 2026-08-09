@@ -36,7 +36,18 @@ const CONCURRENT_STAGES: Array<{ key: string; label: string }> = [
 
 const POLL_INTERVAL_MS = 3000;
 
-export default function ScanProgressModal({ jobId, onClose }: { jobId: string; onClose: () => void }) {
+export default function ScanProgressModal({
+  jobId,
+  onClose,
+  live = true,
+}: {
+  jobId: string;
+  onClose: () => void;
+  // false for a scan that's already finished (Scan History) - fetches the
+  // final snapshot once instead of polling every 3s forever for data that
+  // can no longer change.
+  live?: boolean;
+}) {
   const [progress, setProgress] = useState<ScanJobProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Only ever increases within one modal session - once the scan has
@@ -75,12 +86,17 @@ export default function ScanProgressModal({ jobId, onClose }: { jobId: string; o
       }
     }
     load();
+    if (!live) {
+      return () => {
+        cancelled = true;
+      };
+    }
     const interval = setInterval(load, POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [jobId]);
+  }, [jobId, live]);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ block: "end" });
@@ -124,17 +140,28 @@ export default function ScanProgressModal({ jobId, onClose }: { jobId: string; o
           {progress.stageDetail && <p className="scan-phase-detail">{progress.stageDetail}</p>}
 
           {progress.logs.length === 0 ? (
-            <p className="empty">No progress reported yet - the scanner pushes an update every few seconds once the scan starts.</p>
+            <p className="empty">
+              {live
+                ? "No progress reported yet - the scanner pushes an update every few seconds once the scan starts."
+                : "No progress log was recorded for this scan - it may predate this feature, or the scanner never reported before the scan finished."}
+            </p>
           ) : (
-            <div className="scan-log-feed">
-              {progress.logs.map((line, i) => (
-                <div key={i} className="scan-log-line">
-                  <span className="host-meta">{new Date(line.time).toLocaleTimeString()}</span>{" "}
-                  <span className="scan-log-stage">[{line.stage}]</span> {line.message}
-                </div>
-              ))}
-              <div ref={logEndRef} />
-            </div>
+            <>
+              {!live && (
+                <p className="host-meta scan-progress-historical-note">
+                  Final snapshot from the scanner (last {progress.logs.length} log line{progress.logs.length === 1 ? "" : "s"}) - earlier lines from this scan were not kept.
+                </p>
+              )}
+              <div className="scan-log-feed">
+                {progress.logs.map((line, i) => (
+                  <div key={i} className="scan-log-line">
+                    <span className="host-meta">{new Date(line.time).toLocaleTimeString()}</span>{" "}
+                    <span className="scan-log-stage">[{line.stage}]</span> {line.message}
+                  </div>
+                ))}
+                <div ref={logEndRef} />
+              </div>
+            </>
           )}
 
           {progress.updatedAt && (

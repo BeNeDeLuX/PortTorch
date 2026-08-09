@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, Me, ScanHistoryResult } from "../api";
 import PageHeader from "../components/PageHeader";
+import ScanProgressModal from "../components/ScanProgressModal";
 import { formatDateTime } from "../lib/formatDate";
 import { durationLabel } from "../lib/elapsed";
 
@@ -29,6 +30,7 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [result, setResult] = useState<ScanHistoryResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [detailsJobId, setDetailsJobId] = useState<string | null>(null);
 
   useEffect(() => {
     load();
@@ -122,6 +124,7 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
               <th onClick={() => setSort("open_ports_found")}>Open ports{sortIndicator("open_ports_found")}</th>
               <th onClick={() => setSort("screenshots")}>Screenshots{sortIndicator("screenshots")}</th>
               <th onClick={() => setSort("tls_certificates")}>TLS certs{sortIndicator("tls_certificates")}</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -139,6 +142,9 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
                 <td>{s.open_ports_found}</td>
                 <td>{s.screenshots + s.rdp_screenshots}</td>
                 <td>{s.tls_certificates}</td>
+                <td>
+                  <button onClick={() => setDetailsJobId(s.id)}>Details</button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -158,6 +164,10 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
             Next &rarr;
           </button>
         </div>
+      )}
+
+      {detailsJobId && (
+        <ScanProgressModal jobId={detailsJobId} live={false} onClose={() => setDetailsJobId(null)} />
       )}
     </div>
   );

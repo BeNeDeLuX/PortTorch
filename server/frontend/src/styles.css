@@ -1700,6 +1700,10 @@ th {
   margin: 0.75rem 0 0;
 }
 
+.scan-progress-historical-note {
+  margin: 0 0 0.5rem;
+}
+
 /* Host Detail's "PDF" export option (HostExportModal.tsx) is just
    window.print() against the page's own DOM - no PDF library, no
    screenshot re-fetch, whatever's already rendered (including loaded
