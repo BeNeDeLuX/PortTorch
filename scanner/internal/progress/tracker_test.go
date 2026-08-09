@@ -8,13 +8,19 @@ import (
 )
 
 type fakePusher struct {
-	mu    sync.Mutex
-	calls []pushCall
+	mu        sync.Mutex
+	calls     []pushCall
+	fullCalls []fullLogPushCall
 }
 
 type pushCall struct {
 	jobID, stage, detail string
 	logs                 []LogLine
+}
+
+type fullLogPushCall struct {
+	jobID string
+	logs  []LogLine
 }
 
 func (f *fakePusher) PushScanProgress(_ context.Context, jobID, stage, detail string, logs []LogLine) error {
@@ -23,6 +29,15 @@ func (f *fakePusher) PushScanProgress(_ context.Context, jobID, stage, detail st
 	logsCopy := make([]LogLine, len(logs))
 	copy(logsCopy, logs)
 	f.calls = append(f.calls, pushCall{jobID: jobID, stage: stage, detail: detail, logs: logsCopy})
+	return nil
+}
+
+func (f *fakePusher) PushFullScanLog(_ context.Context, jobID string, logs []LogLine) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	logsCopy := make([]LogLine, len(logs))
+	copy(logsCopy, logs)
+	f.fullCalls = append(f.fullCalls, fullLogPushCall{jobID: jobID, logs: logsCopy})
 	return nil
 }
 
@@ -36,6 +51,18 @@ func (f *fakePusher) lastCall() pushCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls[len(f.calls)-1]
+}
+
+func (f *fakePusher) fullLogCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.fullCalls)
+}
+
+func (f *fakePusher) lastFullLogCall() fullLogPushCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.fullCalls[len(f.fullCalls)-1]
 }
 
 func TestTrackerBuffersLogLinesAndCapsAtMax(t *testing.T) {
@@ -84,6 +111,72 @@ func TestTrackerPushesNothingBeforeFirstProgressCall(t *testing.T) {
 
 	if pusher.callCount() != 0 {
 		t.Fatalf("expected no push when Progress was never called, got %d", pusher.callCount())
+	}
+	if pusher.fullLogCallCount() != 0 {
+		t.Fatalf("expected no full-log push when Progress was never called, got %d", pusher.fullLogCallCount())
+	}
+}
+
+func TestTrackerPushesFullLogOnceAtClose(t *testing.T) {
+	pusher := &fakePusher{}
+	tr := NewTracker(pusher, "job-5", time.Hour)
+	tr.Progress("masscan", "scanning 10.0.0.0/24")
+	tr.Progress("nmap", "probing 10.0.0.5")
+	tr.Progress("submit", "submitted 10.0.0.5 (3 open port(s))")
+
+	if pusher.fullLogCallCount() != 0 {
+		t.Fatalf("expected no full-log push before Close, got %d", pusher.fullLogCallCount())
+	}
+
+	tr.Close()
+
+	if pusher.fullLogCallCount() != 1 {
+		t.Fatalf("expected exactly 1 full-log push (from Close), got %d", pusher.fullLogCallCount())
+	}
+	call := pusher.lastFullLogCall()
+	if call.jobID != "job-5" {
+		t.Errorf("jobID = %q, want job-5", call.jobID)
+	}
+	if len(call.logs) != 3 || call.logs[0].Stage != "masscan" || call.logs[2].Stage != "submit" {
+		t.Errorf("logs = %+v, want all 3 lines in order", call.logs)
+	}
+}
+
+func TestTrackerFullLogSurvivesPastMaxLogLinesButCapsAtMaxFullLogLines(t *testing.T) {
+	pusher := &fakePusher{}
+	tr := NewTracker(pusher, "job-6", time.Hour)
+	// More than maxLogLines (the periodic-push cap) but well under
+	// maxFullLogLines - the full log must keep everything here, unlike
+	// the capped periodic snapshot which would have trimmed it.
+	total := maxLogLines + 50
+	for i := 0; i < total; i++ {
+		tr.Progress("nmap", "line")
+	}
+	tr.Close()
+
+	call := pusher.lastFullLogCall()
+	if len(call.logs) != total {
+		t.Fatalf("expected full log to keep all %d lines (not capped at maxLogLines=%d), got %d", total, maxLogLines, len(call.logs))
+	}
+
+	// And the periodic-push cap is still enforced independently.
+	if len(pusher.lastCall().logs) != maxLogLines {
+		t.Fatalf("expected periodic push still capped at %d lines, got %d", maxLogLines, len(pusher.lastCall().logs))
+	}
+}
+
+func TestTrackerFullLogCapsAtMaxFullLogLines(t *testing.T) {
+	pusher := &fakePusher{}
+	tr := NewTracker(pusher, "job-7", time.Hour)
+	total := maxFullLogLines + 20
+	for i := 0; i < total; i++ {
+		tr.Progress("nmap", "line")
+	}
+	tr.Close()
+
+	call := pusher.lastFullLogCall()
+	if len(call.logs) != maxFullLogLines {
+		t.Fatalf("expected full log capped at %d lines, got %d", maxFullLogLines, len(call.logs))
 	}
 }
 

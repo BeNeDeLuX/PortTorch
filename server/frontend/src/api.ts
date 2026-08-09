@@ -392,6 +392,11 @@ export interface ScanJobProgress {
   currentStage: string | null;
   stageDetail: string | null;
   logs: Array<{ time: string; stage: string; message: string }>;
+  // true once the scanner's one-time complete-log upload (at scan
+  // completion) has landed, meaning `logs` is the full log rather than
+  // just the last ~100 lines of the periodic live snapshot. Always false
+  // for a still-running scan.
+  logsComplete: boolean;
   updatedAt: string | null;
 }
 

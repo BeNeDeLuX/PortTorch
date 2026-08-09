@@ -96,6 +96,17 @@ export interface ScanProgressLogLine {
   message: string;
 }
 
+// The complete progress log for a finished scan, uploaded once at
+// Close() (see scanner/internal/progress/tracker.go and
+// CLAUDE.md's "Scan progress" section) - unlike ScanJobProgressTable's
+// recent_logs, this isn't capped to the scanner's small periodic-push
+// buffer, only to its much higher one-time-upload ceiling.
+export interface ScanJobFullLogTable {
+  scan_job_id: string;
+  logs: ColumnType<ScanProgressLogLine[], string, string>;
+  created_at: ColumnType<Date, string | undefined, string>;
+}
+
 export interface HostsTable {
   id: Generated<string>;
   ip: string;
@@ -405,6 +416,7 @@ export interface Database {
   api_tokens: ApiTokensTable;
   scan_jobs: ScanJobsTable;
   scan_job_progress: ScanJobProgressTable;
+  scan_job_full_log: ScanJobFullLogTable;
   hosts: HostsTable;
   host_port_observations: HostPortObservationsTable;
   current_host_ports: CurrentHostPortsTable;

@@ -149,7 +149,9 @@ export default function ScanProgressModal({
             <>
               {!live && (
                 <p className="host-meta scan-progress-historical-note">
-                  Final snapshot from the scanner (last {progress.logs.length} log line{progress.logs.length === 1 ? "" : "s"}) - earlier lines from this scan were not kept.
+                  {progress.logsComplete
+                    ? `Complete log for this scan (${progress.logs.length} line${progress.logs.length === 1 ? "" : "s"}).`
+                    : `Final snapshot from the scanner (last ${progress.logs.length} log line${progress.logs.length === 1 ? "" : "s"}) - earlier lines from this scan were not kept.`}
                 </p>
               )}
               <div className="scan-log-feed">

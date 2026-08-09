@@ -57,7 +57,7 @@ describe("scan job progress (PATCH .../progress from the scanner, GET .../progre
   it("GET returns nulls/empty before the scanner has pushed anything", async () => {
     const res = await adminClient.get(`/api/scan-jobs/${jobId}/progress`);
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ currentStage: null, stageDetail: null, logs: [], updatedAt: null });
+    expect(res.body).toEqual({ currentStage: null, stageDetail: null, logs: [], logsComplete: false, updatedAt: null });
   });
 
   it("PATCH from the owning scanner is reflected by GET", async () => {
@@ -76,6 +76,7 @@ describe("scan job progress (PATCH .../progress from the scanner, GET .../progre
     expect(getRes.body.currentStage).toBe("nmap");
     expect(getRes.body.stageDetail).toBe("probing 240.7.1.1 (1 port(s))");
     expect(getRes.body.logs).toEqual(logs);
+    expect(getRes.body.logsComplete).toBe(false);
     expect(getRes.body.updatedAt).not.toBeNull();
   });
 
@@ -119,5 +120,65 @@ describe("scan job progress (PATCH .../progress from the scanner, GET .../progre
   it("GET 400s on a malformed job id", async () => {
     const res = await adminClient.get("/api/scan-jobs/not-a-uuid/progress");
     expect(res.status).toBe(400);
+  });
+
+  describe("full-log (uploaded once by the scanner at scan completion)", () => {
+    it("PATCH .../full-log from the owning scanner makes GET prefer it over recent_logs and mark logsComplete", async () => {
+      const fullLog = [
+        { time: "2026-08-08T14:15:45Z", stage: "masscan", message: "scanning 240.7.1.1 (ports 22)" },
+        { time: "2026-08-08T14:16:00Z", stage: "nmap", message: "probing 240.7.1.1 (1 port(s))" },
+        { time: "2026-08-08T14:17:00Z", stage: "submit", message: "submitted 240.7.1.1 (1 open port(s))" },
+      ];
+      const patchRes = await request(getApp())
+        .patch(`/api/ingest/scan-jobs/${jobId}/full-log`)
+        .set("Authorization", `Bearer ${agentA.apiKey}`)
+        .send({ logs: fullLog });
+      expect(patchRes.status).toBe(204);
+
+      const getRes = await adminClient.get(`/api/scan-jobs/${jobId}/progress`);
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.logs).toEqual(fullLog);
+      expect(getRes.body.logsComplete).toBe(true);
+      // The last recent_logs push (from the earlier "replaces the log
+      // buffer wholesale" test, just 1 line) must no longer be what GET
+      // returns - the full log takes precedence once present.
+      expect(getRes.body.logs.length).toBe(3);
+    });
+
+    it("a second PATCH .../full-log upserts rather than erroring", async () => {
+      const updatedLog = [{ time: "2026-08-08T14:18:00Z", stage: "submit", message: "retry upload" }];
+      const patchRes = await request(getApp())
+        .patch(`/api/ingest/scan-jobs/${jobId}/full-log`)
+        .set("Authorization", `Bearer ${agentA.apiKey}`)
+        .send({ logs: updatedLog });
+      expect(patchRes.status).toBe(204);
+
+      const getRes = await adminClient.get(`/api/scan-jobs/${jobId}/progress`);
+      expect(getRes.body.logs).toEqual(updatedLog);
+      expect(getRes.body.logsComplete).toBe(true);
+    });
+
+    it("PATCH .../full-log is rejected for a job that belongs to a different scanner agent", async () => {
+      const res = await request(getApp())
+        .patch(`/api/ingest/scan-jobs/${jobId}/full-log`)
+        .set("Authorization", `Bearer ${agentB.apiKey}`)
+        .send({ logs: [] });
+      expect(res.status).toBe(404);
+    });
+
+    it("PATCH .../full-log requires a valid scanner api key", async () => {
+      const res = await request(getApp())
+        .patch(`/api/ingest/scan-jobs/${jobId}/full-log`)
+        .send({ logs: [] });
+      expect(res.status).toBe(401);
+    });
+
+    it("PATCH .../full-log 400s on a malformed job id", async () => {
+      const res = await request(getApp())
+        .patch("/api/ingest/scan-jobs/not-a-uuid/full-log")
+        .set("Authorization", `Bearer ${agentA.apiKey}`)
+        .send({ logs: [] });
+      expect(res.status).toBe(400);
+    });
   });
 });

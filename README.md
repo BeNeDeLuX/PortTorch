@@ -118,9 +118,10 @@ The project has two independently deployed components:
   (hosts scanned, open ports, screenshots, TLS certificates). The
   historical counterpart to the "Active scans" banner, which only
   shows what's running right now. Each row's "Details" button reopens
-  the same scan-progress popup a running scan shows live, displaying
-  the scanner's final pushed snapshot (its last ~100 log lines) instead
-  of polling for updates.
+  the same scan-progress popup a running scan shows live, displaying the
+  complete log for that scan (uploaded once by the scanner when it
+  finishes) instead of polling for updates - or, for a scan that finished
+  before this existed, the scanner's last pushed snapshot instead.
 - :closed_lock_with_key: **Certificates overview** - every TLS certificate across the whole
   fleet, sorted soonest-expiring first. Searchable by host, port, CN, or
   issuer, plus a checkbox to show only already-expired certificates.

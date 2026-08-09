@@ -118,6 +118,14 @@ func (c *Client) PushScanProgress(ctx context.Context, jobID, stage, detail stri
 	return c.doJSON(ctx, http.MethodPatch, "/api/ingest/scan-jobs/"+jobID+"/progress", body, nil)
 }
 
+// PushFullScanLog uploads the complete accumulated progress log once, at
+// scan completion - see progress.Tracker.Close, which calls this exactly
+// once per scan. Satisfies progress.Pusher.
+func (c *Client) PushFullScanLog(ctx context.Context, jobID string, logs []progress.LogLine) error {
+	body := map[string]any{"logs": logs}
+	return c.doJSON(ctx, http.MethodPatch, "/api/ingest/scan-jobs/"+jobID+"/full-log", body, nil)
+}
+
 type ingestSSHHostKey struct {
 	KeyType           string `json:"keyType"`
 	Bits              int    `json:"bits,omitempty"`

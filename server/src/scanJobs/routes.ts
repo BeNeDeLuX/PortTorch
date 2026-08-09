@@ -204,14 +204,16 @@ scanJobsRouter.get("/active", asyncHandler(async (req, res) => {
 
 // Live-ish progress for one running (or just-finished) scan job - the
 // "Details" popup on the dashboard's Active Scans banner / Scanner
-// Agents' active-scan column polls this while open. Backed by
-// scan_job_progress, pushed by the scanner itself every few seconds while
-// it runs (see ingest/routes.ts's PATCH .../progress) - this route only
-// ever reads whatever the scanner last sent, it never talks to the
-// scanner directly (all communication is scanner-initiated). Same
-// read-only access level as /active (any authenticated role, not
-// operator-gated) since this is just a more detailed view of the same
-// already-visible data, not a new capability.
+// Agents' active-scan column polls this while open, and Scan History's
+// own "Details" button opens the same popup for an already-finished job
+// (ScanProgressModal's `live={false}` mode). Backed by scan_job_progress,
+// pushed by the scanner itself every few seconds while it runs (see
+// ingest/routes.ts's PATCH .../progress) - this route only ever reads
+// whatever the scanner last sent, it never talks to the scanner directly
+// (all communication is scanner-initiated). Same read-only access level
+// as /active (any authenticated role, not operator-gated) since this is
+// just a more detailed view of the same already-visible data, not a new
+// capability.
 scanJobsRouter.get("/:id/progress", asyncHandler(async (req, res) => {
   if (!z.string().uuid().safeParse(req.params.id).success) {
     res.status(400).json({ error: "invalid scan job id" });
@@ -233,18 +235,33 @@ scanJobsRouter.get("/:id/progress", asyncHandler(async (req, res) => {
     return;
   }
 
-  const progress = await db
-    .selectFrom("scan_job_progress")
-    .select(["current_stage", "stage_detail", "recent_logs", "updated_at"])
-    .where("scan_job_id", "=", req.params.id)
-    .executeTakeFirst();
+  const [progress, fullLog] = await Promise.all([
+    db
+      .selectFrom("scan_job_progress")
+      .select(["current_stage", "stage_detail", "recent_logs", "updated_at"])
+      .where("scan_job_id", "=", req.params.id)
+      .executeTakeFirst(),
+    // Uploaded once by the scanner at completion (see ingest/routes.ts's
+    // PATCH .../full-log) - preferred over the capped recent_logs above
+    // whenever it exists. Absent for a still-running scan (only written
+    // at Close()) and for anything that finished before this feature
+    // existed or whose upload failed - both fall back to recent_logs
+    // below, same "best-effort, graceful degradation" as everywhere else
+    // scanner-pushed data is read here.
+    db
+      .selectFrom("scan_job_full_log")
+      .select(["logs"])
+      .where("scan_job_id", "=", req.params.id)
+      .executeTakeFirst(),
+  ]);
 
   // No row yet just means the scanner hasn't pushed its first update -
   // a real, common state (e.g. right after a scan starts), not an error.
   res.json({
     currentStage: progress?.current_stage ?? null,
     stageDetail: progress?.stage_detail ?? null,
-    logs: progress?.recent_logs ?? [],
+    logs: fullLog?.logs ?? progress?.recent_logs ?? [],
+    logsComplete: fullLog !== undefined,
     updatedAt: progress?.updated_at ?? null,
   });
 }));

@@ -30,8 +30,24 @@ type LogLine struct {
 
 // maxLogLines matches internal/api/state.go's own cap - not shared code,
 // but there's no reason for the two buffers to disagree on how much
-// recent history is worth keeping.
+// recent history is worth keeping. This bounds the "live" snapshot pushed
+// every DefaultPushInterval while a scan runs; see maxFullLogLines below
+// for the separate, much higher bound on the complete log kept for the
+// one-time push at Close().
 const maxLogLines = 100
+
+// maxFullLogLines bounds fullLog, the unbounded-in-spirit accumulator of
+// every progress line for the whole scan, uploaded once at Close() so
+// Scan History can show the complete log rather than just the last
+// maxLogLines lines. Generous enough that no real scan should ever hit
+// it (each host typically produces on the order of 5-15 lines across
+// nmap/gowitness/tls/rdp/snmp/submit - a fleet scan of hundreds of hosts
+// stays well under this), but still bounded rather than truly unlimited,
+// so a pathologically large scan can't grow this without limit in memory
+// or in the one upload request. If ever hit, the oldest lines are
+// dropped first (same as maxLogLines), keeping how the scan ended rather
+// than how it started.
+const maxFullLogLines = 10000
 
 // DefaultPushInterval is used by all three entry points (scan/menu/serve)
 // for consistency - frequent enough that a "Details" popup open on the
@@ -46,6 +62,9 @@ const DefaultPushInterval = 3 * time.Second
 // fake without spinning up a real HTTP client.
 type Pusher interface {
 	PushScanProgress(ctx context.Context, jobID, stage, detail string, logs []LogLine) error
+	// PushFullScanLog uploads the complete accumulated log once, at
+	// Close() - see maxFullLogLines above and Close()'s doc comment.
+	PushFullScanLog(ctx context.Context, jobID string, logs []LogLine) error
 }
 
 // Tracker is safe for concurrent use - Progress is called from whichever
@@ -57,10 +76,11 @@ type Tracker struct {
 	pusher Pusher
 	jobID  string
 
-	mu     sync.Mutex
-	stage  string
-	detail string
-	logs   []LogLine
+	mu      sync.Mutex
+	stage   string
+	detail  string
+	logs    []LogLine
+	fullLog []LogLine
 
 	stop chan struct{}
 	done chan struct{}
@@ -89,9 +109,14 @@ func (t *Tracker) Progress(stage, message string) {
 	defer t.mu.Unlock()
 	t.stage = stage
 	t.detail = message
-	t.logs = append(t.logs, LogLine{Time: time.Now().UTC().Format(time.RFC3339), Stage: stage, Message: message})
+	line := LogLine{Time: time.Now().UTC().Format(time.RFC3339), Stage: stage, Message: message}
+	t.logs = append(t.logs, line)
 	if len(t.logs) > maxLogLines {
 		t.logs = t.logs[len(t.logs)-maxLogLines:]
+	}
+	t.fullLog = append(t.fullLog, line)
+	if len(t.fullLog) > maxFullLogLines {
+		t.fullLog = t.fullLog[len(t.fullLog)-maxFullLogLines:]
 	}
 }
 
@@ -101,6 +126,14 @@ func (t *Tracker) snapshot() (stage, detail string, logs []LogLine) {
 	logsCopy := make([]LogLine, len(t.logs))
 	copy(logsCopy, t.logs)
 	return t.stage, t.detail, logsCopy
+}
+
+func (t *Tracker) fullLogSnapshot() []LogLine {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	logsCopy := make([]LogLine, len(t.fullLog))
+	copy(logsCopy, t.fullLog)
+	return logsCopy
 }
 
 func (t *Tracker) run(interval time.Duration) {
@@ -140,8 +173,27 @@ func (t *Tracker) push() {
 
 // Close stops the periodic pusher and blocks until its final push
 // completes (bounded by push's own 10s timeout, so this can't hang
-// forever even if the webserver is unreachable).
+// forever even if the webserver is unreachable). Also uploads the
+// complete accumulated log once, so Scan History can show the full log
+// rather than just the last maxLogLines lines the periodic pushes above
+// carry - this is a separate request specifically so the periodic
+// pushes during a running scan stay small and frequent, and the
+// (potentially much larger) complete log is only ever sent once, at the
+// very end.
 func (t *Tracker) Close() {
 	close(t.stop)
 	<-t.done
+
+	logs := t.fullLogSnapshot()
+	if len(logs) == 0 {
+		// Mirrors push()'s own "nothing recorded yet" skip above - nothing
+		// worth uploading if Progress was never called at all.
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// Best-effort like every other push here - a failed upload just means
+	// Scan History falls back to the last capped snapshot for this job,
+	// not a reason to fail the scan itself at its very last step.
+	_ = t.pusher.PushFullScanLog(ctx, t.jobID, logs)
 }

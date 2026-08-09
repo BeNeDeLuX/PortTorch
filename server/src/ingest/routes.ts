@@ -212,6 +212,60 @@ ingestRouter.patch("/scan-jobs/:id/progress", asyncHandler(async (req, res) => {
   res.status(204).end();
 }));
 
+const scanFullLogSchema = z.object({
+  // Matches the scanner's own maxFullLogLines ceiling
+  // (scanner/internal/progress/tracker.go) - kept in sync by hand, same
+  // as the periodic progress push's own .max(200) above matching
+  // maxLogLines there.
+  logs: z.array(progressLogLineSchema).max(10000),
+});
+
+// Uploaded exactly once by the scanner, at scan completion (see
+// progress.Tracker.Close) - the complete progress log for this job,
+// unlike the periodic push above which only ever carries the last
+// maxLogLines lines. Scan History's "Details" popup prefers this over
+// scan_job_progress.recent_logs when it's present (GET
+// /api/scan-jobs/:id/progress in scanJobs/routes.ts) - see CLAUDE.md's
+// "Scan progress" section.
+ingestRouter.patch("/scan-jobs/:id/full-log", asyncHandler(async (req, res) => {
+  if (!z.string().uuid().safeParse(req.params.id).success) {
+    res.status(400).json({ error: "invalid scan job id" });
+    return;
+  }
+  const parsed = scanFullLogSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const job = await db
+    .selectFrom("scan_jobs")
+    .select(["id"])
+    .where("id", "=", req.params.id)
+    .where("scanner_agent_id", "=", req.scannerAgentId!)
+    .executeTakeFirst();
+  if (!job) {
+    res.status(404).json({ error: "scan job not found" });
+    return;
+  }
+
+  await db
+    .insertInto("scan_job_full_log")
+    .values({
+      scan_job_id: singleParam(req.params.id),
+      logs: JSON.stringify(parsed.data.logs),
+    })
+    .onConflict((oc) =>
+      oc.column("scan_job_id").doUpdateSet({
+        logs: JSON.stringify(parsed.data.logs),
+        created_at: new Date().toISOString(),
+      })
+    )
+    .execute();
+
+  res.status(204).end();
+}));
+
 const sshHostKeySchema = z.object({
   keyType: z.string().min(1),
   bits: z.number().int().positive().optional(),
