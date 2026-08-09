@@ -118,6 +118,20 @@ type nmapPort struct {
 // already reachable without any credentials at all, never attempts to
 // guess or brute-force one.
 //
+// "smb-os-discovery" and "nbstat" are two more host-level scripts riding
+// the same SMB session as smb-enum-shares - OS version/computer name/
+// domain/workgroup (smb-os-discovery) and the NetBIOS name/domain
+// (nbstat), both useful asset-identification signal independent of
+// whether -O's OS fingerprint (root-only, see below) ran or matched
+// anything. Unlike smb-enum-shares, neither gets its own PortResult
+// field - hostResultFromNmapHost's host-script loop copies any
+// HostScripts entry that isn't smb-enum-shares itself into
+// PortResult.ExtraScripts on every port isSMBPort classifies, the same
+// generic per-port mechanism the rest of this batch already uses, just
+// applied at host-script granularity instead of per-port. Both stay
+// silent under the same "requires real credentials" condition as
+// smb-enum-shares, for the same reason (one shared SMB session).
+//
 // A second batch of read-only, no-credentials-needed "safe" scripts is
 // also always included - a few more listing scripts in the same spirit as
 // ftp-anon/smb-enum-shares ("nfs-showmount" for NFS exports,
@@ -147,6 +161,14 @@ type nmapPort struct {
 // unlike everything else on this list, a successful check has a real
 // side effect (the target server actually attempts to relay nmap's test
 // messages), not just a read.
+//
+// "http-methods" (a per-port script, fires on whatever port nmap
+// classifies as HTTP) reports which HTTP methods a server allows
+// (GET/POST/PUT/DELETE/etc, and whether OPTIONS is even honest about
+// them) - genuinely free to add here, same as the rest of this batch:
+// it already falls into hostResultFromNmapHost's default case (any
+// script id not otherwise special-cased goes into ExtraScripts), so
+// adding it needed nothing beyond its name in --script.
 //
 // ssh-hostkey is best-effort: nmap's ssh2 NSE library doesn't support
 // modern KEX algorithms (e.g. curve25519-sha256), so the script returns no
@@ -188,9 +210,11 @@ func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult) (*Host
 	args := []string{
 		"-Pn", "-R", "--privileged",
 		"-sV", "--script=banner,ssh-hostkey,ftp-anon,smb-enum-shares," +
+			"smb-os-discovery,nbstat," +
 			"nfs-showmount,rsync-list-modules,ldap-rootdse," +
 			"mongodb-info,mongodb-databases,redis-info," +
-			"docker-version,couchdb-databases,cassandra-info,smtp-open-relay",
+			"docker-version,couchdb-databases,cassandra-info,smtp-open-relay," +
+			"http-methods",
 	}
 	if os.Geteuid() == 0 {
 		args = append(args, "-O")
@@ -245,9 +269,21 @@ func hostResultFromNmapHost(ip string, host nmapHost) *HostResult {
 	applyMACAddress(result, host.Addresses)
 
 	var smbShares string
+	var smbHostExtraScripts []NSEScript
 	for _, s := range host.HostScripts {
-		if s.ID == "smb-enum-shares" {
+		switch s.ID {
+		case "smb-enum-shares":
 			smbShares = s.Output
+		default:
+			// smb-os-discovery, nbstat, and any future host-level SMB
+			// script - same "capture generically, apply to every SMB
+			// port" treatment as smb-enum-shares gets for its own
+			// dedicated field, just riding PortResult.ExtraScripts
+			// instead. Empty output (e.g. the session needed real auth)
+			// is skipped, same as the per-port default case below.
+			if s.Output != "" {
+				smbHostExtraScripts = append(smbHostExtraScripts, NSEScript{ID: s.ID, Output: s.Output})
+			}
 		}
 	}
 
@@ -292,8 +328,13 @@ func hostResultFromNmapHost(ip string, host nmapHost) *HostResult {
 			FTPAnonListing: ftpAnonListing,
 			ExtraScripts:   extraScripts,
 		}
-		if smbShares != "" && isSMBPort(pr) {
-			pr.SMBShares = smbShares
+		if isSMBPort(pr) {
+			if smbShares != "" {
+				pr.SMBShares = smbShares
+			}
+			if len(smbHostExtraScripts) > 0 {
+				pr.ExtraScripts = append(pr.ExtraScripts, smbHostExtraScripts...)
+			}
 		}
 		result.Ports = append(result.Ports, pr)
 	}

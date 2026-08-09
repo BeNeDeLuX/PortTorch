@@ -43,6 +43,9 @@ const NSE_SCRIPT_LABELS: Record<string, string> = {
   "cassandra-info": "Cassandra info",
   "smtp-open-relay": "SMTP open relay test",
   "snmp-info": "SNMP info",
+  "smb-os-discovery": "SMB OS discovery",
+  "nbstat": "NetBIOS name/domain",
+  "http-methods": "HTTP methods",
 };
 
 export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => void }) {

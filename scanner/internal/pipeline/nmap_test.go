@@ -322,3 +322,111 @@ func TestHostResultFromNmapHostExtraScripts(t *testing.T) {
 		}
 	}
 }
+
+// TestHostResultFromNmapHostSMBHostScriptsIntoExtraScripts covers
+// smb-os-discovery and nbstat - two more host-level scripts riding the
+// same SMB session as smb-enum-shares, but (unlike smb-enum-shares)
+// captured generically into ExtraScripts rather than a dedicated field.
+// Checks both land on the SMB port (445) alongside smb-enum-shares'
+// own dedicated SMBShares field, and neither leaks onto an unrelated
+// port (80) on the same host.
+func TestHostResultFromNmapHostSMBHostScriptsIntoExtraScripts(t *testing.T) {
+	const rawXML = `<?xml version="1.0"?>
+<nmaprun>
+  <host>
+    <address addr="10.0.0.6" addrtype="ipv4"/>
+    <hostscript>
+      <script id="smb-enum-shares" output="account_used: guest"/>
+      <script id="smb-os-discovery" output="OS: Windows Server 2019 Standard 17763&#10;Computer name: FILESRV01&#10;Domain name: corp.example.com&#10;Workgroup: WORKGROUP"/>
+      <script id="nbstat" output="NetBIOS name: FILESRV01, NetBIOS user: &lt;unknown&gt;, NetBIOS MAC: 00:11:22:33:44:55"/>
+    </hostscript>
+    <ports>
+      <port protocol="tcp" portid="80">
+        <state state="open"/>
+        <service name="http"/>
+      </port>
+      <port protocol="tcp" portid="445">
+        <state state="open"/>
+        <service name="microsoft-ds"/>
+      </port>
+    </ports>
+  </host>
+</nmaprun>`
+
+	var run nmapRun
+	if err := xml.Unmarshal([]byte(rawXML), &run); err != nil {
+		t.Fatalf("unmarshaling test XML: %v", err)
+	}
+
+	result := hostResultFromNmapHost("10.0.0.6", run.Hosts[0])
+	if len(result.Ports) != 2 {
+		t.Fatalf("expected 2 ports, got %d: %+v", len(result.Ports), result.Ports)
+	}
+
+	httpPort := result.Ports[0]
+	if httpPort.Port != 80 {
+		t.Fatalf("expected first port to be 80, got %d", httpPort.Port)
+	}
+	if len(httpPort.ExtraScripts) != 0 {
+		t.Errorf("the unrelated HTTP port must not get any SMB host-script output, got %+v", httpPort.ExtraScripts)
+	}
+
+	smbPort := result.Ports[1]
+	if smbPort.Port != 445 {
+		t.Fatalf("expected second port to be 445, got %d", smbPort.Port)
+	}
+	if smbPort.SMBShares == "" {
+		t.Errorf("smb-enum-shares should still populate its own dedicated field")
+	}
+	if len(smbPort.ExtraScripts) != 2 {
+		t.Fatalf("expected exactly 2 extra scripts (smb-os-discovery, nbstat), got %d: %+v", len(smbPort.ExtraScripts), smbPort.ExtraScripts)
+	}
+	byID := map[string]string{}
+	for _, s := range smbPort.ExtraScripts {
+		byID[s.ID] = s.Output
+	}
+	if !strings.Contains(byID["smb-os-discovery"], "FILESRV01") {
+		t.Errorf("expected smb-os-discovery output with the computer name, got %+v", smbPort.ExtraScripts)
+	}
+	if !strings.Contains(byID["nbstat"], "NetBIOS name") {
+		t.Errorf("expected nbstat output, got %+v", smbPort.ExtraScripts)
+	}
+	if _, ok := byID["smb-enum-shares"]; ok {
+		t.Errorf("smb-enum-shares must not be duplicated into ExtraScripts - it has its own dedicated SMBShares field")
+	}
+}
+
+// TestHostResultFromNmapHostHTTPMethods checks "http-methods" - a
+// per-port script - flows through the same generic default case as the
+// other ExtraScripts entries, with no special-casing needed.
+func TestHostResultFromNmapHostHTTPMethods(t *testing.T) {
+	const rawXML = `<?xml version="1.0"?>
+<nmaprun>
+  <host>
+    <address addr="10.0.0.7" addrtype="ipv4"/>
+    <ports>
+      <port protocol="tcp" portid="80">
+        <state state="open"/>
+        <service name="http"/>
+        <script id="http-methods" output="Supported Methods: GET HEAD POST OPTIONS PUT DELETE&#10;Potentially risky methods: PUT DELETE"/>
+      </port>
+    </ports>
+  </host>
+</nmaprun>`
+
+	var run nmapRun
+	if err := xml.Unmarshal([]byte(rawXML), &run); err != nil {
+		t.Fatalf("unmarshaling test XML: %v", err)
+	}
+
+	result := hostResultFromNmapHost("10.0.0.7", run.Hosts[0])
+	if len(result.Ports) != 1 {
+		t.Fatalf("expected 1 port, got %d", len(result.Ports))
+	}
+	if len(result.Ports[0].ExtraScripts) != 1 || result.Ports[0].ExtraScripts[0].ID != "http-methods" {
+		t.Fatalf("expected exactly 1 extra script (http-methods), got %+v", result.Ports[0].ExtraScripts)
+	}
+	if !strings.Contains(result.Ports[0].ExtraScripts[0].Output, "PUT DELETE") {
+		t.Errorf("expected http-methods output with the risky-methods line, got %q", result.Ports[0].ExtraScripts[0].Output)
+	}
+}

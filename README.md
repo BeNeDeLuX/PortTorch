@@ -83,10 +83,12 @@ The project has two independently deployed components:
 - :desktop_computer: **Host detail page** - open ports with banners/CPE/OS hints and known
   CVEs (matched against detected service versions, synced daily from the
   NVD database - see below), anonymous FTP directory listings, SMB share
-  enumeration, NFS/rsync listings, an anonymous LDAP root DSE, whether
-  common database/service daemons (MongoDB, Redis, Docker,
-  CouchDB, Cassandra) are reachable with no authentication, an SMTP
-  open-relay check, and SNMP asset info (community string `public`) - all
+  enumeration plus OS/computer-name/domain info (`smb-os-discovery`) and
+  NetBIOS name/domain (`nbstat`), NFS/rsync listings, an anonymous LDAP
+  root DSE, whether common database/service daemons (MongoDB, Redis,
+  Docker, CouchDB, Cassandra) are reachable with no authentication, which
+  HTTP methods a server allows (`http-methods`), an SMTP open-relay
+  check, and SNMP asset info (community string `public`) - all
   when the target allows a no-credentials session (also matched by the
   free-text search box), OS/device classification and MAC
   address (when available - see "What each scan does" above), TLS
@@ -511,10 +513,13 @@ For every target, the pipeline runs:
    (`ftp-anon`/`smb-enum-shares` NSE scripts, both in nmap's own read-only
    "safe" category) - if the target allows it without any credentials, the
    FTP directory listing or SMB share list is captured; nothing is
-   attempted or guessed if it requires a real login. A few more read-only
-   "safe" scripts round this out the same way: NFS exports
+   attempted or guessed if it requires a real login. The same anonymous
+   SMB session also runs `smb-os-discovery` (OS version, computer name,
+   domain, workgroup) and `nbstat` (NetBIOS name/domain). A few more
+   read-only "safe" scripts round this out the same way: NFS exports
    (`nfs-showmount`), rsync modules (`rsync-list-modules`), an anonymous
-   LDAP bind's root DSE (`ldap-rootdse`), and whether a handful of commonly
+   LDAP bind's root DSE (`ldap-rootdse`), which HTTP methods a server
+   allows (`http-methods`), and whether a handful of commonly
    left-open database/service daemons (MongoDB, Redis,
    Docker's API, CouchDB, Cassandra) are reachable with no authentication
    at all. One check, `smtp-open-relay`, is not purely passive - it sends
