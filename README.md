@@ -408,6 +408,15 @@ worth knowing about up front:
   `$PATH` under the exact names the scanner expects (e.g. `go install`
   puts `gowitness` in `~/go/bin`, which typically isn't on a service's
   `$PATH` - use the full path from `which gowitness` in that case).
+- **`concurrency`** (default 5): how many hosts get enriched in parallel
+  once masscan's initial pass finds them - this many nmap processes (each
+  running `-sV` plus every NSE script against one host), plus the same
+  number of parallel TLS certificate and SNMP probes, all running at once.
+  Doesn't affect masscan itself, which is always a single process across
+  the whole target range (`masscanRate` controls its pace instead).
+  Raising it can meaningfully speed up a scan covering many hosts, given
+  enough CPU/RAM on the scanner host and network headroom for the extra
+  parallel traffic toward the target.
 - **`gowitnessConcurrency`/`rdpConcurrency`** (default 2, separate from the
   general `concurrency: 5`): each gowitness/RDP screenshot spawns its own
   full Chrome instance or Xvfb+xfreerdp+import chain, far heavier than an

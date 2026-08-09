@@ -24,6 +24,18 @@ masscanRate: 1000
 # already seen, trading a little extra scan time/traffic for materially
 # fewer "was open yesterday, not found today" false negatives.
 masscanRetries: 2
+# How many hosts are enriched in parallel once masscan's (or, for IPv6,
+# nmap discovery's) initial pass has found them - this many worker
+# goroutines, each running one nmap process (-sV plus every NSE script)
+# against one host at a time, plus the same number of parallel TLS
+# certificate and SNMP probes (see gowitnessConcurrency/rdpConcurrency
+# below for why *those* two are separate, much lower settings instead).
+# Does not affect masscan itself, which always runs as a single process
+# across the whole target range regardless of this value - masscan's own
+# pace is masscanRate above. Raising this can meaningfully speed up
+# enrichment on a scan covering many hosts, provided the scanner host has
+# the CPU/RAM to actually run that many nmap processes at once and the
+# extra parallel traffic toward the target network is acceptable.
 concurrency: 5
 
 gowitnessPath: "gowitness"
