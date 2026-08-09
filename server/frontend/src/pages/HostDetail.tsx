@@ -450,18 +450,36 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
         </table>
       </section>
 
-      {(data.ports.some((p) => p.banner) || data.sshHostKeys.length > 0) && (
+      {(data.ports.some((p) => p.banner || p.ftp_anon_listing || p.smb_shares) || data.sshHostKeys.length > 0) && (
         <section>
-          <h2>Service Banners</h2>
+          <h2>Service Banners &amp; Enumeration</h2>
           <div className="banner-list">
             {data.ports
-              .filter((p) => p.banner || data.sshHostKeys.some((k) => k.port === p.port))
+              .filter(
+                (p) => p.banner || p.ftp_anon_listing || p.smb_shares || data.sshHostKeys.some((k) => k.port === p.port)
+              )
               .map((p) => (
                 <div key={`${p.port}-${p.protocol}`} className="banner-card">
                   <div className="banner-card-header">
                     Port {p.port} {p.service_name && `· ${p.service_name}`}
                   </div>
                   {p.banner && <pre className="banner-text">{p.banner}</pre>}
+                  {p.ftp_anon_listing && (
+                    <>
+                      <div className="host-meta">
+                        <strong>FTP anonymous access</strong>
+                      </div>
+                      <pre className="banner-text">{p.ftp_anon_listing}</pre>
+                    </>
+                  )}
+                  {p.smb_shares && (
+                    <>
+                      <div className="host-meta">
+                        <strong>SMB shares (anonymous/guest session)</strong>
+                      </div>
+                      <pre className="banner-text">{p.smb_shares}</pre>
+                    </>
+                  )}
                   {data.sshHostKeys
                     .filter((k) => k.port === p.port)
                     .map((k) => (

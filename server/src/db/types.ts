@@ -144,6 +144,12 @@ export interface HostPortObservationsTable {
   os_type: string | null;
   cpes: string[] | null;
   banner: string | null;
+  // Both best-effort NSE script output, populated only when the target
+  // allows an anonymous/guest session at all (see scanner's nmap.go) -
+  // null otherwise, same "absence means access was denied, not an error"
+  // reasoning as banner itself.
+  ftp_anon_listing: string | null;
+  smb_shares: string | null;
   observed_at: ColumnType<Date, string | undefined, never>;
 }
 

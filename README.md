@@ -82,10 +82,13 @@ The project has two independently deployed components:
   nested list of its open ports).
 - :desktop_computer: **Host detail page** - open ports with banners/CPE/OS hints and known
   CVEs (matched against detected service versions, synced daily from the
-  NVD database - see below), OS/device classification and MAC address
-  (when available - see "What each scan does" above), TLS certificates
-  (with expiry status), SSH host keys, HTTP(S) and RDP screenshots (with
-  detected technologies, response headers, and OCR'd screenshot text), a
+  NVD database - see below), anonymous FTP directory listings and SMB share
+  enumeration when the target allows a no-credentials session (also
+  matched by the free-text search box), OS/device classification and MAC
+  address (when available - see "What each scan does" above), TLS
+  certificates (with expiry status), SSH host keys, HTTP(S) and RDP
+  screenshots (with detected technologies, response headers, and OCR'd
+  screenshot text), a
   full scan history timeline (with which scanner agent produced each
   entry), a "changes since last scan" diff, host tags, and an append-only
   comment log (each comment keeps its author and timestamp). Prev/next
@@ -487,7 +490,11 @@ For every target, the pipeline runs:
 2. **nmap** - service/version detection and banner grabbing on the ports
    masscan found, plus best-effort SSH host key capture (`ssh-hostkey`
    NSE script) and CPE/OS-hint extraction from nmap's own service
-   fingerprinting.
+   fingerprinting. Also checks for anonymous/guest access on FTP and SMB
+   (`ftp-anon`/`smb-enum-shares` NSE scripts, both in nmap's own read-only
+   "safe" category) - if the target allows it without any credentials, the
+   FTP directory listing or SMB share list is captured; nothing is
+   attempted or guessed if it requires a real login.
 3. **gowitness** - screenshots any port classified as HTTP(S), also
    capturing the TLS info, detected technologies, and full HTTP response
    headers gowitness sees along the way. Captured at `screenshotWidth`/

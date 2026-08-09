@@ -38,6 +38,20 @@ type PortResult struct {
 	// through a TLS handshake - more reliable than guessing TLS from the
 	// service name or port number alone (see isHTTPPort/isTLSPort).
 	Tunnel string
+	// FTPAnonListing is nmap's "ftp-anon" NSE script output (best-effort,
+	// only ever populated for a port nmap itself classifies as FTP) -
+	// empty unless anonymous/guest FTP login is actually allowed, in which
+	// case it's nmap's own human-readable report of that plus a directory
+	// listing of what's exposed.
+	FTPAnonListing string
+	// SMBShares is nmap's "smb-enum-shares" NSE script output - a host-level
+	// script (one SMB session covers every share), copied onto every port
+	// isSMBPort classifies for this host rather than attached to a single
+	// port, since the underlying SMB session isn't itself port-specific.
+	// Empty unless the target allows an anonymous/guest SMB session, same
+	// best-effort "absence means access was denied" reasoning as
+	// FTPAnonListing.
+	SMBShares string
 }
 
 // Screenshot describes a screenshot of an HTTP(S) page taken by gowitness.

@@ -231,6 +231,8 @@ const portObservationSchema = z.object({
   cpes: z.array(z.string()).optional(),
   banner: z.string().optional(),
   sshHostKeys: z.array(sshHostKeySchema).optional(),
+  ftpAnonListing: z.string().optional(),
+  smbShares: z.string().optional(),
 });
 
 const ingestHostsSchema = z.object({
@@ -356,6 +358,8 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
               os_type: p.osType ?? null,
               cpes: p.cpes ?? null,
               banner: p.banner ?? null,
+              ftp_anon_listing: p.ftpAnonListing ?? null,
+              smb_shares: p.smbShares ?? null,
             }))
           )
           .execute();

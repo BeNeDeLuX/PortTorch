@@ -156,6 +156,13 @@ export function applyHostFilters(
                 eb2("chp.service_name", "ilike", `%${q}%`),
                 eb2("chp.service_product", "ilike", `%${q}%`),
                 eb2("chp.banner", "ilike", `%${q}%`),
+                // Catches a filename in an anonymous FTP listing or an SMB
+                // share name (see scanner's "ftp-anon"/"smb-enum-shares"
+                // NSE scripts) - same reasoning as banner above: this is
+                // free text a scanner captured, not a structured field, so
+                // it belongs in the free-text match, not its own filter.
+                eb2("chp.ftp_anon_listing", "ilike", `%${q}%`),
+                eb2("chp.smb_shares", "ilike", `%${q}%`),
               ])
             )
         ),

@@ -149,6 +149,8 @@ export interface HostDetail {
     os_type: string | null;
     cpes: string[] | null;
     banner: string | null;
+    ftp_anon_listing: string | null;
+    smb_shares: string | null;
     observed_at: string;
     vulnerabilities: CveEntry[];
   }>;

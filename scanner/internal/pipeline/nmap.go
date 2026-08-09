@@ -33,6 +33,11 @@ type nmapHost struct {
 	OS struct {
 		Matches []nmapOSMatch `xml:"osmatch"`
 	} `xml:"os"`
+	// HostScripts are NSE scripts nmap runs once per host rather than once
+	// per port (e.g. "smb-enum-shares" - a single SMB session already
+	// covers every share, so nmap doesn't repeat it per port) - a sibling
+	// of <ports>, not nested inside any one <port> element.
+	HostScripts []nmapScript `xml:"hostscript>script"`
 }
 
 // nmapAddress is one of possibly several <address> elements per host -
@@ -99,6 +104,20 @@ type nmapPort struct {
 // single host. When running as root, it also attempts OS/device-type
 // fingerprinting (-O).
 //
+// Also runs "ftp-anon" (checks whether anonymous/guest FTP login is
+// allowed and, if so, lists the root directory) and "smb-enum-shares"
+// (lists SMB shares visible over an anonymous/guest session). Both are in
+// nmap's own "safe" script category - the same non-intrusive class as
+// "banner" - and, like every NSE script here, are unconditionally part of
+// every scan rather than a separate opt-in flag: nmap's own script
+// portrule/hostrule matching already means ftp-anon only ever fires
+// against a port it classifies as FTP and smb-enum-shares only against a
+// host with an SMB port among the ones actually being scanned, so there's
+// no extra gating needed on our side. Both stay silent (empty output) when
+// the target requires real credentials - this only ever surfaces what's
+// already reachable without any credentials at all, never attempts to
+// guess or brute-force one.
+//
 // ssh-hostkey is best-effort: nmap's ssh2 NSE library doesn't support
 // modern KEX algorithms (e.g. curve25519-sha256), so the script returns no
 // host key for servers that only offer modern KEX methods by default (e.g.
@@ -138,7 +157,7 @@ func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult) (*Host
 
 	args := []string{
 		"-Pn", "-R", "--privileged",
-		"-sV", "--script=banner,ssh-hostkey",
+		"-sV", "--script=banner,ssh-hostkey,ftp-anon,smb-enum-shares",
 	}
 	if os.Geteuid() == 0 {
 		args = append(args, "-O")
@@ -162,8 +181,26 @@ func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult) (*Host
 	if len(run.Hosts) == 0 {
 		return &HostResult{IP: ip}, nil
 	}
+	return hostResultFromNmapHost(ip, run.Hosts[0]), nil
+}
 
-	host := run.Hosts[0]
+// isSMBPort decides, based on the service name reported by nmap (with a
+// port heuristic as fallback), whether a port is SMB - used to decide
+// which of a host's ports "smb-enum-shares" output (a host-level script,
+// not tied to any one port - see nmapHost.HostScripts) gets copied onto.
+func isSMBPort(p PortResult) bool {
+	name := strings.ToLower(p.ServiceName)
+	if strings.Contains(name, "microsoft-ds") || strings.Contains(name, "netbios-ssn") || strings.Contains(name, "smb") {
+		return true
+	}
+	return p.Port == 445 || p.Port == 139
+}
+
+// hostResultFromNmapHost builds a *HostResult from one already-parsed
+// <host> element - split out from RunNmap so the parsing logic itself is
+// unit-testable against a hand-built nmapHost, without needing a real
+// nmap binary (same reasoning as discoveredFromNmapRun below).
+func hostResultFromNmapHost(ip string, host nmapHost) *HostResult {
 	result := &HostResult{IP: ip}
 	for _, hn := range host.Hostnames.Hostname {
 		if hn.Type == "PTR" || result.Hostname == "" {
@@ -174,8 +211,16 @@ func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult) (*Host
 	applyBestOSMatch(result, host.OS.Matches)
 	applyMACAddress(result, host.Addresses)
 
+	var smbShares string
+	for _, s := range host.HostScripts {
+		if s.ID == "smb-enum-shares" {
+			smbShares = s.Output
+		}
+	}
+
 	for _, p := range host.Ports.Port {
 		banner := ""
+		ftpAnonListing := ""
 		var sshHostKeys []SSHHostKey
 		for _, s := range p.Scripts {
 			switch s.ID {
@@ -183,9 +228,11 @@ func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult) (*Host
 				banner = s.Output
 			case "ssh-hostkey":
 				sshHostKeys = parseSSHHostKeys(s.Tables)
+			case "ftp-anon":
+				ftpAnonListing = s.Output
 			}
 		}
-		result.Ports = append(result.Ports, PortResult{
+		pr := PortResult{
 			Port:           p.PortID,
 			Protocol:       p.Protocol,
 			State:          p.State.State,
@@ -198,10 +245,15 @@ func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult) (*Host
 			CPEs:           p.Service.CPEs,
 			Banner:         banner,
 			SSHHostKeys:    sshHostKeys,
-		})
+			FTPAnonListing: ftpAnonListing,
+		}
+		if smbShares != "" && isSMBPort(pr) {
+			pr.SMBShares = smbShares
+		}
+		result.Ports = append(result.Ports, pr)
 	}
 
-	return result, nil
+	return result
 }
 
 // runNmapAndParse runs binPath with args, capturing stdout (nmap's own -oX

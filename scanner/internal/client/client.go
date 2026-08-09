@@ -137,6 +137,8 @@ type ingestPort struct {
 	CPEs           []string           `json:"cpes,omitempty"`
 	Banner         string             `json:"banner,omitempty"`
 	SSHHostKeys    []ingestSSHHostKey `json:"sshHostKeys,omitempty"`
+	FTPAnonListing string             `json:"ftpAnonListing,omitempty"`
+	SMBShares      string             `json:"smbShares,omitempty"`
 }
 
 type ingestHost struct {
@@ -183,6 +185,8 @@ func (c *Client) SubmitHosts(ctx context.Context, jobID string, hosts []pipeline
 				CPEs:           p.CPEs,
 				Banner:         p.Banner,
 				SSHHostKeys:    sshHostKeys,
+				FTPAnonListing: p.FTPAnonListing,
+				SMBShares:      p.SMBShares,
 			})
 		}
 		payloadHosts = append(payloadHosts, ingestHost{

@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"encoding/xml"
+	"strings"
 	"testing"
 )
 
@@ -177,5 +178,92 @@ func TestDiscoveredFromNmapRunNoAddress(t *testing.T) {
 	discovered := discoveredFromNmapRun(run)
 	if len(discovered) != 0 {
 		t.Errorf("expected an empty map, got %+v", discovered)
+	}
+}
+
+func TestIsSMBPort(t *testing.T) {
+	cases := []struct {
+		name string
+		port PortResult
+		want bool
+	}{
+		{"named microsoft-ds", PortResult{Port: 4000, ServiceName: "microsoft-ds"}, true},
+		{"named netbios-ssn", PortResult{Port: 4000, ServiceName: "netbios-ssn"}, true},
+		{"unknown on 445", PortResult{Port: 445, ServiceName: "unknown"}, true},
+		{"unknown on 139", PortResult{Port: 139, ServiceName: "unknown"}, true},
+		{"unrelated service", PortResult{Port: 445 + 1, ServiceName: "http"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isSMBPort(c.port); got != c.want {
+				t.Errorf("isSMBPort(%+v) = %v, want %v", c.port, got, c.want)
+			}
+		})
+	}
+}
+
+// TestHostResultFromNmapHostFTPAndSMB covers both new NSE scripts against
+// XML shaped like a real "nmap --script=ftp-anon,smb-enum-shares" result:
+// ftp-anon is a per-port script attached directly to the FTP port's own
+// <script> list, while smb-enum-shares is a host-level script under
+// <hostscript> - this checks both parse into the right place, and that
+// the host-level SMB output only gets copied onto the SMB-classified port
+// (445), not the unrelated FTP port (21) that happens to be on the same
+// host.
+func TestHostResultFromNmapHostFTPAndSMB(t *testing.T) {
+	const rawXML = `<?xml version="1.0"?>
+<nmaprun>
+  <host>
+    <address addr="10.0.0.5" addrtype="ipv4"/>
+    <hostscript>
+      <script id="smb-enum-shares" output="account_used: guest&#10;print$: &#10;  Type: STYPE_DISKTREE&#10;  Anonymous access: READ&#10;backup: &#10;  Type: STYPE_DISKTREE&#10;  Anonymous access: READ/WRITE"/>
+    </hostscript>
+    <ports>
+      <port protocol="tcp" portid="21">
+        <state state="open"/>
+        <service name="ftp"/>
+        <script id="ftp-anon" output="Anonymous FTP login allowed (FTP code 230)&#10;-rw-r--r--    1 0  0  123 Jan 01  2020 readme.txt"/>
+      </port>
+      <port protocol="tcp" portid="445">
+        <state state="open"/>
+        <service name="microsoft-ds"/>
+      </port>
+    </ports>
+  </host>
+</nmaprun>`
+
+	var run nmapRun
+	if err := xml.Unmarshal([]byte(rawXML), &run); err != nil {
+		t.Fatalf("unmarshaling test XML: %v", err)
+	}
+	if len(run.Hosts) != 1 {
+		t.Fatalf("expected 1 host, got %d", len(run.Hosts))
+	}
+
+	result := hostResultFromNmapHost("10.0.0.5", run.Hosts[0])
+	if len(result.Ports) != 2 {
+		t.Fatalf("expected 2 ports, got %d: %+v", len(result.Ports), result.Ports)
+	}
+
+	ftpPort := result.Ports[0]
+	if ftpPort.Port != 21 {
+		t.Fatalf("expected first port to be 21, got %d", ftpPort.Port)
+	}
+	if ftpPort.FTPAnonListing == "" || !strings.Contains(ftpPort.FTPAnonListing, "readme.txt") {
+		t.Errorf("expected ftp-anon output with the directory listing, got %q", ftpPort.FTPAnonListing)
+	}
+	if ftpPort.SMBShares != "" {
+		t.Errorf("the FTP port must not get the SMB host-script output, got %q", ftpPort.SMBShares)
+	}
+
+	smbPort := result.Ports[1]
+	if smbPort.Port != 445 {
+		t.Fatalf("expected second port to be 445, got %d", smbPort.Port)
+	}
+	if smbPort.SMBShares == "" || !strings.Contains(smbPort.SMBShares, "backup") {
+		t.Errorf("expected smb-enum-shares output with the share list, got %q", smbPort.SMBShares)
+	}
+	if smbPort.FTPAnonListing != "" {
+		t.Errorf("the SMB port must not get the FTP port's own script output, got %q", smbPort.FTPAnonListing)
 	}
 }
