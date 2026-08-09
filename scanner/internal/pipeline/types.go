@@ -55,8 +55,8 @@ type PortResult struct {
 	// ExtraScripts is every other NSE script result nmap produced for this
 	// port that doesn't get its own dedicated field above - a growing long
 	// tail of read-only enumeration scripts (NFS/rsync/LDAP listings, open
-	// database instances like MongoDB/Redis/Elasticsearch/Docker/CouchDB/
-	// Cassandra) that don't each need their own struct field and DB column,
+	// database instances like MongoDB/Redis/Docker/CouchDB/Cassandra) that
+	// don't each need their own struct field and DB column,
 	// unlike banner/ssh-hostkey/ftp-anon/smb-enum-shares which are common
 	// and important enough to get dedicated display treatment. Adding a
 	// new script to this category is just adding its id to RunNmap's

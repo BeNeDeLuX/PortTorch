@@ -77,9 +77,33 @@ func RunMasscan(ctx context.Context, binPath, targetSpec, portSpec string, exclu
 		return nil, fmt.Errorf("parsing masscan output: %w", err)
 	}
 
+	return hostsFromMasscanRecords(records), nil
+}
+
+// hostsFromMasscanRecords converts parsed masscan JSON records into the
+// map[string][]PortResult shape RunMasscan returns, deduplicating each
+// host's ports on (protocol, port). Split out from RunMasscan so this is
+// unit-testable against hand-built records, no real masscan binary needed.
+//
+// The dedup matters because masscan's own --retries resends each probe, so
+// a port that gets a reply to more than one attempt (common on a network
+// with duplicate ACKs/retransmits, not just packet loss) shows up as its
+// own top-level JSON record each time - without this, the same port number
+// ends up in the -p list RunNmap builds more than once, which nmap accepts
+// but warns loudly about ("Duplicate port number(s) specified").
+func hostsFromMasscanRecords(records []masscanRecord) map[string][]PortResult {
 	hosts := make(map[string][]PortResult)
+	seen := make(map[string]map[string]bool) // ip -> "proto:port" -> true
 	for _, rec := range records {
 		for _, p := range rec.Ports {
+			key := fmt.Sprintf("%s:%d", p.Proto, p.Port)
+			if seen[rec.IP] == nil {
+				seen[rec.IP] = make(map[string]bool)
+			}
+			if seen[rec.IP][key] {
+				continue
+			}
+			seen[rec.IP][key] = true
 			hosts[rec.IP] = append(hosts[rec.IP], PortResult{
 				Port:     p.Port,
 				Protocol: p.Proto,
@@ -87,7 +111,7 @@ func RunMasscan(ctx context.Context, binPath, targetSpec, portSpec string, exclu
 			})
 		}
 	}
-	return hosts, nil
+	return hosts
 }
 
 // parseMasscanJSON tolerates a missing closing "]", in case masscan (e.g.

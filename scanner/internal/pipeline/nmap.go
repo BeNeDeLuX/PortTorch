@@ -124,8 +124,16 @@ type nmapPort struct {
 // "rsync-list-modules" for rsync modules, "ldap-rootdse" for an anonymous
 // LDAP bind's root DSE), plus a group that checks whether various common
 // database/service daemons are reachable with no authentication at all -
-// "mongodb-info"/"mongodb-databases", "redis-info", "http-elasticsearch",
-// "docker-version", "couchdb-databases", "cassandra-info". None of these
+// "mongodb-info"/"mongodb-databases", "redis-info",
+// "docker-version", "couchdb-databases", "cassandra-info" (there is no
+// equivalent official NSE script for Elasticsearch - "http-elasticsearch"
+// was briefly listed here but doesn't actually exist in nmap's script
+// library, which made the NSE script engine refuse to start at all
+// ("did not match a category, filename, or directory") and broke nmap
+// enrichment for every host in every scan; the only real Elasticsearch
+// script nmap ships, "http-vuln-cve2015-1427", checks one specific 2015 RCE
+// rather than safely reading exposed info the way the others here do, so
+// it isn't a fit for this group either). None of these
 // get their own PortResult field the way ftp-anon/smb-enum-shares do -
 // see PortResult.ExtraScripts, which hostResultFromNmapHost populates
 // generically for any script id it doesn't otherwise recognize, so adding
@@ -181,7 +189,7 @@ func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult) (*Host
 		"-Pn", "-R", "--privileged",
 		"-sV", "--script=banner,ssh-hostkey,ftp-anon,smb-enum-shares," +
 			"nfs-showmount,rsync-list-modules,ldap-rootdse," +
-			"mongodb-info,mongodb-databases,redis-info,http-elasticsearch," +
+			"mongodb-info,mongodb-databases,redis-info," +
 			"docker-version,couchdb-databases,cassandra-info,smtp-open-relay",
 	}
 	if os.Geteuid() == 0 {

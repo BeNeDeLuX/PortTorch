@@ -38,7 +38,6 @@ const NSE_SCRIPT_LABELS: Record<string, string> = {
   "mongodb-info": "MongoDB info",
   "mongodb-databases": "MongoDB databases",
   "redis-info": "Redis info",
-  "http-elasticsearch": "Elasticsearch info",
   "docker-version": "Docker API info",
   "couchdb-databases": "CouchDB databases",
   "cassandra-info": "Cassandra info",

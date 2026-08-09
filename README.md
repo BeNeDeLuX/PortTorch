@@ -84,7 +84,7 @@ The project has two independently deployed components:
   CVEs (matched against detected service versions, synced daily from the
   NVD database - see below), anonymous FTP directory listings, SMB share
   enumeration, NFS/rsync listings, an anonymous LDAP root DSE, whether
-  common database/service daemons (MongoDB, Redis, Elasticsearch, Docker,
+  common database/service daemons (MongoDB, Redis, Docker,
   CouchDB, Cassandra) are reachable with no authentication, an SMTP
   open-relay check, and SNMP asset info (community string `public`) - all
   when the target allows a no-credentials session (also matched by the
@@ -502,7 +502,7 @@ For every target, the pipeline runs:
    "safe" scripts round this out the same way: NFS exports
    (`nfs-showmount`), rsync modules (`rsync-list-modules`), an anonymous
    LDAP bind's root DSE (`ldap-rootdse`), and whether a handful of commonly
-   left-open database/service daemons (MongoDB, Redis, Elasticsearch,
+   left-open database/service daemons (MongoDB, Redis,
    Docker's API, CouchDB, Cassandra) are reachable with no authentication
    at all. One check, `smtp-open-relay`, is not purely passive - it sends
    a handful of test messages through a target SMTP server to check
