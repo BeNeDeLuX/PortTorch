@@ -131,6 +131,15 @@ type nmapPort struct {
 // generically for any script id it doesn't otherwise recognize, so adding
 // another script to this list later doesn't need a new struct field.
 //
+// "smtp-open-relay" is the one script here that isn't purely passive: it
+// actively sends a handful of test messages through the target SMTP
+// server to determine whether it relays mail for third parties (the
+// classic open-relay misconfiguration check). Still non-destructive and
+// still nmap's own "safe" category, but worth calling out explicitly -
+// unlike everything else on this list, a successful check has a real
+// side effect (the target server actually attempts to relay nmap's test
+// messages), not just a read.
+//
 // ssh-hostkey is best-effort: nmap's ssh2 NSE library doesn't support
 // modern KEX algorithms (e.g. curve25519-sha256), so the script returns no
 // host key for servers that only offer modern KEX methods by default (e.g.
@@ -173,7 +182,7 @@ func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult) (*Host
 		"-sV", "--script=banner,ssh-hostkey,ftp-anon,smb-enum-shares," +
 			"nfs-showmount,rsync-list-modules,ldap-rootdse," +
 			"mongodb-info,mongodb-databases,redis-info,http-elasticsearch," +
-			"docker-version,couchdb-databases,cassandra-info",
+			"docker-version,couchdb-databases,cassandra-info,smtp-open-relay",
 	}
 	if os.Geteuid() == 0 {
 		args = append(args, "-O")

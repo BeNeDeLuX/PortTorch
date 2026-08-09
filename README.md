@@ -503,7 +503,10 @@ For every target, the pipeline runs:
    LDAP bind's root DSE (`ldap-rootdse`), and whether a handful of commonly
    left-open database/service daemons (MongoDB, Redis, Elasticsearch,
    Docker's API, CouchDB, Cassandra) are reachable with no authentication
-   at all.
+   at all. One check, `smtp-open-relay`, is not purely passive - it sends
+   a handful of test messages through a target SMTP server to check
+   whether it relays mail for third parties, the classic open-relay
+   misconfiguration test.
 3. **gowitness** - screenshots any port classified as HTTP(S), also
    capturing the TLS info, detected technologies, and full HTTP response
    headers gowitness sees along the way. Captured at `screenshotWidth`/

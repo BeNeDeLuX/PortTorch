@@ -42,6 +42,7 @@ const NSE_SCRIPT_LABELS: Record<string, string> = {
   "docker-version": "Docker API info",
   "couchdb-databases": "CouchDB databases",
   "cassandra-info": "Cassandra info",
+  "smtp-open-relay": "SMTP open relay test",
 };
 
 export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => void }) {
