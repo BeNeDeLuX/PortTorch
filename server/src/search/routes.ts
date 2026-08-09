@@ -163,6 +163,16 @@ export function applyHostFilters(
                 // it belongs in the free-text match, not its own filter.
                 eb2("chp.ftp_anon_listing", "ilike", `%${q}%`),
                 eb2("chp.smb_shares", "ilike", `%${q}%`),
+                // Same idea for the long tail of other enumeration
+                // scripts (NFS/rsync/LDAP listings, open-database checks -
+                // see chp.nse_extra) - a jsonb array of {id, output}
+                // objects rather than a plain column, so this unnests it
+                // rather than a plain ilike (same jsonb-unnest pattern as
+                // the CVE id match further down in this function).
+                sql<boolean>`chp.nse_extra is not null and exists (
+                  select 1 from jsonb_array_elements(chp.nse_extra) as nse_elem
+                  where nse_elem->>'output' ilike ${`%${q}%`}
+                )`,
               ])
             )
         ),

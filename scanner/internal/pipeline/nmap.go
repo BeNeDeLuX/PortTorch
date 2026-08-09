@@ -118,6 +118,19 @@ type nmapPort struct {
 // already reachable without any credentials at all, never attempts to
 // guess or brute-force one.
 //
+// A second batch of read-only, no-credentials-needed "safe" scripts is
+// also always included - a few more listing scripts in the same spirit as
+// ftp-anon/smb-enum-shares ("nfs-showmount" for NFS exports,
+// "rsync-list-modules" for rsync modules, "ldap-rootdse" for an anonymous
+// LDAP bind's root DSE), plus a group that checks whether various common
+// database/service daemons are reachable with no authentication at all -
+// "mongodb-info"/"mongodb-databases", "redis-info", "http-elasticsearch",
+// "docker-version", "couchdb-databases", "cassandra-info". None of these
+// get their own PortResult field the way ftp-anon/smb-enum-shares do -
+// see PortResult.ExtraScripts, which hostResultFromNmapHost populates
+// generically for any script id it doesn't otherwise recognize, so adding
+// another script to this list later doesn't need a new struct field.
+//
 // ssh-hostkey is best-effort: nmap's ssh2 NSE library doesn't support
 // modern KEX algorithms (e.g. curve25519-sha256), so the script returns no
 // host key for servers that only offer modern KEX methods by default (e.g.
@@ -157,7 +170,10 @@ func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult) (*Host
 
 	args := []string{
 		"-Pn", "-R", "--privileged",
-		"-sV", "--script=banner,ssh-hostkey,ftp-anon,smb-enum-shares",
+		"-sV", "--script=banner,ssh-hostkey,ftp-anon,smb-enum-shares," +
+			"nfs-showmount,rsync-list-modules,ldap-rootdse," +
+			"mongodb-info,mongodb-databases,redis-info,http-elasticsearch," +
+			"docker-version,couchdb-databases,cassandra-info",
 	}
 	if os.Geteuid() == 0 {
 		args = append(args, "-O")
@@ -222,6 +238,7 @@ func hostResultFromNmapHost(ip string, host nmapHost) *HostResult {
 		banner := ""
 		ftpAnonListing := ""
 		var sshHostKeys []SSHHostKey
+		var extraScripts []NSEScript
 		for _, s := range p.Scripts {
 			switch s.ID {
 			case "banner":
@@ -230,6 +247,16 @@ func hostResultFromNmapHost(ip string, host nmapHost) *HostResult {
 				sshHostKeys = parseSSHHostKeys(s.Tables)
 			case "ftp-anon":
 				ftpAnonListing = s.Output
+			default:
+				// Anything else in the --script list (nfs-showmount,
+				// rsync-list-modules, ldap-rootdse, the open-database
+				// checks, and any script added here in the future) - see
+				// PortResult.ExtraScripts. Empty output (script ran but
+				// found nothing, e.g. the target required real auth) is
+				// skipped rather than stored as a blank entry.
+				if s.Output != "" {
+					extraScripts = append(extraScripts, NSEScript{ID: s.ID, Output: s.Output})
+				}
 			}
 		}
 		pr := PortResult{
@@ -246,6 +273,7 @@ func hostResultFromNmapHost(ip string, host nmapHost) *HostResult {
 			Banner:         banner,
 			SSHHostKeys:    sshHostKeys,
 			FTPAnonListing: ftpAnonListing,
+			ExtraScripts:   extraScripts,
 		}
 		if smbShares != "" && isSMBPort(pr) {
 			pr.SMBShares = smbShares

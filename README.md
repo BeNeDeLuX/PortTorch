@@ -82,9 +82,12 @@ The project has two independently deployed components:
   nested list of its open ports).
 - :desktop_computer: **Host detail page** - open ports with banners/CPE/OS hints and known
   CVEs (matched against detected service versions, synced daily from the
-  NVD database - see below), anonymous FTP directory listings and SMB share
-  enumeration when the target allows a no-credentials session (also
-  matched by the free-text search box), OS/device classification and MAC
+  NVD database - see below), anonymous FTP directory listings, SMB share
+  enumeration, NFS/rsync listings, an anonymous LDAP root DSE, and whether
+  common database/service daemons (MongoDB, Redis, Elasticsearch, Docker,
+  CouchDB, Cassandra) are reachable with no authentication, all when the
+  target allows a no-credentials session (also matched by the free-text
+  search box), OS/device classification and MAC
   address (when available - see "What each scan does" above), TLS
   certificates (with expiry status), SSH host keys, HTTP(S) and RDP
   screenshots (with detected technologies, response headers, and OCR'd
@@ -494,7 +497,13 @@ For every target, the pipeline runs:
    (`ftp-anon`/`smb-enum-shares` NSE scripts, both in nmap's own read-only
    "safe" category) - if the target allows it without any credentials, the
    FTP directory listing or SMB share list is captured; nothing is
-   attempted or guessed if it requires a real login.
+   attempted or guessed if it requires a real login. A few more read-only
+   "safe" scripts round this out the same way: NFS exports
+   (`nfs-showmount`), rsync modules (`rsync-list-modules`), an anonymous
+   LDAP bind's root DSE (`ldap-rootdse`), and whether a handful of commonly
+   left-open database/service daemons (MongoDB, Redis, Elasticsearch,
+   Docker's API, CouchDB, Cassandra) are reachable with no authentication
+   at all.
 3. **gowitness** - screenshots any port classified as HTTP(S), also
    capturing the TLS info, detected technologies, and full HTTP response
    headers gowitness sees along the way. Captured at `screenshotWidth`/

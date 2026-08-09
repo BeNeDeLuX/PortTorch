@@ -26,6 +26,24 @@ const RESCAN_STATUS_LABEL: Record<string, string> = {
   cancelled: "stopped by an operator",
 };
 
+// Human-readable label per NSE script id captured in a port's nse_extra
+// array (see db/types.ts's NSEScriptEntry / scanner's PortResult.ExtraScripts)
+// - falls back to the raw script id for anything not listed here, so a
+// script added later on the scanner side still displays (just less
+// prettily) without needing a matching frontend change.
+const NSE_SCRIPT_LABELS: Record<string, string> = {
+  "nfs-showmount": "NFS exports",
+  "rsync-list-modules": "rsync modules",
+  "ldap-rootdse": "LDAP root DSE",
+  "mongodb-info": "MongoDB info",
+  "mongodb-databases": "MongoDB databases",
+  "redis-info": "Redis info",
+  "http-elasticsearch": "Elasticsearch info",
+  "docker-version": "Docker API info",
+  "couchdb-databases": "CouchDB databases",
+  "cassandra-info": "Cassandra info",
+};
+
 export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => void }) {
   // Admin and operator share the same host-editing rights here (rescan,
   // tags, comments) - only scanner agents/schedules/webhooks/users are
@@ -450,13 +468,19 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
         </table>
       </section>
 
-      {(data.ports.some((p) => p.banner || p.ftp_anon_listing || p.smb_shares) || data.sshHostKeys.length > 0) && (
+      {(data.ports.some((p) => p.banner || p.ftp_anon_listing || p.smb_shares || (p.nse_extra && p.nse_extra.length > 0)) ||
+        data.sshHostKeys.length > 0) && (
         <section>
           <h2>Service Banners &amp; Enumeration</h2>
           <div className="banner-list">
             {data.ports
               .filter(
-                (p) => p.banner || p.ftp_anon_listing || p.smb_shares || data.sshHostKeys.some((k) => k.port === p.port)
+                (p) =>
+                  p.banner ||
+                  p.ftp_anon_listing ||
+                  p.smb_shares ||
+                  (p.nse_extra && p.nse_extra.length > 0) ||
+                  data.sshHostKeys.some((k) => k.port === p.port)
               )
               .map((p) => (
                 <div key={`${p.port}-${p.protocol}`} className="banner-card">
@@ -480,6 +504,14 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
                       <pre className="banner-text">{p.smb_shares}</pre>
                     </>
                   )}
+                  {p.nse_extra?.map((s) => (
+                    <div key={s.id}>
+                      <div className="host-meta">
+                        <strong>{NSE_SCRIPT_LABELS[s.id] ?? s.id}</strong>
+                      </div>
+                      <pre className="banner-text">{s.output}</pre>
+                    </div>
+                  ))}
                   {data.sshHostKeys
                     .filter((k) => k.port === p.port)
                     .map((k) => (

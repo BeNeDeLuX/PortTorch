@@ -151,6 +151,7 @@ export interface HostDetail {
     banner: string | null;
     ftp_anon_listing: string | null;
     smb_shares: string | null;
+    nse_extra: Array<{ id: string; output: string }> | null;
     observed_at: string;
     vulnerabilities: CveEntry[];
   }>;

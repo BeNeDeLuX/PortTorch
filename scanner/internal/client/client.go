@@ -125,6 +125,11 @@ type ingestSSHHostKey struct {
 	FingerprintSHA256 string `json:"fingerprintSha256"`
 }
 
+type ingestNSEScript struct {
+	ID     string `json:"id"`
+	Output string `json:"output"`
+}
+
 type ingestPort struct {
 	Port           int                `json:"port"`
 	Protocol       string             `json:"protocol"`
@@ -139,6 +144,7 @@ type ingestPort struct {
 	SSHHostKeys    []ingestSSHHostKey `json:"sshHostKeys,omitempty"`
 	FTPAnonListing string             `json:"ftpAnonListing,omitempty"`
 	SMBShares      string             `json:"smbShares,omitempty"`
+	ExtraScripts   []ingestNSEScript  `json:"extraScripts,omitempty"`
 }
 
 type ingestHost struct {
@@ -173,6 +179,10 @@ func (c *Client) SubmitHosts(ctx context.Context, jobID string, hosts []pipeline
 					FingerprintSHA256: k.FingerprintSHA256,
 				})
 			}
+			var extraScripts []ingestNSEScript
+			for _, s := range p.ExtraScripts {
+				extraScripts = append(extraScripts, ingestNSEScript{ID: s.ID, Output: s.Output})
+			}
 			ports = append(ports, ingestPort{
 				Port:           p.Port,
 				Protocol:       p.Protocol,
@@ -187,6 +197,7 @@ func (c *Client) SubmitHosts(ctx context.Context, jobID string, hosts []pipeline
 				SSHHostKeys:    sshHostKeys,
 				FTPAnonListing: p.FTPAnonListing,
 				SMBShares:      p.SMBShares,
+				ExtraScripts:   extraScripts,
 			})
 		}
 		payloadHosts = append(payloadHosts, ingestHost{

@@ -150,7 +150,19 @@ export interface HostPortObservationsTable {
   // reasoning as banner itself.
   ftp_anon_listing: string | null;
   smb_shares: string | null;
+  // Every other NSE script result nmap produced for this port that
+  // doesn't get its own dedicated column above (nfs-showmount,
+  // rsync-list-modules, ldap-rootdse, the open-database checks - see
+  // scanner's nmap.go PortResult.ExtraScripts) - null when none produced
+  // output, same "absence means access was denied, not an error"
+  // reasoning as banner/ftp_anon_listing/smb_shares.
+  nse_extra: ColumnType<NSEScriptEntry[] | null, string | null | undefined, string | null>;
   observed_at: ColumnType<Date, string | undefined, never>;
+}
+
+export interface NSEScriptEntry {
+  id: string;
+  output: string;
 }
 
 export interface CurrentHostPortsTable extends HostPortObservationsTable {}

@@ -267,3 +267,58 @@ func TestHostResultFromNmapHostFTPAndSMB(t *testing.T) {
 		t.Errorf("the SMB port must not get the FTP port's own script output, got %q", smbPort.FTPAnonListing)
 	}
 }
+
+// TestHostResultFromNmapHostExtraScripts covers the generic "everything
+// else goes into ExtraScripts" path (nfs-showmount/rsync-list-modules/
+// ldap-rootdse/the open-database checks, and implicitly any future script
+// added to RunNmap's --script list) - checks that scripts with dedicated
+// fields (banner, ftp-anon) are NOT duplicated into ExtraScripts, that
+// scripts nmap ran but found nothing for (empty output, e.g. redis-info
+// against a server that required AUTH) are dropped rather than stored as
+// a blank entry, and that a real result (mongodb-databases) is captured
+// with both id and output intact.
+func TestHostResultFromNmapHostExtraScripts(t *testing.T) {
+	const rawXML = `<?xml version="1.0"?>
+<nmaprun>
+  <host>
+    <address addr="10.0.0.9" addrtype="ipv4"/>
+    <ports>
+      <port protocol="tcp" portid="27017">
+        <state state="open"/>
+        <service name="mongod"/>
+        <script id="banner" output="It looks like you are trying to access MongoDB over HTTP"/>
+        <script id="mongodb-databases" output="ok: 1.0&#10;databases&#10;  admin&#10;  config&#10;  customer_exports"/>
+        <script id="redis-info" output=""/>
+      </port>
+    </ports>
+  </host>
+</nmaprun>`
+
+	var run nmapRun
+	if err := xml.Unmarshal([]byte(rawXML), &run); err != nil {
+		t.Fatalf("unmarshaling test XML: %v", err)
+	}
+
+	result := hostResultFromNmapHost("10.0.0.9", run.Hosts[0])
+	if len(result.Ports) != 1 {
+		t.Fatalf("expected 1 port, got %d", len(result.Ports))
+	}
+	port := result.Ports[0]
+
+	if port.Banner != "It looks like you are trying to access MongoDB over HTTP" {
+		t.Errorf("banner should still go to its own dedicated field, got %q", port.Banner)
+	}
+
+	if len(port.ExtraScripts) != 1 {
+		t.Fatalf("expected exactly 1 extra script (banner excluded, empty redis-info dropped), got %d: %+v", len(port.ExtraScripts), port.ExtraScripts)
+	}
+	extra := port.ExtraScripts[0]
+	if extra.ID != "mongodb-databases" || !strings.Contains(extra.Output, "customer_exports") {
+		t.Errorf("expected mongodb-databases with its output, got %+v", extra)
+	}
+	for _, s := range port.ExtraScripts {
+		if s.ID == "banner" {
+			t.Errorf("banner must not be duplicated into ExtraScripts")
+		}
+	}
+}
