@@ -430,3 +430,80 @@ func TestHostResultFromNmapHostHTTPMethods(t *testing.T) {
 		t.Errorf("expected http-methods output with the risky-methods line, got %q", result.Ports[0].ExtraScripts[0].Output)
 	}
 }
+
+// TestHostResultFromNmapHostTier1Scripts covers a representative sample
+// of the "Tier 1" NSE script round (http-auth, http-git, rdp-ntlm-info,
+// ssh2-enum-algos) against realistic per-port output, confirming each
+// lands as its own ExtraScripts entry on the correct port and nothing
+// leaks across ports on the same host.
+func TestHostResultFromNmapHostTier1Scripts(t *testing.T) {
+	const rawXML = `<?xml version="1.0"?>
+<nmaprun>
+  <host>
+    <address addr="10.0.0.8" addrtype="ipv4"/>
+    <ports>
+      <port protocol="tcp" portid="22">
+        <state state="open"/>
+        <service name="ssh"/>
+        <script id="ssh2-enum-algos" output="kex_algorithms: (4)&#10;    curve25519-sha256&#10;    ecdh-sha2-nistp256"/>
+      </port>
+      <port protocol="tcp" portid="80">
+        <state state="open"/>
+        <service name="http"/>
+        <script id="http-auth" output="HTTP/1.1 401 Unauthorized&#10;  Basic realm=Internal Admin"/>
+        <script id="http-git" output="/.git/HEAD Git repository found!"/>
+      </port>
+      <port protocol="tcp" portid="3389">
+        <state state="open"/>
+        <service name="ms-wbt-server"/>
+        <script id="rdp-ntlm-info" output="Target_Name: CORP&#10;NetBIOS_Domain_Name: CORP&#10;NetBIOS_Computer_Name: JUMPHOST01&#10;Product_Version: 10.0.17763"/>
+      </port>
+    </ports>
+  </host>
+</nmaprun>`
+
+	var run nmapRun
+	if err := xml.Unmarshal([]byte(rawXML), &run); err != nil {
+		t.Fatalf("unmarshaling test XML: %v", err)
+	}
+
+	result := hostResultFromNmapHost("10.0.0.8", run.Hosts[0])
+	if len(result.Ports) != 3 {
+		t.Fatalf("expected 3 ports, got %d: %+v", len(result.Ports), result.Ports)
+	}
+
+	sshPort := result.Ports[0]
+	if len(sshPort.ExtraScripts) != 1 || sshPort.ExtraScripts[0].ID != "ssh2-enum-algos" {
+		t.Fatalf("expected exactly 1 extra script (ssh2-enum-algos) on port 22, got %+v", sshPort.ExtraScripts)
+	}
+
+	httpPort := result.Ports[1]
+	if len(httpPort.ExtraScripts) != 2 {
+		t.Fatalf("expected exactly 2 extra scripts (http-auth, http-git) on port 80, got %+v", httpPort.ExtraScripts)
+	}
+	httpByID := map[string]string{}
+	for _, s := range httpPort.ExtraScripts {
+		httpByID[s.ID] = s.Output
+	}
+	if !strings.Contains(httpByID["http-auth"], "Basic realm") {
+		t.Errorf("expected http-auth output with the realm, got %+v", httpPort.ExtraScripts)
+	}
+	if !strings.Contains(httpByID["http-git"], "Git repository found") {
+		t.Errorf("expected http-git output, got %+v", httpPort.ExtraScripts)
+	}
+
+	rdpPort := result.Ports[2]
+	if len(rdpPort.ExtraScripts) != 1 || rdpPort.ExtraScripts[0].ID != "rdp-ntlm-info" {
+		t.Fatalf("expected exactly 1 extra script (rdp-ntlm-info) on port 3389, got %+v", rdpPort.ExtraScripts)
+	}
+	if !strings.Contains(rdpPort.ExtraScripts[0].Output, "JUMPHOST01") {
+		t.Errorf("expected rdp-ntlm-info output with the computer name, got %q", rdpPort.ExtraScripts[0].Output)
+	}
+
+	// Nothing must leak across ports.
+	for _, s := range sshPort.ExtraScripts {
+		if s.ID == "http-auth" || s.ID == "rdp-ntlm-info" {
+			t.Errorf("unrelated script %q leaked onto the SSH port", s.ID)
+		}
+	}
+}

@@ -16,7 +16,7 @@ function phaseFor(stage: string | null): 1 | 2 | null {
   return DISCOVERY_STAGES.has(stage) ? 1 : 2;
 }
 
-// Everything phase 1 isn't. These five genuinely run concurrently once
+// Everything phase 1 isn't. These six genuinely run concurrently once
 // nmap's worker pool starts (nmap enrichment, and the gowitness/RDP/TLS
 // screenshot/cert workers + host submissions that stream alongside it -
 // see "Scan pipeline"), so this is deliberately a checklist of "have we
@@ -31,6 +31,7 @@ const CONCURRENT_STAGES: Array<{ key: string; label: string }> = [
   { key: "tls", label: "TLS certificates" },
   { key: "rdp", label: "RDP capture" },
   { key: "snmp", label: "SNMP probe" },
+  { key: "ipmi", label: "IPMI probe" },
   { key: "submit", label: "Submitting results" },
 ];
 

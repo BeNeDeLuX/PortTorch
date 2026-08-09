@@ -83,12 +83,20 @@ The project has two independently deployed components:
 - :desktop_computer: **Host detail page** - open ports with banners/CPE/OS hints and known
   CVEs (matched against detected service versions, synced daily from the
   NVD database - see below), anonymous FTP directory listings, SMB share
-  enumeration plus OS/computer-name/domain info (`smb-os-discovery`) and
-  NetBIOS name/domain (`nbstat`), NFS/rsync listings, an anonymous LDAP
-  root DSE, whether common database/service daemons (MongoDB, Redis,
-  Docker, CouchDB, Cassandra) are reachable with no authentication, which
-  HTTP methods a server allows (`http-methods`), an SMTP open-relay
-  check, and SNMP asset info (community string `public`) - all
+  enumeration plus OS/computer-name/domain info (`smb-os-discovery`),
+  NetBIOS name/domain (`nbstat`), and protocol/security-mode info
+  (`smb-protocols`, `smb-security-mode`/`smb2-security-mode` - whether
+  legacy SMBv1 is still enabled, whether signing is required), NFS/rsync
+  listings, an anonymous LDAP root DSE, whether common database/service
+  daemons (MongoDB, Redis, MySQL, Docker, CouchDB, Cassandra) are
+  reachable with no authentication, which HTTP methods a server allows
+  (`http-methods`), the HTTP auth scheme a server requires (`http-auth`)
+  and any exposed `.git` repository (`http-git`), RDP hostname/domain/OS
+  build and encryption level leaked pre-auth (`rdp-ntlm-info`/
+  `rdp-enum-encryption`), SSH algorithm/protocol-version info
+  (`ssh2-enum-algos`/`sshv1`), an SMTP open-relay check, and SNMP/IPMI
+  asset info (`snmp-info`/`ipmi-version`, both via a small separate UDP
+  probe - see below) - all
   when the target allows a no-credentials session (also matched by the
   free-text search box), OS/device classification and MAC
   address (when available - see "What each scan does" above), TLS
@@ -515,17 +523,25 @@ For every target, the pipeline runs:
    FTP directory listing or SMB share list is captured; nothing is
    attempted or guessed if it requires a real login. The same anonymous
    SMB session also runs `smb-os-discovery` (OS version, computer name,
-   domain, workgroup) and `nbstat` (NetBIOS name/domain). A few more
-   read-only "safe" scripts round this out the same way: NFS exports
-   (`nfs-showmount`), rsync modules (`rsync-list-modules`), an anonymous
-   LDAP bind's root DSE (`ldap-rootdse`), which HTTP methods a server
-   allows (`http-methods`), and whether a handful of commonly
-   left-open database/service daemons (MongoDB, Redis,
-   Docker's API, CouchDB, Cassandra) are reachable with no authentication
-   at all. One check, `smtp-open-relay`, is not purely passive - it sends
-   a handful of test messages through a target SMTP server to check
-   whether it relays mail for third parties, the classic open-relay
-   misconfiguration test.
+   domain, workgroup), `nbstat` (NetBIOS name/domain), `smb-protocols`
+   (which SMB dialects the server negotiates - is legacy SMBv1 still
+   enabled), and `smb-security-mode`/`smb2-security-mode` (whether
+   message signing is required). A few more read-only "safe" scripts
+   round this out the same way: NFS exports (`nfs-showmount`), rsync
+   modules (`rsync-list-modules`), an anonymous LDAP bind's root DSE
+   (`ldap-rootdse`), which HTTP methods a server allows (`http-methods`),
+   the HTTP auth scheme a server requires (`http-auth` - also explains
+   why a host with an open HTTP port has no gowitness screenshot, see
+   below), an exposed `.git` repository (`http-git`), hostname/domain/OS
+   build leaked pre-auth via RDP (`rdp-ntlm-info`) and which RDP security
+   layer is allowed (`rdp-enum-encryption`), SSH algorithm info and
+   whether the obsolete SSHv1 protocol is enabled (`ssh2-enum-algos`/
+   `sshv1`), and whether a handful of commonly left-open database/service
+   daemons (MongoDB, Redis, MySQL, Docker's API, CouchDB, Cassandra) are
+   reachable with no authentication at all. One check, `smtp-open-relay`,
+   is not purely passive - it sends a handful of test messages through a
+   target SMTP server to check whether it relays mail for third parties,
+   the classic open-relay misconfiguration test.
 3. **gowitness** - screenshots any port classified as HTTP(S), also
    capturing the TLS info, detected technologies, and full HTTP response
    headers gowitness sees along the way. Captured at `screenshotWidth`/
@@ -574,8 +590,14 @@ For every target, the pipeline runs:
    is inherently slower to determine than on TCP). Still honors a scan
    exclude that specifically covers port 161, even though the normal
    TCP-only exclude mechanisms never see this path.
+9. **IPMI probe** (`ipmi-version` against UDP/623) - the identical
+   exception as the SNMP probe above, for the same reason (IPMI is also
+   UDP-only) and built the same way. IPMI/BMC out-of-band management
+   interfaces are a classic high-risk target - often left on default or
+   no authentication, and easy to miss precisely because they sit
+   outside a device's normal OS-level services.
 
-Steps 2-5 (plus the SNMP probe) run concurrently with each other rather
+Steps 2-5 (plus the SNMP/IPMI probes) run concurrently with each other rather
 than as sequential batches, and **each host is submitted to the webserver
 as soon as its own work finishes** - a host with no HTTP(S)/RDP/TLS-
 carrying ports streams in right after its nmap call, while a different,

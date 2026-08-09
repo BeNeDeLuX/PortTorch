@@ -132,13 +132,25 @@ type nmapPort struct {
 // silent under the same "requires real credentials" condition as
 // smb-enum-shares, for the same reason (one shared SMB session).
 //
+// "smb-protocols" (which SMB dialects the server negotiates - whether
+// legacy SMBv1 is still enabled, a real risk indicator given SMBv1's
+// EternalBlue history) and "smb-security-mode"/"smb2-security-mode"
+// (whether message signing is required, another real security-posture
+// signal) round out the SMB group - all captured the same generic way
+// as smb-os-discovery/nbstat above, whether nmap treats a given one as
+// host-level or per-port (the capture logic handles both without
+// needing to know in advance which).
+//
 // A second batch of read-only, no-credentials-needed "safe" scripts is
 // also always included - a few more listing scripts in the same spirit as
 // ftp-anon/smb-enum-shares ("nfs-showmount" for NFS exports,
 // "rsync-list-modules" for rsync modules, "ldap-rootdse" for an anonymous
 // LDAP bind's root DSE), plus a group that checks whether various common
 // database/service daemons are reachable with no authentication at all -
-// "mongodb-info"/"mongodb-databases", "redis-info",
+// "mongodb-info"/"mongodb-databases", "redis-info", "mysql-info"
+// (MySQL was a real gap in this group - one of the most common database
+// engines, and its own info-gathering script needs no credentials, same
+// as the others here),
 // "docker-version", "couchdb-databases", "cassandra-info" (there is no
 // equivalent official NSE script for Elasticsearch - "http-elasticsearch"
 // was briefly listed here but doesn't actually exist in nmap's script
@@ -169,6 +181,24 @@ type nmapPort struct {
 // it already falls into hostResultFromNmapHost's default case (any
 // script id not otherwise special-cased goes into ExtraScripts), so
 // adding it needed nothing beyond its name in --script.
+//
+// The same "just add the name" treatment applies to five more per-port
+// scripts added alongside it: "http-auth" (the HTTP auth scheme/realm a
+// server requires - notably, this is often the *only* signal available
+// for a server behind HTTP Basic Auth, since that exact condition is
+// also what silently prevents a gowitness screenshot, see the gowitness
+// stage's own doc comment below), "http-git" (an exposed ".git"
+// directory in the web root - a genuinely common, serious real-world
+// finding, source disclosure via a forgotten deployment artifact),
+// "rdp-ntlm-info" (hostname/domain/OS build leaked via RDP's own NTLM
+// negotiation, no credentials needed), "rdp-enum-encryption" (which
+// security layer/encryption level an RDP server allows - directly
+// explains the RDP screenshot stage's own documented NLA-only
+// limitation below, rather than just being a mystery when a screenshot
+// never appears), and "ssh2-enum-algos"/"sshv1" (the SSH algorithms on
+// offer, and whether the obsolete SSHv1 protocol is still enabled -
+// rounds out ssh-hostkey with the same kind of protocol-security-
+// posture signal smb-protocols/smb-security-mode give for SMB above).
 //
 // ssh-hostkey is best-effort: nmap's ssh2 NSE library doesn't support
 // modern KEX algorithms (e.g. curve25519-sha256), so the script returns no
@@ -210,11 +240,12 @@ func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult) (*Host
 	args := []string{
 		"-Pn", "-R", "--privileged",
 		"-sV", "--script=banner,ssh-hostkey,ftp-anon,smb-enum-shares," +
-			"smb-os-discovery,nbstat," +
+			"smb-os-discovery,nbstat,smb-protocols,smb-security-mode,smb2-security-mode," +
 			"nfs-showmount,rsync-list-modules,ldap-rootdse," +
-			"mongodb-info,mongodb-databases,redis-info," +
+			"mongodb-info,mongodb-databases,redis-info,mysql-info," +
 			"docker-version,couchdb-databases,cassandra-info,smtp-open-relay," +
-			"http-methods",
+			"http-methods,http-auth,http-git," +
+			"rdp-ntlm-info,rdp-enum-encryption,ssh2-enum-algos,sshv1",
 	}
 	if os.Geteuid() == 0 {
 		args = append(args, "-O")

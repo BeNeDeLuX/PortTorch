@@ -46,6 +46,17 @@ const NSE_SCRIPT_LABELS: Record<string, string> = {
   "smb-os-discovery": "SMB OS discovery",
   "nbstat": "NetBIOS name/domain",
   "http-methods": "HTTP methods",
+  "smb-protocols": "SMB protocol versions",
+  "smb-security-mode": "SMB security mode",
+  "smb2-security-mode": "SMB2 security mode",
+  "mysql-info": "MySQL info",
+  "http-auth": "HTTP auth scheme",
+  "http-git": "Exposed .git repository",
+  "rdp-ntlm-info": "RDP NTLM info",
+  "rdp-enum-encryption": "RDP encryption level",
+  "ssh2-enum-algos": "SSH2 algorithms",
+  "sshv1": "SSHv1 supported",
+  "ipmi-version": "IPMI/BMC info",
 };
 
 export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => void }) {
