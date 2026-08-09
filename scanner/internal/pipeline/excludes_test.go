@@ -69,3 +69,29 @@ func TestFilterIPPortExcludes(t *testing.T) {
 		t.Errorf("10.0.0.7 should have been removed entirely, still present: %v", discovered["10.0.0.7"])
 	}
 }
+
+func TestIsPortExcludedForHost(t *testing.T) {
+	excludes := Excludes{
+		Ports:   []string{"445", "3389"},
+		IPPorts: []IPPortExclude{{IP: "10.0.0.5", PortSpec: "161"}},
+	}
+
+	cases := []struct {
+		name string
+		ip   string
+		port int
+		want bool
+	}{
+		{"covered by a global port exclude", "10.0.0.9", 445, true},
+		{"covered by an ip+port exclude scoped to this host", "10.0.0.5", 161, true},
+		{"same port, but the ip+port exclude is scoped to a different host", "10.0.0.6", 161, false},
+		{"not excluded at all", "10.0.0.9", 22, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isPortExcludedForHost(c.ip, c.port, excludes); got != c.want {
+				t.Errorf("isPortExcludedForHost(%q, %d, ...) = %v, want %v", c.ip, c.port, got, c.want)
+			}
+		})
+	}
+}

@@ -30,6 +30,7 @@ const CONCURRENT_STAGES: Array<{ key: string; label: string }> = [
   { key: "gowitness", label: "Screenshots (gowitness)" },
   { key: "tls", label: "TLS certificates" },
   { key: "rdp", label: "RDP capture" },
+  { key: "snmp", label: "SNMP probe" },
   { key: "submit", label: "Submitting results" },
 ];
 

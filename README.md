@@ -83,11 +83,12 @@ The project has two independently deployed components:
 - :desktop_computer: **Host detail page** - open ports with banners/CPE/OS hints and known
   CVEs (matched against detected service versions, synced daily from the
   NVD database - see below), anonymous FTP directory listings, SMB share
-  enumeration, NFS/rsync listings, an anonymous LDAP root DSE, and whether
+  enumeration, NFS/rsync listings, an anonymous LDAP root DSE, whether
   common database/service daemons (MongoDB, Redis, Elasticsearch, Docker,
-  CouchDB, Cassandra) are reachable with no authentication, all when the
-  target allows a no-credentials session (also matched by the free-text
-  search box), OS/device classification and MAC
+  CouchDB, Cassandra) are reachable with no authentication, an SMTP
+  open-relay check, and SNMP asset info (community string `public`) - all
+  when the target allows a no-credentials session (also matched by the
+  free-text search box), OS/device classification and MAC
   address (when available - see "What each scan does" above), TLS
   certificates (with expiry status), SSH host keys, HTTP(S) and RDP
   screenshots (with detected technologies, response headers, and OCR'd
@@ -546,12 +547,22 @@ For every target, the pipeline runs:
    segment; a target reached over a routed hop simply has none captured
    (this is a property of ARP itself, not something any flag or
    privilege changes).
+8. **SNMP probe** (`snmp-info`, community string `public`) - a small
+   exception to the rest of this pipeline, which is entirely TCP: SNMP is
+   UDP-only, so rather than adding general UDP scanning support, this is
+   one extra, narrowly-scoped `nmap -sU -p 161` check run against every
+   scanned host directly, independent of whatever TCP ports were actually
+   discovered (bounded to 10 seconds per host, since "no response" on UDP
+   is inherently slower to determine than on TCP). Still honors a scan
+   exclude that specifically covers port 161, even though the normal
+   TCP-only exclude mechanisms never see this path.
 
-Steps 2-5 run concurrently with each other rather than as sequential
-batches, and **each host is submitted to the webserver as soon as its own
-work finishes** - a host with no HTTP(S)/RDP/TLS-carrying ports streams in
-right after its nmap call, while a different, slower host's screenshot is
-still capturing. Only masscan itself can't stream this way (it only
+Steps 2-5 (plus the SNMP probe) run concurrently with each other rather
+than as sequential batches, and **each host is submitted to the webserver
+as soon as its own work finishes** - a host with no HTTP(S)/RDP/TLS-
+carrying ports streams in right after its nmap call, while a different,
+slower host's screenshot is still capturing. Only masscan itself can't
+stream this way (it only
 reports its discoveries once its entire pass across the target range
 finishes - a limitation of the external tool, not a design choice here).
 Besides showing up in the dashboard progressively during a long scan,

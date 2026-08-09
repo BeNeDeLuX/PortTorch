@@ -167,11 +167,11 @@ func noopHostComplete(HostResult) {}
 // external tool, not a design choice here (nmap's own discovery pass in
 // the IPv6 path has the same one-shot limitation, for the same reason: it
 // only reports once the whole invocation finishes). Everything after that
-// point (nmap, gowitness, RDP, TLS) already ran with per-host worker
+// point (nmap, gowitness, RDP, TLS, SNMP) already ran with per-host worker
 // pools, so onHostComplete fires as soon as an individual host's own
 // pipeline finishes rather than waiting for the slowest host in the batch
-// - see hostTracker below for how completion is tracked across four
-// concurrently-running stages instead of four sequential ones.
+// - see hostTracker below for how completion is tracked across five
+// concurrently-running stages instead of five sequential ones.
 //
 // probeHostnames (see client.Client.GetProbeHostnames) maps an IP to a
 // manually-configured hostname to use instead of the bare IP for the TLS
@@ -269,11 +269,13 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 	shotJobs := make(chan shotJob, cfg.GowitnessConcurrency)
 	rdpJobs := make(chan rdpJob, cfg.RDPConcurrency)
 	tlsJobs := make(chan tlsJob, cfg.Concurrency)
+	snmpJobs := make(chan snmpJob, cfg.Concurrency)
 
 	var subWG sync.WaitGroup
 	startGowitnessWorkers(ctx, cfg, shotJobs, tracker, onProgress, &subWG)
 	startRDPWorkers(ctx, cfg, rdpJobs, tracker, onProgress, &subWG)
 	startTLSWorkers(ctx, cfg, tlsJobs, tracker, onProgress, &subWG)
+	startSNMPWorkers(ctx, cfg, snmpJobs, tracker, onProgress, &subWG)
 
 	type nmapJob struct {
 		ip    string
@@ -321,12 +323,29 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 						subTasks++
 					}
 				}
+				// SNMP is unconditional (every host, not gated on any
+				// already-discovered port - see snmp.go's doc comment for
+				// why), except when an exclude specifically covers
+				// UDP/161 for this host - none of the TCP-only exclude
+				// mechanisms above would otherwise ever see this port.
+				probeSNMP := !isPortExcludedForHost(host.IP, 161, excludes)
+				if probeSNMP {
+					subTasks++
+				}
 				// Registered before any job is enqueued below, so the
 				// tracker always knows the full expected count before a
 				// worker could possibly report one sub-task done - see
 				// hostTracker's own comment for why this ordering matters.
 				tracker.register(host, subTasks)
 				sniHostname := probeHostnames[host.IP] // "" if no override
+
+				if probeSNMP {
+					select {
+					case snmpJobs <- snmpJob{ip: host.IP}:
+					case <-ctx.Done():
+						tracker.complete(host.IP, nil)
+					}
+				}
 
 				for _, p := range host.Ports {
 					if p.State != "open" {
@@ -364,12 +383,13 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 		}()
 	}
 	nmapWG.Wait()
-	// Only the nmap workers ever enqueue onto these three channels, and
+	// Only the nmap workers ever enqueue onto these four channels, and
 	// they've all finished now - safe to close so the sub-task worker
 	// pools can drain and exit.
 	close(shotJobs)
 	close(rdpJobs)
 	close(tlsJobs)
+	close(snmpJobs)
 	subWG.Wait()
 
 	if nmapOK == 0 && nmapFailed > 0 {
@@ -599,6 +619,41 @@ func startTLSWorkers(ctx context.Context, cfg Config, jobs <-chan tlsJob, tracke
 					continue
 				}
 				tracker.complete(j.ip, func(h *HostResult) { h.TLSCertificates = append(h.TLSCertificates, *cert) })
+			}
+		}()
+	}
+}
+
+type snmpJob struct {
+	ip string
+}
+
+// startSNMPWorkers is startGowitnessWorkers' SNMP-probe equivalent - see
+// its doc comment. Uses cfg.Concurrency (like nmap/TLS) rather than its
+// own dedicated setting; unlike gowitness/RDP, this shells out to a
+// single small nmap invocation per host (see snmp.go), not a heavy
+// external process. A nil result (RunSNMPProbe found nothing - the
+// common case, since most hosts don't run SNMP at all) completes the
+// sub-task without adding a port; a non-nil result is appended to the
+// host's Ports the same way any other discovered port would be.
+func startSNMPWorkers(ctx context.Context, cfg Config, jobs <-chan snmpJob, tracker *hostTracker, onProgress ProgressFunc, wg *sync.WaitGroup) {
+	for i := 0; i < cfg.Concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				onProgress("snmp", fmt.Sprintf("probing %s (udp/161)", j.ip))
+				port, err := RunSNMPProbe(ctx, cfg.NmapPath, j.ip)
+				if err != nil {
+					onProgress("snmp", fmt.Sprintf("failed for %s: %v", j.ip, err))
+					tracker.complete(j.ip, nil)
+					continue
+				}
+				if port == nil {
+					tracker.complete(j.ip, nil)
+					continue
+				}
+				tracker.complete(j.ip, func(h *HostResult) { h.Ports = append(h.Ports, *port) })
 			}
 		}()
 	}

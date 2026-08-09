@@ -113,6 +113,35 @@ func filterIPPortExcludes(discovered map[string][]PortResult, excludes []IPPortE
 	return removed
 }
 
+// isPortExcludedForHost reports whether port on ip is covered by either a
+// global port exclude (excludes.Ports) or an ip+port exclude scoped to
+// this specific ip (excludes.IPPorts). Used by the SNMP probe (snmp.go),
+// which bypasses the normal masscan -> subtractPorts -> filterIPPortExcludes
+// pipeline entirely - UDP/161 is never part of the requested TCP port
+// spec, so none of those three exclude mechanisms would otherwise ever
+// see it. A parse failure on either side is treated as "not excluded"
+// rather than aborting the scan - both were already validated
+// server-side when the exclude was created, same tolerance
+// filterIPPortExcludes above already applies to a malformed IPPortExclude.
+func isPortExcludedForHost(ip string, port int, excludes Excludes) bool {
+	if globalPorts, err := parsePortSet(strings.Join(excludes.Ports, ",")); err == nil {
+		if _, excluded := globalPorts[port]; excluded {
+			return true
+		}
+	}
+	for _, ex := range excludes.IPPorts {
+		if ex.IP != ip {
+			continue
+		}
+		if scopedPorts, err := parsePortSet(ex.PortSpec); err == nil {
+			if _, excluded := scopedPorts[port]; excluded {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func parsePortSet(spec string) (map[int]struct{}, error) {
 	set := make(map[int]struct{})
 	spec = strings.TrimSpace(spec)
