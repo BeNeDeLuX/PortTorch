@@ -57,6 +57,14 @@ const NSE_SCRIPT_LABELS: Record<string, string> = {
   "ssh2-enum-algos": "SSH2 algorithms",
   "sshv1": "SSHv1 supported",
   "ipmi-version": "IPMI/BMC info",
+  "rpcinfo": "RPC portmapper programs",
+  "msrpc-enum": "MSRPC endpoint mapper",
+  "memcached-info": "Memcached info",
+  "oracle-tns-version": "Oracle TNS version",
+  "snmp-sysdescr": "SNMP system description",
+  "snmp-interfaces": "SNMP network interfaces",
+  "snmp-netstat": "SNMP connection table",
+  "dns-recursion": "Open recursive DNS resolver",
 };
 
 export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => void }) {

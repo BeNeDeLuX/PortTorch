@@ -150,7 +150,10 @@ type nmapPort struct {
 // "mongodb-info"/"mongodb-databases", "redis-info", "mysql-info"
 // (MySQL was a real gap in this group - one of the most common database
 // engines, and its own info-gathering script needs no credentials, same
-// as the others here),
+// as the others here), "memcached-info" (another commonly-left-open
+// data store, same no-auth-needed reasoning), "oracle-tns-version"
+// (decodes the version number an Oracle TNS listener's banner reports,
+// no credentials needed to read it),
 // "docker-version", "couchdb-databases", "cassandra-info" (there is no
 // equivalent official NSE script for Elasticsearch - "http-elasticsearch"
 // was briefly listed here but doesn't actually exist in nmap's script
@@ -200,6 +203,15 @@ type nmapPort struct {
 // rounds out ssh-hostkey with the same kind of protocol-security-
 // posture signal smb-protocols/smb-security-mode give for SMB above).
 //
+// "rpcinfo" (lists every program registered with the target's RPC
+// portmapper - relevant beyond just NFS, since any RPC-based service on
+// the host shows up here) and "msrpc-enum" (queries a Windows MSRPC
+// endpoint mapper for its own list of mapped services) round out the
+// enumeration-listing group in the same spirit as nfs-showmount/
+// rsync-list-modules/ldap-rootdse above - both are portrule-matched
+// against whatever port nmap classifies as the relevant service
+// (rpcbind/msrpc), so again nothing beyond the script name was needed.
+//
 // ssh-hostkey is best-effort: nmap's ssh2 NSE library doesn't support
 // modern KEX algorithms (e.g. curve25519-sha256), so the script returns no
 // host key for servers that only offer modern KEX methods by default (e.g.
@@ -242,10 +254,11 @@ func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult) (*Host
 		"-sV", "--script=banner,ssh-hostkey,ftp-anon,smb-enum-shares," +
 			"smb-os-discovery,nbstat,smb-protocols,smb-security-mode,smb2-security-mode," +
 			"nfs-showmount,rsync-list-modules,ldap-rootdse," +
-			"mongodb-info,mongodb-databases,redis-info,mysql-info," +
+			"mongodb-info,mongodb-databases,redis-info,mysql-info,memcached-info,oracle-tns-version," +
 			"docker-version,couchdb-databases,cassandra-info,smtp-open-relay," +
 			"http-methods,http-auth,http-git," +
-			"rdp-ntlm-info,rdp-enum-encryption,ssh2-enum-algos,sshv1",
+			"rdp-ntlm-info,rdp-enum-encryption,ssh2-enum-algos,sshv1," +
+			"rpcinfo,msrpc-enum",
 	}
 	if os.Geteuid() == 0 {
 		args = append(args, "-O")

@@ -167,11 +167,12 @@ func noopHostComplete(HostResult) {}
 // external tool, not a design choice here (nmap's own discovery pass in
 // the IPv6 path has the same one-shot limitation, for the same reason: it
 // only reports once the whole invocation finishes). Everything after that
-// point (nmap, gowitness, RDP, TLS, SNMP, IPMI) already ran with per-host
-// worker pools, so onHostComplete fires as soon as an individual host's
-// own pipeline finishes rather than waiting for the slowest host in the
-// batch - see hostTracker below for how completion is tracked across six
-// concurrently-running stages instead of six sequential ones.
+// point (nmap, gowitness, RDP, TLS, SNMP, IPMI, DNS recursion) already
+// ran with per-host worker pools, so onHostComplete fires as soon as an
+// individual host's own pipeline finishes rather than waiting for the
+// slowest host in the batch - see hostTracker below for how completion
+// is tracked across seven concurrently-running stages instead of seven
+// sequential ones.
 //
 // probeHostnames (see client.Client.GetProbeHostnames) maps an IP to a
 // manually-configured hostname to use instead of the bare IP for the TLS
@@ -271,6 +272,7 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 	tlsJobs := make(chan tlsJob, cfg.Concurrency)
 	snmpJobs := make(chan snmpJob, cfg.Concurrency)
 	ipmiJobs := make(chan ipmiJob, cfg.Concurrency)
+	dnsRecursionJobs := make(chan dnsRecursionJob, cfg.Concurrency)
 
 	var subWG sync.WaitGroup
 	startGowitnessWorkers(ctx, cfg, shotJobs, tracker, onProgress, &subWG)
@@ -278,6 +280,7 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 	startTLSWorkers(ctx, cfg, tlsJobs, tracker, onProgress, &subWG)
 	startSNMPWorkers(ctx, cfg, snmpJobs, tracker, onProgress, &subWG)
 	startIPMIWorkers(ctx, cfg, ipmiJobs, tracker, onProgress, &subWG)
+	startDNSRecursionWorkers(ctx, cfg, dnsRecursionJobs, tracker, onProgress, &subWG)
 
 	type nmapJob struct {
 		ip    string
@@ -325,19 +328,25 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 						subTasks++
 					}
 				}
-				// SNMP and IPMI are both unconditional (every host, not
-				// gated on any already-discovered port - see snmp.go's
-				// doc comment for why; ipmi.go's RunIPMIProbe is the
-				// identical exception for UDP/623), except when an
-				// exclude specifically covers that port for this host -
-				// none of the TCP-only exclude mechanisms above would
-				// otherwise ever see either port.
+				// SNMP, IPMI, and DNS recursion are all unconditional
+				// (every host, not gated on any already-discovered port -
+				// see snmp.go's doc comment for why; ipmi.go's
+				// RunIPMIProbe and dnsrecursion.go's RunDNSRecursionProbe
+				// are the identical exception for UDP/623 and UDP/53
+				// respectively), except when an exclude specifically
+				// covers that port for this host - none of the TCP-only
+				// exclude mechanisms above would otherwise ever see any
+				// of these three ports.
 				probeSNMP := !isPortExcludedForHost(host.IP, 161, excludes)
 				if probeSNMP {
 					subTasks++
 				}
 				probeIPMI := !isPortExcludedForHost(host.IP, 623, excludes)
 				if probeIPMI {
+					subTasks++
+				}
+				probeDNSRecursion := !isPortExcludedForHost(host.IP, 53, excludes)
+				if probeDNSRecursion {
 					subTasks++
 				}
 				// Registered before any job is enqueued below, so the
@@ -357,6 +366,13 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 				if probeIPMI {
 					select {
 					case ipmiJobs <- ipmiJob{ip: host.IP}:
+					case <-ctx.Done():
+						tracker.complete(host.IP, nil)
+					}
+				}
+				if probeDNSRecursion {
+					select {
+					case dnsRecursionJobs <- dnsRecursionJob{ip: host.IP}:
 					case <-ctx.Done():
 						tracker.complete(host.IP, nil)
 					}
@@ -398,7 +414,7 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 		}()
 	}
 	nmapWG.Wait()
-	// Only the nmap workers ever enqueue onto these five channels, and
+	// Only the nmap workers ever enqueue onto these six channels, and
 	// they've all finished now - safe to close so the sub-task worker
 	// pools can drain and exit.
 	close(shotJobs)
@@ -406,6 +422,7 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 	close(tlsJobs)
 	close(snmpJobs)
 	close(ipmiJobs)
+	close(dnsRecursionJobs)
 	subWG.Wait()
 
 	if nmapOK == 0 && nmapFailed > 0 {
@@ -695,6 +712,40 @@ func startIPMIWorkers(ctx context.Context, cfg Config, jobs <-chan ipmiJob, trac
 				port, err := RunIPMIProbe(ctx, cfg.NmapPath, j.ip)
 				if err != nil {
 					onProgress("ipmi", fmt.Sprintf("failed for %s: %v", j.ip, err))
+					tracker.complete(j.ip, nil)
+					continue
+				}
+				if port == nil {
+					tracker.complete(j.ip, nil)
+					continue
+				}
+				tracker.complete(j.ip, func(h *HostResult) { h.Ports = append(h.Ports, *port) })
+			}
+		}()
+	}
+}
+
+type dnsRecursionJob struct {
+	ip string
+}
+
+// startDNSRecursionWorkers is startSNMPWorkers'/startIPMIWorkers' DNS-
+// recursion-probe equivalent - see its doc comment and dnsrecursion.go's
+// RunDNSRecursionProbe. Same reasoning throughout: cfg.Concurrency, a nil
+// result (the common case - most hosts don't run a DNS server, and a
+// correctly-configured one won't be an open recursive resolver anyway)
+// completes the sub-task without adding a port, a non-nil result is
+// appended to the host's Ports like any other discovered port.
+func startDNSRecursionWorkers(ctx context.Context, cfg Config, jobs <-chan dnsRecursionJob, tracker *hostTracker, onProgress ProgressFunc, wg *sync.WaitGroup) {
+	for i := 0; i < cfg.Concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				onProgress("dnsrecursion", fmt.Sprintf("probing %s (udp/53)", j.ip))
+				port, err := RunDNSRecursionProbe(ctx, cfg.NmapPath, j.ip)
+				if err != nil {
+					onProgress("dnsrecursion", fmt.Sprintf("failed for %s: %v", j.ip, err))
 					tracker.complete(j.ip, nil)
 					continue
 				}

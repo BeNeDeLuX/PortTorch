@@ -507,3 +507,70 @@ func TestHostResultFromNmapHostTier1Scripts(t *testing.T) {
 		}
 	}
 }
+
+// TestHostResultFromNmapHostTier2Scripts covers the "Tier 2" round
+// (rpcinfo, msrpc-enum, memcached-info, oracle-tns-version) against
+// realistic per-port output, same generic-capture confirmation as
+// TestHostResultFromNmapHostTier1Scripts above.
+func TestHostResultFromNmapHostTier2Scripts(t *testing.T) {
+	const rawXML = `<?xml version="1.0"?>
+<nmaprun>
+  <host>
+    <address addr="10.0.0.10" addrtype="ipv4"/>
+    <ports>
+      <port protocol="tcp" portid="111">
+        <state state="open"/>
+        <service name="rpcbind"/>
+        <script id="rpcinfo" output="100000  2,3,4        111/tcp  rpcbind&#10;100003  2,3           2049/tcp  nfs"/>
+      </port>
+      <port protocol="tcp" portid="135">
+        <state state="open"/>
+        <service name="msrpc"/>
+        <script id="msrpc-enum" output="uuid: 12345778-1234-abcd-ef00-0123456789ac&#10;  tcp_port: 49664&#10;  version: 1"/>
+      </port>
+      <port protocol="tcp" portid="11211">
+        <state state="open"/>
+        <service name="memcache"/>
+        <script id="memcached-info" output="Process ID: 1234&#10;Uptime: 86400 seconds&#10;Pointer Size: 64 bits"/>
+      </port>
+      <port protocol="tcp" portid="1521">
+        <state state="open"/>
+        <service name="oracle-tns"/>
+        <script id="oracle-tns-version" output="TNS Version: 3.19.0&#10;Unauthorized: false"/>
+      </port>
+    </ports>
+  </host>
+</nmaprun>`
+
+	var run nmapRun
+	if err := xml.Unmarshal([]byte(rawXML), &run); err != nil {
+		t.Fatalf("unmarshaling test XML: %v", err)
+	}
+
+	result := hostResultFromNmapHost("10.0.0.10", run.Hosts[0])
+	if len(result.Ports) != 4 {
+		t.Fatalf("expected 4 ports, got %d: %+v", len(result.Ports), result.Ports)
+	}
+
+	wantByPort := map[int]struct {
+		id  string
+		sub string
+	}{
+		111:   {"rpcinfo", "rpcbind"},
+		135:   {"msrpc-enum", "49664"},
+		11211: {"memcached-info", "Uptime"},
+		1521:  {"oracle-tns-version", "TNS Version"},
+	}
+	for _, p := range result.Ports {
+		want, ok := wantByPort[p.Port]
+		if !ok {
+			t.Fatalf("unexpected port %d in result", p.Port)
+		}
+		if len(p.ExtraScripts) != 1 || p.ExtraScripts[0].ID != want.id {
+			t.Fatalf("port %d: expected exactly 1 extra script (%s), got %+v", p.Port, want.id, p.ExtraScripts)
+		}
+		if !strings.Contains(p.ExtraScripts[0].Output, want.sub) {
+			t.Errorf("port %d: expected output containing %q, got %q", p.Port, want.sub, p.ExtraScripts[0].Output)
+		}
+	}
+}

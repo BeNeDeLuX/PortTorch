@@ -87,16 +87,17 @@ The project has two independently deployed components:
   NetBIOS name/domain (`nbstat`), and protocol/security-mode info
   (`smb-protocols`, `smb-security-mode`/`smb2-security-mode` - whether
   legacy SMBv1 is still enabled, whether signing is required), NFS/rsync
-  listings, an anonymous LDAP root DSE, whether common database/service
-  daemons (MongoDB, Redis, MySQL, Docker, CouchDB, Cassandra) are
+  listings, an anonymous LDAP root DSE, RPC portmapper/MSRPC endpoint
+  enumeration, whether common database/service daemons (MongoDB, Redis,
+  MySQL, Memcached, Oracle, Docker, CouchDB, Cassandra) are
   reachable with no authentication, which HTTP methods a server allows
   (`http-methods`), the HTTP auth scheme a server requires (`http-auth`)
   and any exposed `.git` repository (`http-git`), RDP hostname/domain/OS
   build and encryption level leaked pre-auth (`rdp-ntlm-info`/
   `rdp-enum-encryption`), SSH algorithm/protocol-version info
-  (`ssh2-enum-algos`/`sshv1`), an SMTP open-relay check, and SNMP/IPMI
-  asset info (`snmp-info`/`ipmi-version`, both via a small separate UDP
-  probe - see below) - all
+  (`ssh2-enum-algos`/`sshv1`), an SMTP open-relay check, whether a DNS
+  server is an open recursive resolver, and SNMP/IPMI asset info (both
+  via a small separate UDP probe - see below) - all
   when the target allows a no-credentials session (also matched by the
   free-text search box), OS/device classification and MAC
   address (when available - see "What each scan does" above), TLS
@@ -529,19 +530,22 @@ For every target, the pipeline runs:
    message signing is required). A few more read-only "safe" scripts
    round this out the same way: NFS exports (`nfs-showmount`), rsync
    modules (`rsync-list-modules`), an anonymous LDAP bind's root DSE
-   (`ldap-rootdse`), which HTTP methods a server allows (`http-methods`),
-   the HTTP auth scheme a server requires (`http-auth` - also explains
-   why a host with an open HTTP port has no gowitness screenshot, see
-   below), an exposed `.git` repository (`http-git`), hostname/domain/OS
-   build leaked pre-auth via RDP (`rdp-ntlm-info`) and which RDP security
-   layer is allowed (`rdp-enum-encryption`), SSH algorithm info and
-   whether the obsolete SSHv1 protocol is enabled (`ssh2-enum-algos`/
-   `sshv1`), and whether a handful of commonly left-open database/service
-   daemons (MongoDB, Redis, MySQL, Docker's API, CouchDB, Cassandra) are
-   reachable with no authentication at all. One check, `smtp-open-relay`,
-   is not purely passive - it sends a handful of test messages through a
-   target SMTP server to check whether it relays mail for third parties,
-   the classic open-relay misconfiguration test.
+   (`ldap-rootdse`), the programs registered with a target's RPC
+   portmapper (`rpcinfo`) and a Windows MSRPC endpoint mapper's own list
+   of mapped services (`msrpc-enum`), which HTTP methods a server allows
+   (`http-methods`), the HTTP auth scheme a server requires (`http-auth` -
+   also explains why a host with an open HTTP port has no gowitness
+   screenshot, see below), an exposed `.git` repository (`http-git`),
+   hostname/domain/OS build leaked pre-auth via RDP (`rdp-ntlm-info`) and
+   which RDP security layer is allowed (`rdp-enum-encryption`), SSH
+   algorithm info and whether the obsolete SSHv1 protocol is enabled
+   (`ssh2-enum-algos`/`sshv1`), and whether a handful of commonly
+   left-open database/service daemons (MongoDB, Redis, MySQL, Memcached,
+   Oracle, Docker's API, CouchDB, Cassandra) are reachable with no
+   authentication at all. One check, `smtp-open-relay`, is not purely
+   passive - it sends a handful of test messages through a target SMTP
+   server to check whether it relays mail for third parties, the classic
+   open-relay misconfiguration test.
 3. **gowitness** - screenshots any port classified as HTTP(S), also
    capturing the TLS info, detected technologies, and full HTTP response
    headers gowitness sees along the way. Captured at `screenshotWidth`/
@@ -581,13 +585,14 @@ For every target, the pipeline runs:
    segment; a target reached over a routed hop simply has none captured
    (this is a property of ARP itself, not something any flag or
    privilege changes).
-8. **SNMP probe** (`snmp-info`, community string `public`) - a small
-   exception to the rest of this pipeline, which is entirely TCP: SNMP is
-   UDP-only, so rather than adding general UDP scanning support, this is
-   one extra, narrowly-scoped `nmap -sU -p 161` check run against every
-   scanned host directly, independent of whatever TCP ports were actually
-   discovered (bounded to 10 seconds per host, since "no response" on UDP
-   is inherently slower to determine than on TCP). Still honors a scan
+8. **SNMP probe** (`snmp-info`/`snmp-sysdescr`/`snmp-interfaces`/
+   `snmp-netstat`, community string `public`) - a small exception to the
+   rest of this pipeline, which is entirely TCP: SNMP is UDP-only, so
+   rather than adding general UDP scanning support, this is one extra,
+   narrowly-scoped `nmap -sU -p 161` check run against every scanned host
+   directly, independent of whatever TCP ports were actually discovered
+   (bounded to 10 seconds per host, since "no response" on UDP is
+   inherently slower to determine than on TCP). Still honors a scan
    exclude that specifically covers port 161, even though the normal
    TCP-only exclude mechanisms never see this path.
 9. **IPMI probe** (`ipmi-version` against UDP/623) - the identical
@@ -596,8 +601,15 @@ For every target, the pipeline runs:
    interfaces are a classic high-risk target - often left on default or
    no authentication, and easy to miss precisely because they sit
    outside a device's normal OS-level services.
+10. **DNS recursion probe** (`dns-recursion` against UDP/53) - the same
+    exception a third time, for the same reason (DNS recursion checks
+    are only meaningful over UDP - that's the transport an open
+    resolver actually gets abused over as a DNS amplification
+    reflector). Flags an open recursive resolver reachable from
+    anywhere, a real finding that puts third parties at risk, not just
+    the resolver's own operator.
 
-Steps 2-5 (plus the SNMP/IPMI probes) run concurrently with each other rather
+Steps 2-5 (plus the SNMP/IPMI/DNS-recursion probes) run concurrently with each other rather
 than as sequential batches, and **each host is submitted to the webserver
 as soon as its own work finishes** - a host with no HTTP(S)/RDP/TLS-
 carrying ports streams in right after its nmap call, while a different,
