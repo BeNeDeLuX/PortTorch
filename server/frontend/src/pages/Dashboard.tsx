@@ -208,7 +208,6 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
   const [showAllPorts, setShowAllPorts] = useState(false);
   const [agents, setAgents] = useState<ScannerAgent[]>([]);
   const [showExportModal, setShowExportModal] = useState(false);
-  const [linkCopied, setLinkCopied] = useState(false);
   const [loading, setLoading] = useState(true);
   // View mode / column visibility / sort are display preferences, not
   // search filters, so they live in localStorage rather than the URL.
@@ -446,21 +445,6 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
 
   function applyQuery() {
     updateFilters({ q: queryInput.trim() || undefined });
-  }
-
-  // The current search/filter/page state already lives entirely in the
-  // URL (see the module-level note on filtersFromSearchParams/
-  // updateFilters) - this button doesn't build anything new, it just
-  // makes the fact that the page is already shareable a one-click action
-  // instead of "manually copy the address bar".
-  function copyCurrentLink() {
-    navigator.clipboard
-      .writeText(window.location.href)
-      .then(() => {
-        setLinkCopied(true);
-        setTimeout(() => setLinkCopied(false), 2000);
-      })
-      .catch(() => {});
   }
 
   function togglePortFacet(port: number) {
@@ -725,10 +709,6 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
         <div className="csv-export-controls">
           <button type="button" className="link-button" onClick={() => setShowExportModal(true)}>
             Export data
-          </button>
-          {" · "}
-          <button type="button" className="link-button" onClick={copyCurrentLink}>
-            {linkCopied ? "Link copied!" : "Copy link"}
           </button>
         </div>
       </div>

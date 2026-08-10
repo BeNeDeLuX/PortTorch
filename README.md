@@ -78,9 +78,6 @@ The project has two independently deployed components:
   background check every 5 minutes fires a `saved_search.match` webhook
   the first time a host newly starts matching (not repeatedly for hosts
   that already matched).
-- :link: **Copy link** - next to "Export data". The dashboard's entire
-  search/filter/page state already lives in the URL, so this is just a
-  one-click copy of the current address instead of doing it manually.
 - :outbox_tray: **Export data** - respects whatever filters are currently active, or -
   if one or more hosts are selected via the bulk-select checkboxes - just
   those hosts instead. A popup offers a one-row-per-host CSV summary (with
