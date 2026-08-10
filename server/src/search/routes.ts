@@ -8,7 +8,7 @@ import { getAllowedScannerAgentIds } from "../auth/scannerScope";
 import { asyncHandler } from "../lib/asyncHandler";
 import { isIPv4Cidr, isIPv6Cidr } from "../lib/net";
 import { isStale } from "../lib/staleness";
-import { parseDateOnly } from "../lib/dateOnly";
+import { parseDateOnly, toDateOnlyString } from "../lib/dateOnly";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { requestRescan } from "../rescan";
@@ -753,12 +753,28 @@ hostsRouter.get("/:id", asyncHandler(async (req, res) => {
   const epssRows = allCveIds.length > 0 ? await db.selectFrom("epss_cache").select(["cve_id", "epss", "percentile"]).where("cve_id", "in", allCveIds).execute() : [];
   const epssByCveId = new Map(epssRows.map((r) => [r.cve_id, r]));
 
+  // KEV is synced/cached separately too, also keyed by CVE id (see
+  // cve/kevSync.ts) - same "read from cache, no live call on the request
+  // path" pattern as CVE/EPSS above.
+  const kevRows = allCveIds.length > 0 ? await db.selectFrom("kev_cache").select(["cve_id", "date_added", "known_ransomware_campaign_use"]).where("cve_id", "in", allCveIds).execute() : [];
+  const kevByCveId = new Map(kevRows.map((r) => [r.cve_id, r]));
+
   const ports = rawPorts.map((p) => {
-    const vulnerabilities = new Map<string, (typeof cveRows)[number]["cves"][number] & { epssScore: number | null; epssPercentile: number | null }>();
+    const vulnerabilities = new Map<
+      string,
+      (typeof cveRows)[number]["cves"][number] & { epssScore: number | null; epssPercentile: number | null; kevDateAdded: string | null; kevKnownRansomwareCampaignUse: string | null }
+    >();
     for (const cpe of p.cpes ?? []) {
       for (const cve of cvesByCpe.get(cpe) ?? []) {
         const epss = epssByCveId.get(cve.id);
-        vulnerabilities.set(cve.id, { ...cve, epssScore: epss?.epss ?? null, epssPercentile: epss?.percentile ?? null });
+        const kev = kevByCveId.get(cve.id);
+        vulnerabilities.set(cve.id, {
+          ...cve,
+          epssScore: epss?.epss ?? null,
+          epssPercentile: epss?.percentile ?? null,
+          kevDateAdded: toDateOnlyString(kev?.date_added ?? null),
+          kevKnownRansomwareCampaignUse: kev?.known_ransomware_campaign_use ?? null,
+        });
       }
     }
     return { ...p, vulnerabilities: [...vulnerabilities.values()] };

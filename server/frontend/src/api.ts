@@ -227,6 +227,7 @@ export type WebhookEvent =
   | "certificate.expiring_soon"
   | "saved_search.match"
   | "vulnerability.high_epss"
+  | "vulnerability.kev"
   | "digest.daily";
 
 export type WebhookChannelType = "webhook" | "email" | "teams";
@@ -275,6 +276,12 @@ export interface FleetVulnerability {
   description: string;
   epss_score: number | null;
   epss_percentile: number | null;
+  // CISA Known Exploited Vulnerabilities catalog membership - see
+  // cve/kevSync.ts. Non-null date_added means this CVE is confirmed
+  // actively exploited, a stronger signal than EPSS's predicted
+  // probability.
+  kev_date_added: string | null;
+  kev_known_ransomware_campaign_use: string | null;
 }
 
 export interface ExpiringCertificate {
@@ -330,6 +337,10 @@ export interface CveEntry {
   // if FIRST has no scored entry for this CVE.
   epssScore: number | null;
   epssPercentile: number | null;
+  // Same CISA KEV membership as FleetVulnerability above, for this CVE on
+  // this host's port.
+  kevDateAdded: string | null;
+  kevKnownRansomwareCampaignUse: string | null;
 }
 
 export interface ScanRequest {

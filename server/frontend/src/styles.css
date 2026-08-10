@@ -1273,6 +1273,21 @@ th {
   border-color: var(--border);
 }
 
+/* CISA KEV (Known Exploited Vulnerabilities) badge - confirmed active
+   exploitation, a stronger signal than any CVSS severity level, so it
+   gets its own distinct treatment rather than reusing .cve-critical. */
+.kev-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  color: #fff;
+  background: var(--danger);
+  border: 1px solid var(--danger);
+}
+
 .cert-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(620px, 1fr));

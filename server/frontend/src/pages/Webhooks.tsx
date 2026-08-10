@@ -14,6 +14,7 @@ const ALL_EVENTS: Array<{ key: WebhookEvent; label: string }> = [
   { key: "certificate.expiring_soon", label: "Certificate expiring soon" },
   { key: "saved_search.match", label: "Saved search matched a new host" },
   { key: "vulnerability.high_epss", label: "High EPSS score on a known CVE" },
+  { key: "vulnerability.kev", label: "CVE added to CISA's Known Exploited Vulnerabilities catalog" },
   { key: "digest.daily", label: "Daily digest (fleet-wide, once a day)" },
 ];
 

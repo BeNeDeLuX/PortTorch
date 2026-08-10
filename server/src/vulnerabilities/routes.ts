@@ -4,6 +4,7 @@ import { db } from "../db";
 import { requireAuth } from "../auth/middleware";
 import { getAllowedScannerAgentIds } from "../auth/scannerScope";
 import { asyncHandler } from "../lib/asyncHandler";
+import { toDateOnlyString } from "../lib/dateOnly";
 
 export const vulnerabilitiesRouter = Router();
 vulnerabilitiesRouter.use(requireAuth);
@@ -27,6 +28,11 @@ vulnerabilitiesRouter.get("/", asyncHandler(async (req, res) => {
     description: string;
     epss_score: number | null;
     epss_percentile: number | null;
+    // node-postgres returns a `date` column as a JS Date, not the plain
+    // string the type name suggests - see lib/dateOnly.ts's
+    // toDateOnlyString, applied below before this ever reaches res.json.
+    kev_date_added: Date | string | null;
+    kev_known_ransomware_campaign_use: string | null;
   }>`
     SELECT DISTINCT
       h.id AS host_id,
@@ -38,7 +44,9 @@ vulnerabilitiesRouter.get("/", asyncHandler(async (req, res) => {
       cve_elem->>'cvssSeverity' AS cvss_severity,
       cve_elem->>'description' AS description,
       ec.epss AS epss_score,
-      ec.percentile AS epss_percentile
+      ec.percentile AS epss_percentile,
+      kc.date_added AS kev_date_added,
+      kc.known_ransomware_campaign_use AS kev_known_ransomware_campaign_use
     FROM current_host_ports chp
     JOIN hosts h ON h.id = chp.host_id
     JOIN cve_cache cc ON cc.cpe = ANY(chp.cpes)
@@ -47,11 +55,25 @@ vulnerabilitiesRouter.get("/", asyncHandler(async (req, res) => {
     -- caught up, or FIRST has no entry for it) still needs to show up here,
     -- same "absence isn't an error" reasoning as a 404 from NVD itself.
     LEFT JOIN epss_cache ec ON ec.cve_id = cve_elem->>'id'
+    -- Left, not inner, for the same reason - most CVEs are never added to
+    -- CISA's KEV catalog at all, which is the normal case, not an error.
+    LEFT JOIN kev_cache kc ON kc.cve_id = cve_elem->>'id'
     WHERE chp.state = 'open'
     ${restriction}
   `.execute(db);
 
-  const sorted = rows.rows.slice().sort((a, b) => (b.cvss_score ?? 0) - (a.cvss_score ?? 0));
+  // KEV membership is a stronger, more concrete signal than either CVSS
+  // (severity, not likelihood) or EPSS (a predicted probability) - CISA
+  // has confirmed active exploitation - so it sorts ahead of CVSS score
+  // rather than being folded into the same sort key.
+  const sorted = rows.rows
+    .map((r) => ({ ...r, kev_date_added: toDateOnlyString(r.kev_date_added) }))
+    .sort((a, b) => {
+      const aKev = a.kev_date_added ? 1 : 0;
+      const bKev = b.kev_date_added ? 1 : 0;
+      if (aKev !== bKev) return bKev - aKev;
+      return (b.cvss_score ?? 0) - (a.cvss_score ?? 0);
+    });
 
   res.json(sorted);
 }));

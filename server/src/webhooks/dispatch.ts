@@ -8,6 +8,7 @@ export type WebhookEvent =
   | "certificate.expiring_soon"
   | "saved_search.match"
   | "vulnerability.high_epss"
+  | "vulnerability.kev"
   | "digest.daily";
 
 // Plain-English subject line for an email channel - a webhook channel has
@@ -19,6 +20,7 @@ const EVENT_SUBJECTS: Record<WebhookEvent, string> = {
   "certificate.expiring_soon": "Certificate expiring soon",
   "saved_search.match": "Saved search matched a new host",
   "vulnerability.high_epss": "High EPSS score on a known CVE",
+  "vulnerability.kev": "CVE added to CISA's Known Exploited Vulnerabilities catalog",
   "digest.daily": "Daily digest",
 };
 

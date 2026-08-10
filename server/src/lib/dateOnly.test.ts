@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseDateOnly } from "./dateOnly";
+import { parseDateOnly, toDateOnlyString } from "./dateOnly";
 
 describe("parseDateOnly", () => {
   it("parses a valid YYYY-MM-DD as UTC midnight", () => {
@@ -30,5 +30,23 @@ describe("parseDateOnly", () => {
     const d = parseDateOnly("2024-02-30");
     expect(d).not.toBeNull();
     expect(d!.toISOString()).toBe("2024-03-01T00:00:00.000Z");
+  });
+});
+
+describe("toDateOnlyString", () => {
+  it("formats a Date object (what node-postgres actually returns for a `date` column) as YYYY-MM-DD", () => {
+    expect(toDateOnlyString(new Date("2024-03-05T00:00:00.000Z"))).toBe("2024-03-05");
+  });
+
+  it("passes a string value through the same ISO-slice normalization", () => {
+    expect(toDateOnlyString("2024-03-05T00:00:00.000Z")).toBe("2024-03-05");
+  });
+
+  it("returns null for null", () => {
+    expect(toDateOnlyString(null)).toBeNull();
+  });
+
+  it("round-trips with parseDateOnly", () => {
+    expect(toDateOnlyString(parseDateOnly("2024-03-05"))).toBe("2024-03-05");
   });
 });

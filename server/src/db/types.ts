@@ -354,6 +354,24 @@ export interface EpssCacheTable {
   alert_sent_at: ColumnType<Date | null, string | null | undefined, string | null>;
 }
 
+// CISA's Known Exploited Vulnerabilities catalog - keyed by CVE id like
+// EpssCacheTable, for the same reason (KEV scores a specific
+// vulnerability, not a product/version) - see src/cve/kevSync.ts.
+export interface KevCacheTable {
+  cve_id: string;
+  vendor_project: string | null;
+  product: string | null;
+  vulnerability_name: string | null;
+  date_added: ColumnType<Date | null, string | null | undefined, string | null>;
+  due_date: ColumnType<Date | null, string | null | undefined, string | null>;
+  known_ransomware_campaign_use: string | null;
+  synced_at: ColumnType<Date, string | undefined, string>;
+  // Set once a "vulnerability.kev" webhook has fired for this CVE - never
+  // re-armed, same "fire once per row" reasoning as
+  // EpssCacheTable.alert_sent_at.
+  alert_sent_at: ColumnType<Date | null, string | null | undefined, string | null>;
+}
+
 // Singleton row (id always 1) - see migration
 // 1741100000000_epss_alert_and_digest_email.js.
 export interface DigestEmailStateTable {
@@ -429,6 +447,7 @@ export interface Database {
   user_scanner_agents: UserScannerAgentsTable;
   cve_cache: CveCacheTable;
   epss_cache: EpssCacheTable;
+  kev_cache: KevCacheTable;
   digest_email_state: DigestEmailStateTable;
   webhooks: WebhooksTable;
   audit_log: AuditLogTable;

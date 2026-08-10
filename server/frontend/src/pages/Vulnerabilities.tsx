@@ -4,7 +4,7 @@ import { api, FleetVulnerability, Me } from "../api";
 import { cveSeverityClass } from "../lib/cveSeverity";
 import PageHeader from "../components/PageHeader";
 
-type SortKey = "host" | "port" | "cve_id" | "cvss_score" | "epss_score";
+type SortKey = "host" | "port" | "cve_id" | "cvss_score" | "epss_score" | "kev";
 type SortDirection = "asc" | "desc";
 
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -33,6 +33,11 @@ function compareVulns(a: FleetVulnerability, b: FleetVulnerability, key: SortKey
     }
     case "epss_score":
       return sign * ((b.epss_score ?? -1) - (a.epss_score ?? -1));
+    case "kev": {
+      const av = a.kev_date_added ? 1 : 0;
+      const bv = b.kev_date_added ? 1 : 0;
+      return sign * (bv - av);
+    }
     default:
       return 0;
   }
@@ -45,6 +50,7 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [query, setQuery] = useState("");
   const [severityFilter, setSeverityFilter] = useState<string | null>(null);
+  const [kevOnly, setKevOnly] = useState(false);
 
   useEffect(() => {
     load();
@@ -76,6 +82,7 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
   const trimmedQuery = query.trim().toLowerCase();
   const filteredVulns = vulns.filter((v) => {
     if (severityFilter && severityOf(v) !== severityFilter) return false;
+    if (kevOnly && !v.kev_date_added) return false;
     if (!trimmedQuery) return true;
     return (
       v.host_ip.toLowerCase().includes(trimmedQuery) ||
@@ -95,7 +102,10 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
         Known CVEs matched against detected service versions across the whole fleet, most severe first. Synced daily
         from the NVD database - see a host's detail page for per-port context. EPSS (Exploit Prediction Scoring
         System, synced daily from FIRST.org) estimates the probability a CVE is exploited in the wild within the
-        next 30 days - useful for prioritizing among CVEs of the same severity.
+        next 30 days - useful for prioritizing among CVEs of the same severity. A "KEV" badge means CISA has
+        confirmed the CVE is already being actively exploited (its Known Exploited Vulnerabilities catalog, synced
+        daily) - a stronger, more concrete signal than EPSS's predicted probability, so KEV-listed rows sort first
+        regardless of severity.
       </p>
 
       {vulns.length > 0 && (
@@ -120,9 +130,12 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
                 {s}
               </button>
             ))}
+            <button className={`chip ${kevOnly ? "active" : ""}`} onClick={() => setKevOnly((v) => !v)}>
+              Known Exploited (CISA KEV)
+            </button>
           </div>
           <p className="host-meta">
-            {query.trim() || severityFilter ? `${sortedVulns.length} of ${vulns.length} shown` : `${vulns.length} total`}
+            {query.trim() || severityFilter || kevOnly ? `${sortedVulns.length} of ${vulns.length} shown` : `${vulns.length} total`}
           </p>
         </>
       )}
@@ -142,6 +155,7 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
               <th onClick={() => setSort("cve_id")}>CVE{sortIndicator("cve_id")}</th>
               <th onClick={() => setSort("cvss_score")}>Severity{sortIndicator("cvss_score")}</th>
               <th onClick={() => setSort("epss_score")}>EPSS{sortIndicator("epss_score")}</th>
+              <th onClick={() => setSort("kev")}>KEV{sortIndicator("kev")}</th>
               <th>Description</th>
             </tr>
           </thead>
@@ -168,6 +182,16 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
                 </td>
                 <td title={v.epss_percentile != null ? `${Math.round(v.epss_percentile * 100)}th percentile` : undefined}>
                   {v.epss_score != null ? `${(v.epss_score * 100).toFixed(1)}%` : "-"}
+                </td>
+                <td>
+                  {v.kev_date_added && (
+                    <span
+                      className="kev-badge"
+                      title={`Added to CISA KEV ${v.kev_date_added}${v.kev_known_ransomware_campaign_use === "Known" ? " - known ransomware campaign use" : ""}`}
+                    >
+                      KEV
+                    </span>
+                  )}
                 </td>
                 <td className="audit-details">{v.description}</td>
               </tr>

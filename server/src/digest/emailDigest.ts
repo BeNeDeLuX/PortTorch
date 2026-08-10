@@ -2,6 +2,7 @@ import { db } from "../db";
 import { config } from "../config";
 import { logger } from "../logger";
 import { dispatchWebhook } from "../webhooks/dispatch";
+import { toDateOnlyString } from "../lib/dateOnly";
 import { computeDigest, DigestResult } from "./routes";
 
 // Hourly, same cadence as webhooks/expiryAlerts.ts - fine-grained enough to
@@ -14,18 +15,6 @@ export function startDailyDigestEmail(): void {
   setInterval(() => {
     tick().catch((err) => logger.error({ event: "digest_email.tick_failed", err: err instanceof Error ? err.message : String(err) }));
   }, CHECK_INTERVAL_MS);
-}
-
-// node-postgres's default type parser returns a Postgres `date` column as
-// a JS Date (midnight UTC), not the plain "YYYY-MM-DD" string it was
-// written as - confirmed by testing, not assumed: comparing it directly
-// against a string via `===` silently never matches, which is exactly the
-// bug this normalization exists to avoid (the "already sent today" guard
-// below would otherwise never trigger, re-sending on every hourly tick
-// throughout the configured hour).
-function toDateOnlyString(value: Date | string | null): string | null {
-  if (value === null) return null;
-  return (value instanceof Date ? value : new Date(value)).toISOString().slice(0, 10);
 }
 
 // Exported so tests can invoke a single tick directly against a real

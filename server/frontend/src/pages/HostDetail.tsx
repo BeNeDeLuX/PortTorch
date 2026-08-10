@@ -452,22 +452,31 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
                     {p.vulnerabilities.length > 0 && (
                       <div className="cve-badges">
                         {p.vulnerabilities.map((v) => (
-                          <a
-                            key={v.id}
-                            className={`cve-badge cve-${cveSeverityClass(v)}`}
-                            href={`https://nvd.nist.gov/vuln/detail/${v.id}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            title={
-                              v.epssScore != null
-                                ? `${v.description}\nEPSS: ${(v.epssScore * 100).toFixed(1)}% likely to be exploited (${Math.round((v.epssPercentile ?? 0) * 100)}th percentile)`
-                                : v.description
-                            }
-                          >
-                            {v.id}
-                            {v.cvssScore != null && ` (${v.cvssScore})`}
-                            {v.epssScore != null && ` · EPSS ${(v.epssScore * 100).toFixed(1)}%`}
-                          </a>
+                          <span key={v.id} style={{ display: "inline-flex", gap: "0.25rem", alignItems: "center" }}>
+                            <a
+                              className={`cve-badge cve-${cveSeverityClass(v)}`}
+                              href={`https://nvd.nist.gov/vuln/detail/${v.id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={
+                                v.epssScore != null
+                                  ? `${v.description}\nEPSS: ${(v.epssScore * 100).toFixed(1)}% likely to be exploited (${Math.round((v.epssPercentile ?? 0) * 100)}th percentile)`
+                                  : v.description
+                              }
+                            >
+                              {v.id}
+                              {v.cvssScore != null && ` (${v.cvssScore})`}
+                              {v.epssScore != null && ` · EPSS ${(v.epssScore * 100).toFixed(1)}%`}
+                            </a>
+                            {v.kevDateAdded && (
+                              <span
+                                className="kev-badge"
+                                title={`Added to CISA Known Exploited Vulnerabilities catalog ${v.kevDateAdded}${v.kevKnownRansomwareCampaignUse === "Known" ? " - known ransomware campaign use" : ""}`}
+                              >
+                                KEV
+                              </span>
+                            )}
+                          </span>
                         ))}
                       </div>
                     )}

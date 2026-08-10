@@ -2,17 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "../../src/db";
 import { config } from "../../src/config";
 import { tick } from "../../src/digest/emailDigest";
+import { toDateOnlyString } from "../../src/lib/dateOnly";
 import { closeDb } from "./helpers";
-
-// node-postgres returns a `date` column as a JS Date (midnight UTC), not
-// the plain string it was written as - same normalization as
-// emailDigest.ts's own toDateOnlyString, duplicated here rather than
-// exported from there purely for this test, since it's not otherwise part
-// of that module's public surface.
-function toDateOnlyString(value: Date | string | null): string | null {
-  if (value === null) return null;
-  return (value instanceof Date ? value : new Date(value)).toISOString().slice(0, 10);
-}
 
 // digest_email_state is a singleton row (id = 1, see migration
 // 1741100000000_epss_alert_and_digest_email.js) shared by the whole test

@@ -156,7 +156,8 @@ The project has two independently deployed components:
   email to one or more addresses when a new host appears, a port newly
   opens, a certificate is about to expire, a saved search matches a new
   host, a known CVE's EPSS (exploit prediction) score crosses a threshold
-  (`EPSS_ALERT_THRESHOLD` in `.env`, default 0.5), or once a day for the
+  (`EPSS_ALERT_THRESHOLD` in `.env`, default 0.5), a known CVE is added to
+  CISA's Known Exploited Vulnerabilities catalog, or once a day for the
   fleet-wide digest. Email requires `SMTP_HOST` (and friends) set in `.env`
   - webhook/Teams channels need no extra configuration.
 - :dna: **Vulnerability correlation** - a daily background job matches every
@@ -168,7 +169,13 @@ The project has two independently deployed components:
   large number of distinct CPEs). A second daily sync fetches each known
   CVE's **EPSS score** (exploit prediction, from FIRST.org) - shown next to
   the CVSS severity on the Vulnerabilities page and per-port CVE badges, for
-  prioritizing among CVEs that share the same severity rating.
+  prioritizing among CVEs that share the same severity rating. A third daily
+  sync checks each known CVE against **CISA's Known Exploited Vulnerabilities
+  (KEV) catalog** - unlike EPSS's predicted probability, KEV membership means
+  CISA has confirmed the CVE is already being actively exploited; a red
+  "KEV" badge appears alongside the CVE badge wherever CVEs are shown, and
+  KEV-listed vulnerabilities sort ahead of CVSS score on the Vulnerabilities
+  page (which also gets a "Known Exploited" filter chip).
 - :robot: **Scanner agent management** - create/revoke API keys; revoking
   invalidates the key without deleting that scanner's scan history. A
   revoked agent can also be deleted from the list entirely - this only
