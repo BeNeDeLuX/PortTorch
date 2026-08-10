@@ -84,6 +84,13 @@ export interface HostSummary {
   // have a real device at the same ip, so this is shown to tell those
   // rows apart rather than looking like a single duplicated entry.
   scanner_agent_name: string | null;
+  scanner_agent_id: string | null;
+  // Risk indicator, computed per host from the same cve_cache/kev_cache
+  // join the Vulnerabilities page and host detail use - see
+  // search/routes.ts's GET /api/hosts.
+  cve_count: number;
+  max_cvss_score: number | null;
+  has_kev: boolean;
 }
 
 export interface HostFilters {
@@ -500,14 +507,22 @@ function hostsQueryString(filters: HostFilters, page?: number, pageSize?: number
 
 export type HostsExportDetail = "host" | "port";
 
-export function hostsExportUrl(filters: HostFilters, detail: HostsExportDetail = "host"): string {
+// selectedIds, when non-empty, scopes the export to exactly those hosts
+// (still AND'd with allowedScannerAgentIds server-side, see
+// search/routes.ts's HostFilterParams.ids) rather than every host the
+// current filters match - the Dashboard's "export selected" option.
+export function hostsExportUrl(filters: HostFilters, detail: HostsExportDetail = "host", selectedIds?: string[]): string {
   const qs = hostsQueryString(filters);
-  return `/api/hosts/export.csv${qs}${qs ? "&" : "?"}detail=${detail}`;
+  let url = `/api/hosts/export.csv${qs}${qs ? "&" : "?"}detail=${detail}`;
+  if (selectedIds?.length) url += `&ids=${selectedIds.join(",")}`;
+  return url;
 }
 
-export function hostsExportJsonUrl(filters: HostFilters): string {
+export function hostsExportJsonUrl(filters: HostFilters, selectedIds?: string[]): string {
   const qs = hostsQueryString(filters);
-  return `/api/hosts/export.json${qs}`;
+  let url = `/api/hosts/export.json${qs}`;
+  if (selectedIds?.length) url += `${qs ? "&" : "?"}ids=${selectedIds.join(",")}`;
+  return url;
 }
 
 export const api = {

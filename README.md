@@ -68,18 +68,25 @@ The project has two independently deployed components:
   usable. Every filter combines with the free-text search box and with
   each other.
 - :card_index_dividers: **Grid or table view** - table view has sortable, show/hide-able columns
-  (hostname, open port count, last seen, screenshot, OS/device); your
-  choice of view and column layout is remembered per browser. Both views
-  support selecting multiple hosts to bulk-tag or bulk-rescan at once.
+  (hostname, open port count, last seen, screenshot, OS/device, a compact
+  CVE/KEV risk indicator); your choice of view and column layout is
+  remembered per browser. Both views support selecting multiple hosts to
+  bulk-tag or bulk-rescan at once. A host's device type, OS family, and
+  scanner - both on the card/row itself, not just the sidebar - are
+  clickable to filter by them directly from the list.
 - :floppy_disk: **Saved searches** - save the current filter combination by name; a
   background check every 5 minutes fires a `saved_search.match` webhook
   the first time a host newly starts matching (not repeatedly for hosts
   that already matched).
-- :outbox_tray: **Export data** - respects whatever filters are currently active. A popup
-  offers a one-row-per-host CSV summary (with an open-port count), a
-  one-row-per-open-port detailed CSV (port/protocol/service columns) for a
-  flat asset-inventory shape, or a JSON export (one object per host with a
-  nested list of its open ports).
+- :link: **Copy link** - next to "Export data". The dashboard's entire
+  search/filter/page state already lives in the URL, so this is just a
+  one-click copy of the current address instead of doing it manually.
+- :outbox_tray: **Export data** - respects whatever filters are currently active, or -
+  if one or more hosts are selected via the bulk-select checkboxes - just
+  those hosts instead. A popup offers a one-row-per-host CSV summary (with
+  an open-port count), a one-row-per-open-port detailed CSV
+  (port/protocol/service columns) for a flat asset-inventory shape, or a
+  JSON export (one object per host with a nested list of its open ports).
 - :desktop_computer: **Host detail page** - open ports with banners/CPE/OS hints and known
   CVEs (matched against detected service versions, synced daily from the
   NVD database - see below), anonymous FTP directory listings, SMB share

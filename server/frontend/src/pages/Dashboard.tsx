@@ -17,6 +17,7 @@ import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanProgressModal from "../components/ScanProgressModal";
 import { elapsedLabel } from "../lib/elapsed";
 import { formatDateTime } from "../lib/formatDate";
+import { cveSeverityClass } from "../lib/cveSeverity";
 
 const PAGE_SIZE = 50;
 
@@ -48,7 +49,7 @@ function filtersFromSearchParams(searchParams: URLSearchParams): HostFilters {
 }
 
 type ViewMode = "grid" | "table";
-type ColumnKey = "hostname" | "open_port_count" | "last_seen_at" | "screenshot" | "device" | "mac" | "scanner";
+type ColumnKey = "hostname" | "open_port_count" | "last_seen_at" | "screenshot" | "device" | "mac" | "scanner" | "risk";
 type SortKey = "ip" | ColumnKey;
 type SortDirection = "asc" | "desc";
 
@@ -60,6 +61,7 @@ const TOGGLEABLE_COLUMNS: Array<{ key: ColumnKey; label: string }> = [
   { key: "device", label: "OS/Device" },
   { key: "mac", label: "MAC" },
   { key: "scanner", label: "Scanner" },
+  { key: "risk", label: "Risk (CVEs)" },
 ];
 
 interface TablePrefs {
@@ -152,10 +154,38 @@ function sortHosts(hosts: HostSummary[], sortKey: SortKey, direction: SortDirect
         return sign * (a.mac_address ?? "").localeCompare(b.mac_address ?? "");
       case "scanner":
         return sign * (a.scanner_agent_name ?? "").localeCompare(b.scanner_agent_name ?? "");
+      case "risk":
+        // KEV outranks raw CVE count/severity, same ordering priority as
+        // the Vulnerabilities page's own fleet-wide sort.
+        if (a.has_kev !== b.has_kev) return sign * (a.has_kev ? -1 : 1);
+        return sign * (b.cve_count - a.cve_count);
       default:
         return 0;
     }
   });
+}
+
+// Compact risk indicator for the host list - reuses the same severity
+// banding (cveSeverityClass) and KEV badge styling the Vulnerabilities
+// page and host detail already use, just condensed to a single glance:
+// a count, colored by the host's single worst CVE, plus a KEV marker if
+// any of its CVEs are confirmed actively exploited. Renders nothing for
+// a host with no known CVEs, same "absence isn't shown as a zero" as the
+// rest of this app's badge-based indicators.
+function RiskBadge({ host }: { host: HostSummary }) {
+  if (host.cve_count === 0) return null;
+  return (
+    <span className="risk-badge-group" title={`${host.cve_count} known CVE(s) on this host's open ports`}>
+      <span className={`cve-badge cve-${cveSeverityClass({ cvssScore: host.max_cvss_score })}`}>
+        {host.cve_count} CVE{host.cve_count === 1 ? "" : "s"}
+      </span>
+      {host.has_kev && (
+        <span className="kev-badge" title="At least one CVE on this host is on CISA's Known Exploited Vulnerabilities catalog">
+          KEV
+        </span>
+      )}
+    </span>
+  );
 }
 
 export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
@@ -178,6 +208,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
   const [showAllPorts, setShowAllPorts] = useState(false);
   const [agents, setAgents] = useState<ScannerAgent[]>([]);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [loading, setLoading] = useState(true);
   // View mode / column visibility / sort are display preferences, not
   // search filters, so they live in localStorage rather than the URL.
@@ -417,6 +448,21 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
     updateFilters({ q: queryInput.trim() || undefined });
   }
 
+  // The current search/filter/page state already lives entirely in the
+  // URL (see the module-level note on filtersFromSearchParams/
+  // updateFilters) - this button doesn't build anything new, it just
+  // makes the fact that the page is already shareable a one-click action
+  // instead of "manually copy the address bar".
+  function copyCurrentLink() {
+    navigator.clipboard
+      .writeText(window.location.href)
+      .then(() => {
+        setLinkCopied(true);
+        setTimeout(() => setLinkCopied(false), 2000);
+      })
+      .catch(() => {});
+  }
+
   function togglePortFacet(port: number) {
     const current = filters.ports ?? [];
     const next = current.includes(port) ? current.filter((p) => p !== port) : [...current, port];
@@ -449,6 +495,18 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
 
   function toggleDeviceTypeFacet(deviceType: string) {
     updateFilters({ deviceType: filters.deviceType === deviceType ? undefined : deviceType });
+  }
+
+  // Same add/remove-from-array pattern as togglePortFacet/toggleServiceFacet
+  // above, used by a host card/row's own "via <scanner>" text - lets a
+  // user filter by clicking what they see in the list itself, not just
+  // the sidebar facets or the ScannerMultiSelect dropdown.
+  function toggleScannerAgentFilter(scannerAgentId: string) {
+    const current = filters.scannerAgentIds ?? [];
+    const next = current.includes(scannerAgentId)
+      ? current.filter((id) => id !== scannerAgentId)
+      : [...current, scannerAgentId];
+    updateFilters({ scannerAgentIds: next.length ? next : undefined });
   }
 
   const activeChips: Array<{ key: string; label: string; onRemove: () => void }> = [];
@@ -668,10 +726,16 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
           <button type="button" className="link-button" onClick={() => setShowExportModal(true)}>
             Export data
           </button>
+          {" · "}
+          <button type="button" className="link-button" onClick={copyCurrentLink}>
+            {linkCopied ? "Link copied!" : "Copy link"}
+          </button>
         </div>
       </div>
 
-      {showExportModal && <ExportModal filters={filters} onClose={() => setShowExportModal(false)} />}
+      {showExportModal && (
+        <ExportModal filters={filters} selectedIds={[...selected]} onClose={() => setShowExportModal(false)} />
+      )}
 
       {activeChips.length > 0 && (
         <div className="filter-chips">
@@ -881,6 +945,9 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                   {tablePrefs.columns.includes("scanner") && (
                     <th onClick={() => setSort("scanner")}>Scanner{sortIndicator("scanner")}</th>
                   )}
+                  {tablePrefs.columns.includes("risk") && (
+                    <th onClick={() => setSort("risk")}>Risk{sortIndicator("risk")}</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -899,12 +966,56 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                     )}
                     {tablePrefs.columns.includes("screenshot") && <td>{h.thumbnail_kind ?? "-"}</td>}
                     {tablePrefs.columns.includes("device") && (
-                      <td>{[h.device_type, h.os_family].filter(Boolean).join(" · ") || "-"}</td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        {h.device_type || h.os_family ? (
+                          <>
+                            {h.device_type && (
+                              <button
+                                type="button"
+                                className="link-button"
+                                title={`Filter by device type: ${h.device_type}`}
+                                onClick={() => toggleDeviceTypeFacet(h.device_type!)}
+                              >
+                                {h.device_type}
+                              </button>
+                            )}
+                            {h.device_type && h.os_family && " · "}
+                            {h.os_family && (
+                              <button
+                                type="button"
+                                className="link-button"
+                                title={`Filter by OS family: ${h.os_family}`}
+                                onClick={() => toggleOsFamilyFacet(h.os_family!)}
+                              >
+                                {h.os_family}
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
                     )}
                     {tablePrefs.columns.includes("mac") && (
                       <td title={h.mac_vendor ?? undefined}>{h.mac_address ?? "-"}</td>
                     )}
-                    {tablePrefs.columns.includes("scanner") && <td>{h.scanner_agent_name ?? "-"}</td>}
+                    {tablePrefs.columns.includes("scanner") && (
+                      <td onClick={(e) => e.stopPropagation()}>
+                        {h.scanner_agent_name && h.scanner_agent_id ? (
+                          <button
+                            type="button"
+                            className="link-button"
+                            title={`Filter by scanner: ${h.scanner_agent_name}`}
+                            onClick={() => toggleScannerAgentFilter(h.scanner_agent_id!)}
+                          >
+                            {h.scanner_agent_name}
+                          </button>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
+                    )}
+                    {tablePrefs.columns.includes("risk") && <td><RiskBadge host={h} /></td>}
                   </tr>
                 ))}
               </tbody>
@@ -934,10 +1045,58 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                   )}
                   <div className="host-ip">{h.ip}</div>
                   {h.hostname && <div className="host-hostname">{h.hostname}</div>}
-                  {h.scanner_agent_name && <div className="host-meta">via {h.scanner_agent_name}</div>}
+                  {h.scanner_agent_name && h.scanner_agent_id && (
+                    <div className="host-meta">
+                      via{" "}
+                      <button
+                        type="button"
+                        className="link-button"
+                        title={`Filter by scanner: ${h.scanner_agent_name}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          toggleScannerAgentFilter(h.scanner_agent_id!);
+                        }}
+                      >
+                        {h.scanner_agent_name}
+                      </button>
+                    </div>
+                  )}
                   {(h.device_type || h.os_family) && (
                     <div className="tech-badges">
-                      <span className="tech-badge">{[h.device_type, h.os_family].filter(Boolean).join(" · ")}</span>
+                      {h.device_type && (
+                        <button
+                          type="button"
+                          className="tech-badge tech-badge-clickable"
+                          title={`Filter by device type: ${h.device_type}`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleDeviceTypeFacet(h.device_type!);
+                          }}
+                        >
+                          {h.device_type}
+                        </button>
+                      )}
+                      {h.os_family && (
+                        <button
+                          type="button"
+                          className="tech-badge tech-badge-clickable"
+                          title={`Filter by OS family: ${h.os_family}`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleOsFamilyFacet(h.os_family!);
+                          }}
+                        >
+                          {h.os_family}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {h.cve_count > 0 && (
+                    <div className="cve-badges">
+                      <RiskBadge host={h} />
                     </div>
                   )}
                   <div className="host-meta">

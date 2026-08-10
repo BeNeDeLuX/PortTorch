@@ -77,6 +77,16 @@ export interface HostFilterParams {
   lastSeenAfter: string;
   lastSeenBefore: string;
   scannerAgentIds: string[];
+  // Scopes to specific host ids, AND'd in alongside every other filter
+  // here rather than replacing them - used by the export routes'
+  // "export only the selected hosts" option (Dashboard's bulk-select
+  // checkboxes). In practice the selected ids are already a subset of
+  // whatever the current filters match (selection happens from the
+  // already-filtered list), so this is a no-op narrowing in the common
+  // case, but composing it as one more AND'd condition (rather than a
+  // separate ids-only code path per export route) means it can never
+  // accidentally bypass the allowedScannerAgentIds restriction below.
+  ids: string[];
 }
 
 // Comma-separated (?port=21,3389) rather than repeated query keys - simpler
@@ -85,6 +95,8 @@ function parseCommaList(value: unknown): string[] {
   if (typeof value !== "string" || !value.trim()) return [];
   return value.split(",").map((v) => v.trim()).filter(Boolean);
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function parseHostFilterParams(query: Record<string, unknown>): HostFilterParams {
   return {
@@ -101,6 +113,10 @@ export function parseHostFilterParams(query: Record<string, unknown>): HostFilte
     lastSeenAfter: typeof query.lastSeenAfter === "string" ? query.lastSeenAfter.trim() : "",
     lastSeenBefore: typeof query.lastSeenBefore === "string" ? query.lastSeenBefore.trim() : "",
     scannerAgentIds: parseCommaList(query.scannerAgentId),
+    // Invalid entries are silently dropped rather than causing a 400 -
+    // a malformed id in the list just means that one host is excluded,
+    // not that the whole export request fails.
+    ids: parseCommaList(query.ids).filter((id) => UUID_RE.test(id)),
   };
 }
 
@@ -124,6 +140,7 @@ export function applyHostFilters(
     lastSeenAfter,
     lastSeenBefore,
     scannerAgentIds,
+    ids,
   }: HostFilterParams,
   // Session-based scanner restriction (server/src/auth/scannerScope.ts),
   // separate from the user-chosen scannerAgentIds filter above - this is
@@ -271,6 +288,10 @@ export function applyHostFilters(
     query = query.where("hosts.scanner_agent_id", "in", allowedScannerAgentIds);
   }
 
+  if (ids.length > 0) {
+    query = query.where("hosts.id", "in", ids);
+  }
+
   if (hideEmpty) {
     query = query.where((eb: any) =>
       eb.exists(
@@ -354,8 +375,11 @@ hostsRouter.get("/", asyncHandler(async (req, res) => {
       // different scanners (different networks) can each have a real
       // device at the same ip, so this is surfaced here to tell those
       // apart in the dashboard rather than showing two indistinguishable
-      // rows with the same ip.
+      // rows with the same ip. scanner_agent_id itself is included too,
+      // not just the name, so the dashboard can filter by clicking a
+      // host's own "via <scanner>" text without a name-to-id lookup.
       "scanner_agents.name as scanner_agent_name",
+      "hosts.scanner_agent_id as scanner_agent_id",
       sql<number>`count(distinct current_host_ports.port) filter (where current_host_ports.state = 'open')`.as(
         "open_port_count"
       ),
@@ -377,6 +401,34 @@ hostsRouter.get("/", asyncHandler(async (req, res) => {
         order by shot.captured_at desc
         limit 1
       )`.as("thumbnail_kind"),
+      // Same correlated-subquery approach as thumbnail_id/thumbnail_kind
+      // above (scoped per host, not part of the GROUP BY) - the same
+      // cve_cache/current_host_ports join vulnerabilities/routes.ts and
+      // search/routes.ts's own GET /:id already use, just aggregated to
+      // a count/max/exists instead of returned as individual rows, so the
+      // host list can show a risk indicator without a second round trip.
+      sql<number>`(
+        select count(distinct cve_elem->>'id')
+        from current_host_ports chp2
+        join cve_cache cc2 on cc2.cpe = ANY(chp2.cpes)
+        cross join lateral jsonb_array_elements(cc2.cves) as cve_elem
+        where chp2.host_id = hosts.id and chp2.state = 'open'
+      )`.as("cve_count"),
+      sql<number | null>`(
+        select max((cve_elem->>'cvssScore')::float)
+        from current_host_ports chp2
+        join cve_cache cc2 on cc2.cpe = ANY(chp2.cpes)
+        cross join lateral jsonb_array_elements(cc2.cves) as cve_elem
+        where chp2.host_id = hosts.id and chp2.state = 'open'
+      )`.as("max_cvss_score"),
+      sql<boolean>`exists (
+        select 1
+        from current_host_ports chp2
+        join cve_cache cc2 on cc2.cpe = ANY(chp2.cpes)
+        cross join lateral jsonb_array_elements(cc2.cves) as cve_elem
+        join kev_cache kc2 on kc2.cve_id = cve_elem->>'id'
+        where chp2.host_id = hosts.id and chp2.state = 'open'
+      )`.as("has_kev"),
     ])
     .groupBy([
       "hosts.id",
@@ -387,6 +439,7 @@ hostsRouter.get("/", asyncHandler(async (req, res) => {
       "hosts.device_type",
       "hosts.mac_address",
       "hosts.mac_vendor",
+      "hosts.scanner_agent_id",
       "scanner_agents.name",
     ])
     .orderBy("hosts.last_seen_at", "desc");
@@ -398,7 +451,17 @@ hostsRouter.get("/", asyncHandler(async (req, res) => {
     .offset((page - 1) * pageSize)
     .execute();
 
-  res.json({ items, total: Number(count), page, pageSize });
+  // cve_count is a Postgres bigint (count(distinct ...)), which
+  // node-postgres returns as a string, not a number - same "count columns
+  // need an explicit Number() wrap before res.json()" reasoning as
+  // ScanHistory's own screenshot/rdp_screenshot counts (see CLAUDE.md).
+  // Confirmed as a real bug here too, not just reasoned about: the
+  // frontend's `cve_count === 0` check silently never matched a string
+  // "0", so a host with zero CVEs rendered a stray "0 CVEs" badge instead
+  // of no badge at all.
+  const itemsWithNumericCveCount = items.map((h) => ({ ...h, cve_count: Number(h.cve_count) }));
+
+  res.json({ items: itemsWithNumericCveCount, total: Number(count), page, pageSize });
 }));
 
 // "host": one row per host, open_port_count only - a quick fleet summary.
