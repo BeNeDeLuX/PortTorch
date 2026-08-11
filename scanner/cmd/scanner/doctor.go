@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strings"
@@ -52,7 +54,22 @@ func runDoctor(configPath string) error {
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		checks = append(checks, check{"config file (" + configPath + ")", statusFail, err.Error()})
+		detail := err.Error()
+		// The plain "no such file or directory" from config.Load is
+		// accurate but unhelpful on its own - the most common real cause
+		// isn't a typo in --config, it's that install.sh only ever
+		// populates config.yaml under the dedicated "porttorch" system
+		// user's home (see install.sh / CLAUDE.md's "Scanner installer"),
+		// so running the binary directly as your own login user resolves
+		// a --config default (os.UserHomeDir()) that was never written to.
+		// Scoped to exactly this error (errors.Is, not a substring check,
+		// since config.Load wraps the underlying *fs.PathError with %w) so
+		// a real permission or YAML-parse error still gets its own
+		// unembellished message instead of a misleading hint.
+		if errors.Is(err, fs.ErrNotExist) {
+			detail += " - hint: if PortTorch was installed via install.sh, the config lives under the dedicated 'porttorch' system user's home, not yours; run this as that user (e.g. sudo -u porttorch porttorch doctor --config /var/lib/porttorch/.config/porttorch/config.yaml) or copy config.example.yaml to " + configPath + " for a standalone config"
+		}
+		checks = append(checks, check{"config file (" + configPath + ")", statusFail, detail})
 		printChecks(checks)
 		return fmt.Errorf("config could not be loaded")
 	}
