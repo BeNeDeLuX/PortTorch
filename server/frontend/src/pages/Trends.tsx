@@ -250,7 +250,7 @@ export default function Trends({ me, onLogout }: { me: Me; onLogout: () => void 
         <>
           <section>
             <h2>
-              Total hosts{" "}
+              Total hosts (all time){" "}
               {latestTotal !== null && <span className="trend-hero">{latestTotal.toLocaleString()}</span>}
             </h2>
             {showTable ? (
