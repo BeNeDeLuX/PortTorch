@@ -7,6 +7,7 @@ import PageHeader from "../components/PageHeader";
 import { formatDateTime, formatDateOnly } from "../lib/formatDate";
 import Lightbox, { LightboxItem } from "../components/Lightbox";
 import HostExportModal from "../components/HostExportModal";
+import { IconDownload, IconRefresh } from "../components/icons";
 
 // Router state Dashboard.tsx hands off when navigating to a host - see
 // the prev/next wiring further down for how each field is used.
@@ -388,12 +389,12 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
         <h1>
           {data.host.ip} {data.host.hostname && <span className="host-hostname">({data.host.hostname})</span>}
         </h1>
-        <button type="button" onClick={() => setShowExportModal(true)}>
-          ⬇️ Export data
+        <button type="button" className="btn-icon-label" onClick={() => setShowExportModal(true)}>
+          <IconDownload /> Export data
         </button>
         {canEdit && (
-          <button onClick={handleRescan} disabled={rescanInFlight}>
-            {rescanInFlight ? "🔄 Rescan running..." : "🔄 Rescan"}
+          <button className="btn-icon-label" onClick={handleRescan} disabled={rescanInFlight}>
+            <IconRefresh /> {rescanInFlight ? "Rescan running..." : "Rescan"}
           </button>
         )}
       </div>

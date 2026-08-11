@@ -122,6 +122,16 @@ button {
   font-weight: 600;
 }
 
+/* A button whose label is preceded by one of components/icons.tsx's inline
+   SVGs (e.g. Host Detail's Export data / Rescan) - centers icon and text
+   on the same line with a small gap, rather than relying on default inline
+   layout, where the SVG's own baseline can sit slightly off from the text. */
+.btn-icon-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
 input {
   background: var(--panel);
   border: 1px solid var(--border);
