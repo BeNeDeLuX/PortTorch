@@ -1086,6 +1086,8 @@ th {
 
 .headers-details summary {
   cursor: pointer;
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .headers-list {
