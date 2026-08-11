@@ -30,6 +30,16 @@
      slot 7) is distinct from every accent choice and from all 3 activity
      series - validated standalone via scripts/validate_palette.js. */
   --chart-headline: #9085e9;
+  /* Second standalone single-series chart (Trends' Hosts scanned per day,
+     directly below Total hosts) - needs its own distinct color for the same
+     reason --chart-headline does (two unrelated single-line charts stacked
+     on one page reading as the same series at a glance), so it can't reuse
+     --chart-headline itself either. Categorical slot 6 (green) - validated
+     standalone against --chart-headline (the only other color it's ever
+     visually adjacent to on this page) via scripts/validate_palette.js
+     against this app's actual --panel surface (#121820), not the skill's
+     default: all checks pass. */
+  --chart-scanned: #008300;
 }
 
 :root[data-theme="light"] {
@@ -53,6 +63,7 @@
   --chart-series-3: #1baf7a;
   --chart-series-4: #eda100;
   --chart-headline: #4a3aa7;
+  --chart-scanned: #008300;
 }
 
 /* Orange is the default (baked into the two :root blocks above, no

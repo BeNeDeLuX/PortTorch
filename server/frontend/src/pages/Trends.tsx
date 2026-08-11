@@ -3,7 +3,7 @@ import { api, Me, ScannerAgent, TrendsResult } from "../api";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 
-type SeriesKey = "totalHosts" | "newHosts" | "scans" | "openPorts" | "cveMatches";
+type SeriesKey = "totalHosts" | "newHosts" | "scans" | "hostsScanned" | "openPorts" | "cveMatches";
 
 interface SeriesDef {
   key: SeriesKey;
@@ -259,6 +259,19 @@ export default function Trends({ me, onLogout }: { me: Me; onLogout: () => void 
               <TrendChart
                 data={trends.series}
                 series={[{ key: "totalHosts", label: "Total hosts", color: "var(--chart-headline)" }]}
+                formatDateShort={formatDateShort}
+              />
+            )}
+          </section>
+
+          <section>
+            <h2>Hosts scanned per day</h2>
+            {showTable ? (
+              <TrendTable data={trends.series} columns={[{ key: "hostsScanned", label: "Hosts scanned" }]} />
+            ) : (
+              <TrendChart
+                data={trends.series}
+                series={[{ key: "hostsScanned", label: "Hosts scanned", color: "var(--chart-scanned)" }]}
                 formatDateShort={formatDateShort}
               />
             )}

@@ -269,7 +269,15 @@ export interface DigestResult {
 export interface TrendsResult {
   days: number;
   since: string;
-  series: Array<{ date: string; newHosts: number; totalHosts: number; scans: number; openPorts: number; cveMatches: number }>;
+  series: Array<{
+    date: string;
+    newHosts: number;
+    totalHosts: number;
+    scans: number;
+    hostsScanned: number;
+    openPorts: number;
+    cveMatches: number;
+  }>;
 }
 
 export interface FleetVulnerability {

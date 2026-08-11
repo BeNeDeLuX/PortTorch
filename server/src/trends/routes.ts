@@ -64,7 +64,7 @@ trendsRouter.get("/", asyncHandler(async (req, res) => {
   const filterIds = parseScannerAgentIds(req.query.scannerAgentId);
   const needsHostJoin = allowed !== null || filterIds.length > 0;
 
-  const [newHostsRows, totalHostsBefore, scanRows, openPortRows, cveRows] = await Promise.all([
+  const [newHostsRows, totalHostsBefore, scanRows, hostsScannedRows, openPortRows, cveRows] = await Promise.all([
     sql<DailyCountRow>`
       SELECT date_trunc('day', first_seen_at)::date AS date, count(*) AS count
       FROM hosts
@@ -92,6 +92,28 @@ trendsRouter.get("/", asyncHandler(async (req, res) => {
       WHERE started_at >= ${since.toISOString()}
         ${allowed ? sql`AND scanner_agent_id = ANY(${allowed})` : sql``}
         ${filterIds.length > 0 ? sql`AND scanner_agent_id = ANY(${filterIds})` : sql``}
+      GROUP BY 1
+      ORDER BY 1
+    `.execute(db),
+
+    // Distinct hosts actually touched by a scan that day - deliberately not
+    // filtered to state = 'open' the way openPorts/cveMatches below are,
+    // since a host that got rescanned and came back all-closed was still
+    // scanned that day. Same honest-proxy caveat as openPorts still applies
+    // one layer up though: a host masscan found with zero open ports gets no
+    // host_port_observations row at all that run (masscan only ever reports
+    // ports it sees open - see CLAUDE.md's "Scan pipeline"), so it won't
+    // count as "scanned" here either. Can go up and down day to day, unlike
+    // totalHosts's running total above - a quiet day (or a scanner that
+    // didn't run) shows fewer hosts touched, not a dip that looks like hosts
+    // were removed.
+    sql<DailyCountRow>`
+      SELECT date_trunc('day', hpo.observed_at)::date AS date, count(DISTINCT hpo.host_id) AS count
+      FROM host_port_observations hpo
+      ${needsHostJoin ? sql`JOIN hosts h ON h.id = hpo.host_id` : sql``}
+      WHERE hpo.observed_at >= ${since.toISOString()}
+        ${allowed ? sql`AND h.scanner_agent_id = ANY(${allowed})` : sql``}
+        ${filterIds.length > 0 ? sql`AND h.scanner_agent_id = ANY(${filterIds})` : sql``}
       GROUP BY 1
       ORDER BY 1
     `.execute(db),
@@ -130,10 +152,21 @@ trendsRouter.get("/", asyncHandler(async (req, res) => {
 
   const newHostsByDate = new Map(newHostsRows.rows.map((r) => [r.date.toISOString().slice(0, 10), Number(r.count)]));
   const scansByDate = new Map(scanRows.rows.map((r) => [r.date.toISOString().slice(0, 10), Number(r.count)]));
+  const hostsScannedByDate = new Map(
+    hostsScannedRows.rows.map((r) => [r.date.toISOString().slice(0, 10), Number(r.count)])
+  );
   const openPortsByDate = new Map(openPortRows.rows.map((r) => [r.date.toISOString().slice(0, 10), Number(r.count)]));
   const cvesByDate = new Map(cveRows.rows.map((r) => [r.date.toISOString().slice(0, 10), Number(r.count)]));
 
-  const series: Array<{ date: string; newHosts: number; totalHosts: number; scans: number; openPorts: number; cveMatches: number }> = [];
+  const series: Array<{
+    date: string;
+    newHosts: number;
+    totalHosts: number;
+    scans: number;
+    hostsScanned: number;
+    openPorts: number;
+    cveMatches: number;
+  }> = [];
   let runningTotal = Number(totalHostsBefore.count);
   for (let i = 0; i < days; i++) {
     const d = new Date(since.getTime() + i * 24 * 60 * 60 * 1000);
@@ -145,6 +178,7 @@ trendsRouter.get("/", asyncHandler(async (req, res) => {
       newHosts,
       totalHosts: runningTotal,
       scans: scansByDate.get(key) ?? 0,
+      hostsScanned: hostsScannedByDate.get(key) ?? 0,
       openPorts: openPortsByDate.get(key) ?? 0,
       cveMatches: cvesByDate.get(key) ?? 0,
     });

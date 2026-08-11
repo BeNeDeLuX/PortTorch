@@ -94,6 +94,7 @@ describe("GET /api/trends", () => {
     // database may contribute to the same day's fleet-wide counts.
     expect(today.newHosts).toBeGreaterThanOrEqual(2);
     expect(today.scans).toBeGreaterThanOrEqual(2);
+    expect(today.hostsScanned).toBeGreaterThanOrEqual(2);
     expect(today.openPorts).toBeGreaterThanOrEqual(2);
     expect(today.cveMatches).toBeGreaterThanOrEqual(2);
     expect(today.totalHosts).toBeGreaterThanOrEqual(today.newHosts);
@@ -121,6 +122,7 @@ describe("GET /api/trends", () => {
     // database - this restricted view is scoped down to just agentA).
     expect(today.newHosts).toBe(1);
     expect(today.scans).toBe(1);
+    expect(today.hostsScanned).toBe(1);
     expect(today.openPorts).toBe(1);
     expect(today.cveMatches).toBe(1);
   });
@@ -135,12 +137,14 @@ describe("GET /api/trends", () => {
     const todayA = onlyA.body.series.find((d: { date: string }) => d.date === todayKey());
     expect(todayA.newHosts).toBe(1);
     expect(todayA.scans).toBe(1);
+    expect(todayA.hostsScanned).toBe(1);
     expect(todayA.openPorts).toBe(1);
     expect(todayA.cveMatches).toBe(1);
 
     const both = await adminClient.get("/api/trends").query({ days: 7, scannerAgentId: `${agentA.id},${agentB.id}` });
     const todayBoth = both.body.series.find((d: { date: string }) => d.date === todayKey());
     expect(todayBoth.newHosts).toBeGreaterThanOrEqual(2);
+    expect(todayBoth.hostsScanned).toBeGreaterThanOrEqual(2);
   });
 
   it("the scannerAgentId filter can only narrow a restricted session, never widen it past agentA", async () => {
@@ -151,6 +155,7 @@ describe("GET /api/trends", () => {
     const today = res.body.series.find((d: { date: string }) => d.date === todayKey());
     expect(today.newHosts).toBe(1);
     expect(today.scans).toBe(1);
+    expect(today.hostsScanned).toBe(1);
     expect(today.openPorts).toBe(1);
     expect(today.cveMatches).toBe(1);
   });
