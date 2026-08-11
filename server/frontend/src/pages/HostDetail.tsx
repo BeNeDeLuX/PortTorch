@@ -389,11 +389,11 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
           {data.host.ip} {data.host.hostname && <span className="host-hostname">({data.host.hostname})</span>}
         </h1>
         <button type="button" onClick={() => setShowExportModal(true)}>
-          Export data
+          ⬇️ Export data
         </button>
         {canEdit && (
           <button onClick={handleRescan} disabled={rescanInFlight}>
-            {rescanInFlight ? "Rescan running..." : "Rescan"}
+            {rescanInFlight ? "🔄 Rescan running..." : "🔄 Rescan"}
           </button>
         )}
       </div>
