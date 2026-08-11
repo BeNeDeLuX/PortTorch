@@ -276,6 +276,100 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
     src: `/api/rdp-screenshots/${s.id}/image`,
     alt: `RDP Port ${s.port}`,
   }));
+  // Lightbox indexes into the flat, unsplit screenshotItems/rdpScreenshotItems
+  // arrays above - grouping the cards themselves by capture date (below)
+  // doesn't change that flat order, so each card just needs to look up its
+  // own position in it rather than using its position within its date group.
+  const screenshotIndexById = new Map(data.screenshots.map((s, i) => [s.id, i]));
+  const rdpScreenshotIndexById = new Map(data.rdpScreenshots.map((s, i) => [s.id, i]));
+  // Both arrays are already newest-first (backend orders by captured_at
+  // desc), so groupByDate's output is too - the first group is always the
+  // most recent capture date, which is what stays visible un-collapsed below.
+  const screenshotDateGroups = groupByDate(data.screenshots, (s) => formatDateOnly(s.captured_at, me.preferences));
+  const rdpScreenshotDateGroups = groupByDate(data.rdpScreenshots, (s) => formatDateOnly(s.captured_at, me.preferences));
+
+  function renderScreenshotCard(s: HostDetailData["screenshots"][number]) {
+    const index = screenshotIndexById.get(s.id)!;
+    return (
+      <div key={s.id} className="screenshot-card">
+        <button className="screenshot-thumb-button" onClick={() => setLightbox({ items: screenshotItems, index })}>
+          <img
+            className="screenshot-thumb"
+            src={`/api/screenshots/${s.id}/image`}
+            alt={s.page_title ?? s.url}
+            loading="lazy"
+          />
+        </button>
+        <div>
+          {s.url} (Port {s.port})
+        </div>
+        {s.page_title && <div className="host-meta">{s.page_title}</div>}
+        <div className="host-meta">{formatDateTime(s.captured_at, me.preferences)}</div>
+        {s.tls_protocol && (
+          <div className="host-meta">
+            {s.tls_protocol} ({s.tls_cipher}) · {s.tls_subject}
+            {s.tls_valid_to && ` · valid until ${formatDateOnly(s.tls_valid_to, me.preferences)}`}
+          </div>
+        )}
+        {s.technologies && s.technologies.length > 0 && (
+          <div className="tech-badges">
+            {s.technologies.map((t) => (
+              <span key={t} className="tech-badge">
+                {t}
+              </span>
+            ))}
+          </div>
+        )}
+        {s.headers?.Server && <div className="host-meta">Server: {s.headers.Server}</div>}
+        {s.headers?.["X-Powered-By"] && <div className="host-meta">X-Powered-By: {s.headers["X-Powered-By"]}</div>}
+        {s.headers && Object.keys(s.headers).length > 0 && (
+          <details className="headers-details">
+            <summary>Response headers ({Object.keys(s.headers).length})</summary>
+            <ul className="headers-list">
+              {Object.entries(s.headers).map(([key, value]) => (
+                <li key={key}>
+                  <strong>{key}:</strong> {value}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+        {s.ocr_text && (
+          <details className="headers-details">
+            <summary>OCR text</summary>
+            <p className="ocr-text">{s.ocr_text}</p>
+          </details>
+        )}
+      </div>
+    );
+  }
+
+  function renderRdpScreenshotCard(s: HostDetailData["rdpScreenshots"][number]) {
+    const index = rdpScreenshotIndexById.get(s.id)!;
+    return (
+      <div key={s.id} className="screenshot-card">
+        <button
+          className="screenshot-thumb-button"
+          onClick={() => setLightbox({ items: rdpScreenshotItems, index })}
+        >
+          <img
+            className="screenshot-thumb"
+            src={`/api/rdp-screenshots/${s.id}/image`}
+            alt={`RDP Port ${s.port}`}
+            loading="lazy"
+          />
+        </button>
+        <div>Port {s.port}</div>
+        <div className="host-meta">{formatDateTime(s.captured_at, me.preferences)}</div>
+        {s.ocr_text && (
+          <details className="headers-details">
+            <summary>OCR text</summary>
+            <p className="ocr-text">{s.ocr_text}</p>
+          </details>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="host-detail">
@@ -412,7 +506,7 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
 
       <section>
         <h2>Open Ports</h2>
-        <table>
+        <table className="open-ports-table">
           <thead>
             <tr>
               <th>Port</th>
@@ -613,96 +707,30 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
       {data.screenshots.length > 0 && (
         <section>
           <h2>Screenshots</h2>
-          <div className="screenshot-grid">
-            {data.screenshots.map((s, i) => (
-              <div key={s.id} className="screenshot-card">
-                <button
-                  className="screenshot-thumb-button"
-                  onClick={() => setLightbox({ items: screenshotItems, index: i })}
-                >
-                  <img
-                    className="screenshot-thumb"
-                    src={`/api/screenshots/${s.id}/image`}
-                    alt={s.page_title ?? s.url}
-                    loading="lazy"
-                  />
-                </button>
-                <div>
-                  {s.url} (Port {s.port})
-                </div>
-                {s.page_title && <div className="host-meta">{s.page_title}</div>}
-                <div className="host-meta">{formatDateTime(s.captured_at, me.preferences)}</div>
-                {s.tls_protocol && (
-                  <div className="host-meta">
-                    {s.tls_protocol} ({s.tls_cipher}) · {s.tls_subject}
-                    {s.tls_valid_to && ` · valid until ${formatDateOnly(s.tls_valid_to, me.preferences)}`}
-                  </div>
-                )}
-                {s.technologies && s.technologies.length > 0 && (
-                  <div className="tech-badges">
-                    {s.technologies.map((t) => (
-                      <span key={t} className="tech-badge">
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {s.headers?.Server && <div className="host-meta">Server: {s.headers.Server}</div>}
-                {s.headers?.["X-Powered-By"] && (
-                  <div className="host-meta">X-Powered-By: {s.headers["X-Powered-By"]}</div>
-                )}
-                {s.headers && Object.keys(s.headers).length > 0 && (
-                  <details className="headers-details">
-                    <summary>Response headers ({Object.keys(s.headers).length})</summary>
-                    <ul className="headers-list">
-                      {Object.entries(s.headers).map(([key, value]) => (
-                        <li key={key}>
-                          <strong>{key}:</strong> {value}
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                )}
-                {s.ocr_text && (
-                  <details className="headers-details">
-                    <summary>OCR text</summary>
-                    <p className="ocr-text">{s.ocr_text}</p>
-                  </details>
-                )}
-              </div>
-            ))}
-          </div>
+          <div className="screenshot-grid">{screenshotDateGroups[0].items.map(renderScreenshotCard)}</div>
+          {screenshotDateGroups.slice(1).map((group) => (
+            <details className="screenshot-date-group" key={group.date}>
+              <summary>
+                {group.date} ({group.items.length} screenshot{group.items.length === 1 ? "" : "s"})
+              </summary>
+              <div className="screenshot-grid">{group.items.map(renderScreenshotCard)}</div>
+            </details>
+          ))}
         </section>
       )}
 
       {data.rdpScreenshots.length > 0 && (
         <section>
           <h2>RDP Screenshots</h2>
-          <div className="screenshot-grid">
-            {data.rdpScreenshots.map((s, i) => (
-              <div key={s.id} className="screenshot-card">
-                <button
-                  className="screenshot-thumb-button"
-                  onClick={() => setLightbox({ items: rdpScreenshotItems, index: i })}
-                >
-                  <img
-                    className="screenshot-thumb"
-                    src={`/api/rdp-screenshots/${s.id}/image`}
-                    alt={`RDP Port ${s.port}`}
-                    loading="lazy"
-                  />
-                </button>
-                <div>Port {s.port}</div>
-                <div className="host-meta">{formatDateTime(s.captured_at, me.preferences)}</div>
-                {s.ocr_text && (
-                  <details className="headers-details">
-                    <summary>OCR text</summary>
-                    <p className="ocr-text">{s.ocr_text}</p>
-                  </details>
-                )}
-              </div>
-            ))}
-          </div>
+          <div className="screenshot-grid">{rdpScreenshotDateGroups[0].items.map(renderRdpScreenshotCard)}</div>
+          {rdpScreenshotDateGroups.slice(1).map((group) => (
+            <details className="screenshot-date-group" key={group.date}>
+              <summary>
+                {group.date} ({group.items.length} screenshot{group.items.length === 1 ? "" : "s"})
+              </summary>
+              <div className="screenshot-grid">{group.items.map(renderRdpScreenshotCard)}</div>
+            </details>
+          ))}
         </section>
       )}
 
@@ -773,6 +801,27 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
       )}
     </div>
   );
+}
+
+// Buckets items into runs of consecutive same-`dateLabel` entries, in
+// whatever order they're passed in - relies on the caller's list already
+// being sorted newest-first (as both screenshots/rdpScreenshots are, from
+// the backend's own `ORDER BY captured_at desc`), so the resulting groups
+// come out newest-date-first with no separate sort needed.
+function groupByDate<T>(items: T[], dateLabel: (item: T) => string): Array<{ date: string; items: T[] }> {
+  const groups: Array<{ date: string; items: T[] }> = [];
+  const indexByDate = new Map<string, number>();
+  for (const item of items) {
+    const date = dateLabel(item);
+    let idx = indexByDate.get(date);
+    if (idx === undefined) {
+      idx = groups.length;
+      indexByDate.set(date, idx);
+      groups.push({ date, items: [] });
+    }
+    groups[idx].items.push(item);
+  }
+  return groups;
 }
 
 function groupHistoryByScan(history: HostDetailData["history"]) {

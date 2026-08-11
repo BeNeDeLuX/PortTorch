@@ -788,6 +788,14 @@ th {
   color: var(--muted);
 }
 
+/* Open Ports table on Host Detail - the one table header prominent
+   enough to warrant the accent treatment other identifying text already
+   gets (.host-ip, .main-nav a.active, .ssh-hostkey-type); every other
+   table on the site keeps the plain muted header above. */
+.open-ports-table th {
+  color: var(--accent);
+}
+
 .banner {
   max-width: 300px;
   overflow: hidden;
@@ -832,6 +840,26 @@ th {
   border: none;
   background: none;
   cursor: zoom-in;
+}
+
+/* Older screenshots/RDP screenshots, grouped by capture date and
+   collapsed by default (see HostDetail.tsx) - only the most recent
+   date's screenshots render as a bare .screenshot-grid outside of one
+   of these. summary carries the date + count so both stay readable
+   without expanding. */
+.screenshot-date-group {
+  margin-top: 1.5rem;
+}
+
+.screenshot-date-group summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 0.75rem;
+}
+
+.screenshot-date-group .screenshot-grid {
+  margin-top: 0.75rem;
 }
 
 .lightbox-backdrop {
@@ -1231,7 +1259,8 @@ th {
 }
 
 .banner-card-header {
-  color: var(--muted);
+  color: var(--accent);
+  font-weight: 600;
   font-size: 0.85rem;
   margin-bottom: 0.5rem;
 }
