@@ -388,7 +388,7 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
         <h1>
           {data.host.ip} {data.host.hostname && <span className="host-hostname">({data.host.hostname})</span>}
         </h1>
-        <button type="button" className="link-button" onClick={() => setShowExportModal(true)}>
+        <button type="button" onClick={() => setShowExportModal(true)}>
           Export data
         </button>
         {canEdit && (
