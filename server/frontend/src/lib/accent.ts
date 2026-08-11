@@ -4,7 +4,7 @@ const ACCENT_KEY = "porttorch.accent";
 
 export function getStoredAccent(): AccentColor {
   const stored = localStorage.getItem(ACCENT_KEY);
-  return stored === "orange" || stored === "blue" ? stored : "green";
+  return stored === "green" || stored === "blue" ? stored : "orange";
 }
 
 // Distinguishes "this browser has never had an accent choice made on it"

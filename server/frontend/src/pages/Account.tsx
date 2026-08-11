@@ -74,9 +74,9 @@ export default function Account({ me, onLogout }: { me: Me; onLogout: () => void
         applyTheme(theme);
       }
       // Unlike theme, accent color has no "browser default" concept -
-      // "" just means the explicit default (green), so it always applies
+      // "" just means the explicit default (orange), so it always applies
       // immediately rather than being a no-op sentinel.
-      applyAccent(accentColor ?? "green");
+      applyAccent(accentColor ?? "orange");
       setPrefsSaved(true);
     } catch (err) {
       setPrefsError(err instanceof Error ? err.message : "Failed to save preferences");
@@ -159,8 +159,8 @@ export default function Account({ me, onLogout }: { me: Me; onLogout: () => void
         <label>
           Accent color
           <select value={accentColorPref} onChange={(e) => setAccentColorPref(e.target.value)}>
-            <option value="">Green (default)</option>
-            <option value="orange">Orange</option>
+            <option value="">Orange (default)</option>
+            <option value="green">Green</option>
             <option value="blue">Blue</option>
           </select>
         </label>

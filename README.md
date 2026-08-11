@@ -248,7 +248,7 @@ The project has two independently deployed components:
   a user's 2FA back off if they lose it (never turn it on for them - that
   step is inherently self-service).
 - :gear: **Account preferences** - also on the Account page: default theme, accent
-  color (green, orange, or blue), how many hosts to show per page on the
+  color (orange by default, or green/blue), how many hosts to show per page on the
   main dashboard, whether to default to a specific scanner there instead of
   "All Scanner", whether to show the Active Scans banner at all, and a
   timezone + 12h/24h time format applied to every date/time shown

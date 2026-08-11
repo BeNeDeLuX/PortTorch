@@ -5,7 +5,7 @@
   --border: #22303c;
   --text: #d7e2ea;
   --muted: #7c93a3;
-  --accent: #35d07f;
+  --accent: #ff6b25;
   --danger: #ff6b6b;
   --warning: #f0b429;
   /* Dataviz skill's validated categorical palette (blue/orange/aqua/yellow,
@@ -22,7 +22,7 @@
   --chart-series-3: #199e70;
   --chart-series-4: #c98500;
   /* Single-series "headline" charts (Trends' Total hosts) deliberately do
-     NOT use --accent: --accent is user-selectable (green/orange/blue, see
+     NOT use --accent: --accent is user-selectable (orange/green/blue, see
      Account preferences) and orange/blue both collide with chart-series-2/1
      above - a blue-accent user would see "Total hosts" and "New hosts"
      rendered in the exact same hue across two unrelated charts, coincidental
@@ -39,7 +39,7 @@
   --border: #d8dee4;
   --text: #1a232c;
   --muted: #5b6b78;
-  --accent: #1f9d5a;
+  --accent: #ff6b25;
   --danger: #c0392b;
   --warning: #96690a;
   /* Same palette's light-mode steps - validated against this app's actual
@@ -55,12 +55,25 @@
   --chart-headline: #4a3aa7;
 }
 
-/* Same specificity as the data-theme rules above (one :root + one
+/* Orange is the default (baked into the two :root blocks above, no
+   override needed) - green and blue are the two selectable alternatives.
+   Same specificity as the data-theme rules above (one :root + one
    attribute selector each) - placed after both so the accent choice
-   wins in either theme, rather than being overridden back to green when
-   the light theme block also matches. */
-:root[data-accent="orange"] {
-  --accent: #ff6b25;
+   wins in either theme, rather than being overridden back to orange when
+   the light theme block also matches.
+   Green keeps the two theme-tuned shades it had when it was the default
+   (a darker, more saturated green for light backgrounds) - the plain
+   [data-accent="green"] rule covers dark mode, and the compound
+   [data-theme="light"][data-accent="green"] rule (two attribute
+   selectors on :root, higher specificity than the plain one) wins in
+   light mode. Orange/blue never needed this distinction - both are a
+   single flat value in either theme, unchanged from before. */
+:root[data-accent="green"] {
+  --accent: #35d07f;
+}
+
+:root[data-theme="light"][data-accent="green"] {
+  --accent: #1f9d5a;
 }
 
 :root[data-accent="blue"] {

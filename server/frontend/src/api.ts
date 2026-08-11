@@ -27,7 +27,7 @@ export interface UserPreferences {
   timezone: string | null;
   timeFormat: "h12" | "h24" | null;
   // Which --accent CSS custom property value to use (styles.css); null =
-  // "green", today's only/default color.
+  // "orange", the default color.
   accentColor: "green" | "orange" | "blue" | null;
 }
 
