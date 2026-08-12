@@ -1,6 +1,7 @@
 import { Link, NavLink } from "react-router";
 import { api, Me } from "../api";
 import Brand from "./Brand";
+import { IconLogOut } from "./icons";
 import ThemeToggle from "./ThemeToggle";
 
 export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => void }) {
@@ -16,12 +17,13 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
             {me.username} ({me.role})
           </Link>
           <button
+            className="btn-icon-label"
             onClick={async () => {
               await api.logout();
               onLogout();
             }}
           >
-            Logout
+            <IconLogOut /> Logout
           </button>
         </div>
       </header>

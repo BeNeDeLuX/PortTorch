@@ -38,3 +38,33 @@ export function IconDownload({ size = 15 }: { size?: number }) {
     </svg>
   );
 }
+
+export function IconSearch({ size = 15 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  );
+}
+
+// A saved search is a named, reusable filter preset (see CLAUDE.md's
+// "Saved searches" section) - a bookmark reads as "keep this for later"
+// more specifically than a generic floppy-disk save icon would.
+export function IconBookmark({ size = 15 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
+export function IconLogOut({ size = 15 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
+  );
+}

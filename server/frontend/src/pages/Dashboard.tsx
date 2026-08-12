@@ -12,7 +12,7 @@ import {
   ScannerAgent,
 } from "../api";
 import ExportModal from "../components/ExportModal";
-import { IconDownload } from "../components/icons";
+import { IconBookmark, IconDownload, IconSearch } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanProgressModal from "../components/ScanProgressModal";
@@ -632,7 +632,9 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
           value={queryInput}
           onChange={(e) => setQueryInput(e.target.value)}
         />
-        <button type="submit">Search</button>
+        <button type="submit" className="btn-icon-label">
+          <IconSearch /> Search
+        </button>
       </form>
 
       <div className="list-controls">
@@ -702,8 +704,8 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
               value={saveSearchName}
               onChange={(e) => setSaveSearchName(e.target.value)}
             />
-            <button type="submit" disabled={!saveSearchName.trim()}>
-              Save search
+            <button type="submit" className="btn-icon-label" disabled={!saveSearchName.trim()}>
+              <IconBookmark /> Save search
             </button>
           </form>
         )}
