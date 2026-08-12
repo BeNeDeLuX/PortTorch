@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, DashboardUser, Me, ScannerAgent } from "../api";
+import { IconEdit, IconPlus, IconRefresh, IconSave, IconTrash, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import { formatDateTime } from "../lib/formatDate";
@@ -130,7 +131,9 @@ export default function Users({ me, onLogout }: { me: Me; onLogout: () => void }
             <ScannerMultiSelect agents={agents} selectedIds={scannerAgentIds} onChange={setScannerAgentIds} />
           </label>
         )}
-        <button type="submit">Create</button>
+        <button type="submit" className="btn-icon-label">
+          <IconPlus /> Create
+        </button>
       </form>
 
       {loading ? (
@@ -159,8 +162,12 @@ export default function Users({ me, onLogout }: { me: Me; onLogout: () => void }
                   {u.role !== "admin" && editingUserId === u.id ? (
                     <div className="actions-cell">
                       <ScannerMultiSelect agents={agents} selectedIds={editScannerAgentIds} onChange={setEditScannerAgentIds} />
-                      <button onClick={() => handleSaveAccess(u)}>Save</button>
-                      <button onClick={() => setEditingUserId(null)}>Cancel</button>
+                      <button className="btn-icon-label" onClick={() => handleSaveAccess(u)}>
+                        <IconSave /> Save
+                      </button>
+                      <button className="btn-icon-label" onClick={() => setEditingUserId(null)}>
+                        <IconX /> Cancel
+                      </button>
                     </div>
                   ) : (
                     scannerAccessLabel(u.scannerAgentIds, agents)
@@ -172,10 +179,20 @@ export default function Users({ me, onLogout }: { me: Me; onLogout: () => void }
                 <td>
                   <div className="actions-cell">
                     {u.role !== "admin" && editingUserId !== u.id && (
-                      <button onClick={() => startEditAccess(u)}>Edit access</button>
+                      <button className="btn-icon-label" onClick={() => startEditAccess(u)}>
+                        <IconEdit /> Edit access
+                      </button>
                     )}
-                    {u.totp_enabled && <button onClick={() => handleResetTwoFactor(u)}>Reset 2FA</button>}
-                    {u.username !== me.username && <button onClick={() => handleDelete(u)}>Delete</button>}
+                    {u.totp_enabled && (
+                      <button className="btn-icon-label" onClick={() => handleResetTwoFactor(u)}>
+                        <IconRefresh /> Reset 2FA
+                      </button>
+                    )}
+                    {u.username !== me.username && (
+                      <button className="btn-icon-label" onClick={() => handleDelete(u)}>
+                        <IconTrash /> Delete
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>

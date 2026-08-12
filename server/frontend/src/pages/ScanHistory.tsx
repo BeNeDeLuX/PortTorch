@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, Me, ScanHistoryResult } from "../api";
+import { IconInfo, IconSearch } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScanProgressModal from "../components/ScanProgressModal";
 import { formatDateTime } from "../lib/formatDate";
@@ -95,7 +96,9 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
           value={queryInput}
           onChange={(e) => setQueryInput(e.target.value)}
         />
-        <button type="submit">Search</button>
+        <button type="submit" className="btn-icon-label">
+          <IconSearch /> Search
+        </button>
       </form>
 
       <div className="filter-chips">
@@ -143,7 +146,9 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
                 <td>{s.screenshots + s.rdp_screenshots}</td>
                 <td>{s.tls_certificates}</td>
                 <td>
-                  <button onClick={() => setDetailsJobId(s.id)}>Details</button>
+                  <button className="btn-icon-label" onClick={() => setDetailsJobId(s.id)}>
+                    <IconInfo /> Details
+                  </button>
                 </td>
               </tr>
             ))}

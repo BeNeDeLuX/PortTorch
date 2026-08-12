@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, ApiToken, Me } from "../api";
+import { IconBan, IconCheck, IconPlus } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime } from "../lib/formatDate";
 
@@ -95,13 +96,17 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
         <div className="callout">
           <strong>API token for "{newToken.name}"</strong> (shown only now):
           <pre className="key-reveal">{newToken.token}</pre>
-          <button onClick={() => setNewToken(null)}>Got it</button>
+          <button className="btn-icon-label" onClick={() => setNewToken(null)}>
+            <IconCheck /> Got it
+          </button>
         </div>
       )}
 
       <form className="inline-form" onSubmit={handleCreate}>
         <input placeholder="Token name, e.g. soar-enrichment" value={name} onChange={(e) => setName(e.target.value)} />
-        <button type="submit">Create</button>
+        <button type="submit" className="btn-icon-label">
+          <IconPlus /> Create
+        </button>
       </form>
 
       {loading ? (
@@ -126,7 +131,13 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
                 <td>{t.last_used_at ? formatDateTime(t.last_used_at, me.preferences) : "never"}</td>
                 <td>{formatDateTime(t.created_at, me.preferences)}</td>
                 <td>{t.revoked_at ? `revoked ${formatDateTime(t.revoked_at, me.preferences)}` : "active"}</td>
-                <td>{!t.revoked_at && <button onClick={() => handleRevoke(t)}>Revoke</button>}</td>
+                <td>
+                  {!t.revoked_at && (
+                    <button className="btn-icon-label" onClick={() => handleRevoke(t)}>
+                      <IconBan /> Revoke
+                    </button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

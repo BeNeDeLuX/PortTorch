@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, Me, ScannerAgent, TwoFactorSetup } from "../api";
+import { IconCheck, IconRefresh, IconSave, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { applyTheme } from "../lib/theme";
 import { applyAccent } from "../lib/accent";
@@ -212,7 +213,9 @@ export default function Account({ me, onLogout }: { me: Me; onLogout: () => void
             <option value="h24">24-hour (13:30)</option>
           </select>
         </label>
-        <button type="submit">Save preferences</button>
+        <button type="submit" className="btn-icon-label">
+          <IconSave /> Save preferences
+        </button>
       </form>
 
       <h3>Two-Factor Authentication</h3>
@@ -223,7 +226,9 @@ export default function Account({ me, onLogout }: { me: Me; onLogout: () => void
           <strong>Save these recovery codes</strong> - each works once, and this is the only
           time they're shown. Use one to log in if you lose access to your authenticator app.
           <pre className="key-reveal">{recoveryCodes.join("\n")}</pre>
-          <button onClick={() => setRecoveryCodes(null)}>Got it</button>
+          <button className="btn-icon-label" onClick={() => setRecoveryCodes(null)}>
+            <IconCheck /> Got it
+          </button>
         </div>
       )}
 
@@ -242,7 +247,9 @@ export default function Account({ me, onLogout }: { me: Me; onLogout: () => void
               onChange={(e) => setRegenerateCode(e.target.value)}
               inputMode="numeric"
             />
-            <button type="submit">Regenerate</button>
+            <button type="submit" className="btn-icon-label">
+              <IconRefresh /> Regenerate
+            </button>
           </form>
 
           <h4>Disable 2FA</h4>
@@ -253,7 +260,9 @@ export default function Account({ me, onLogout }: { me: Me; onLogout: () => void
               value={disablePassword}
               onChange={(e) => setDisablePassword(e.target.value)}
             />
-            <button type="submit">Disable</button>
+            <button type="submit" className="btn-icon-label">
+              <IconX /> Disable
+            </button>
           </form>
         </>
       ) : setup ? (
@@ -272,9 +281,11 @@ export default function Account({ me, onLogout }: { me: Me; onLogout: () => void
               inputMode="numeric"
             />
           </label>
-          <button type="submit">Confirm</button>
-          <button type="button" className="link-button" onClick={() => setSetup(null)}>
-            cancel
+          <button type="submit" className="btn-icon-label">
+            <IconCheck /> Confirm
+          </button>
+          <button type="button" className="link-button btn-icon-label" onClick={() => setSetup(null)}>
+            <IconX /> cancel
           </button>
         </form>
       ) : (
@@ -283,7 +294,9 @@ export default function Account({ me, onLogout }: { me: Me; onLogout: () => void
             2FA is not enabled. Enabling it requires an authenticator app (Google Authenticator,
             1Password, Authy, etc.) on your phone.
           </p>
-          <button onClick={handleStartSetup}>Enable 2FA</button>
+          <button className="btn-icon-label" onClick={handleStartSetup}>
+            <IconCheck /> Enable 2FA
+          </button>
         </>
       )}
     </div>

@@ -7,7 +7,7 @@ import PageHeader from "../components/PageHeader";
 import { formatDateTime, formatDateOnly } from "../lib/formatDate";
 import Lightbox, { LightboxItem } from "../components/Lightbox";
 import HostExportModal from "../components/HostExportModal";
-import { IconDownload, IconRefresh } from "../components/icons";
+import { IconDownload, IconPlus, IconRefresh, IconSave, IconTrash, IconX } from "../components/icons";
 
 // Router state Dashboard.tsx hands off when navigating to a host - see
 // the prev/next wiring further down for how each field is used.
@@ -467,7 +467,9 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
             value={probeHostnameInput}
             onChange={(e) => setProbeHostnameInput(e.target.value)}
           />
-          <button type="submit">Save</button>
+          <button type="submit" className="btn-icon-label">
+            <IconSave /> Save
+          </button>
         </form>
       )}
       {(data.host.os_name || data.host.device_type) && (
@@ -499,7 +501,9 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
           {canEdit && (
             <form className="inline-form tag-form push-right" onSubmit={handleAddTag}>
               <input placeholder="Add tag..." value={newTag} onChange={(e) => setNewTag(e.target.value)} />
-              <button type="submit">Add</button>
+              <button type="submit" className="btn-icon-label">
+                <IconPlus /> Add
+              </button>
             </form>
           )}
         </div>
@@ -519,8 +523,8 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
             </span>
           )}
           {data.lastScanRequest.is_stale && canEdit && (
-            <button className="link-button" onClick={handleDismissRescan}>
-              dismiss
+            <button className="link-button btn-icon-label" onClick={handleDismissRescan}>
+              <IconX /> dismiss
             </button>
           )}
         </p>
@@ -820,8 +824,8 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
                   <div className="comment-meta">
                     <strong>{c.author}</strong> · {formatDateTime(c.created_at, me.preferences)}
                     {isAdmin && (
-                      <button className="link-button comment-delete" onClick={() => handleDeleteComment(c.id)}>
-                        delete
+                      <button className="link-button comment-delete btn-icon-label" onClick={() => handleDeleteComment(c.id)}>
+                        <IconTrash /> delete
                       </button>
                     )}
                   </div>
@@ -839,8 +843,8 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
                 rows={3}
                 placeholder="Add a comment, e.g. owner, ticket references, false-positive confirmations..."
               />
-              <button type="submit" disabled={!newComment.trim()}>
-                Add comment
+              <button type="submit" className="btn-icon-label" disabled={!newComment.trim()}>
+                <IconPlus /> Add comment
               </button>
             </form>
           )}

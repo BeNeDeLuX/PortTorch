@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, Me, Webhook, WebhookChannelType, WebhookEvent } from "../api";
+import { IconPause, IconPlay, IconPlus, IconSend, IconTrash } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 
 const CHANNEL_LABELS: Record<WebhookChannelType, string> = {
@@ -141,7 +142,9 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
               </label>
             ))}
           </div>
-          <button type="submit">Create</button>
+          <button type="submit" className="btn-icon-label">
+            <IconPlus /> Create
+          </button>
         </form>
       )}
 
@@ -171,9 +174,23 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
                 <td>{w.enabled ? "active" : "paused"}</td>
                 {isAdmin && (
                   <td>
-                    <button onClick={() => handleToggle(w)}>{w.enabled ? "Pause" : "Activate"}</button>{" "}
-                    <button onClick={() => handleTest(w)}>Test</button>{" "}
-                    <button onClick={() => handleDelete(w)}>Delete</button>
+                    <button className="btn-icon-label" onClick={() => handleToggle(w)}>
+                      {w.enabled ? (
+                        <>
+                          <IconPause /> Pause
+                        </>
+                      ) : (
+                        <>
+                          <IconPlay /> Activate
+                        </>
+                      )}
+                    </button>{" "}
+                    <button className="btn-icon-label" onClick={() => handleTest(w)}>
+                      <IconSend /> Test
+                    </button>{" "}
+                    <button className="btn-icon-label" onClick={() => handleDelete(w)}>
+                      <IconTrash /> Delete
+                    </button>
                     {testResult[w.id] && <div className="host-meta">{testResult[w.id]}</div>}
                   </td>
                 )}

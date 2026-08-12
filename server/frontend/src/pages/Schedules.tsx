@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { api, Me, ScannerAgent, Schedule } from "../api";
+import { IconEdit, IconPause, IconPlay, IconPlus, IconSave, IconTrash, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import { formatDateTime } from "../lib/formatDate";
@@ -413,11 +414,23 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         {isAdmin && (
           <td>
             <div className="actions-cell">
-              <button onClick={() => handleEdit(s)}>Edit</button>
-              <button onClick={() => toggleEnabled(s)}>
-                {s.enabled ? "Pause" : s.schedule_type === "once" && s.last_run_at ? "Run again" : "Activate"}
+              <button className="btn-icon-label" onClick={() => handleEdit(s)}>
+                <IconEdit /> Edit
               </button>
-              <button onClick={() => remove(s)}>Delete</button>
+              <button className="btn-icon-label" onClick={() => toggleEnabled(s)}>
+                {s.enabled ? (
+                  <>
+                    <IconPause /> Pause
+                  </>
+                ) : (
+                  <>
+                    <IconPlay /> {s.schedule_type === "once" && s.last_run_at ? "Run again" : "Activate"}
+                  </>
+                )}
+              </button>
+              <button className="btn-icon-label" onClick={() => remove(s)}>
+                <IconTrash /> Delete
+              </button>
             </div>
           </td>
         )}
@@ -546,10 +559,20 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
             </>
           )}
 
-          <button type="submit">{editingId !== null ? "Save changes" : "Create"}</button>
+          <button type="submit" className="btn-icon-label">
+            {editingId !== null ? (
+              <>
+                <IconSave /> Save changes
+              </>
+            ) : (
+              <>
+                <IconPlus /> Create
+              </>
+            )}
+          </button>
           {editingId !== null && (
-            <button type="button" className="link-button" onClick={resetForm}>
-              Cancel
+            <button type="button" className="link-button btn-icon-label" onClick={resetForm}>
+              <IconX /> Cancel
             </button>
           )}
 

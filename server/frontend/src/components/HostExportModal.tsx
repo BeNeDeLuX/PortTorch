@@ -1,4 +1,5 @@
 import { HostDetail } from "../api";
+import { IconDownload, IconPrinter } from "./icons";
 import { csvEscape, downloadBlob } from "../lib/download";
 import Modal from "./Modal";
 
@@ -53,8 +54,8 @@ export default function HostExportModal({ data, onClose }: { data: HostDetail; o
             <strong>CSV - open ports</strong>
             <div className="host-meta">One row per open port, including banner/CPEs/CVE ids.</div>
           </div>
-          <button type="button" className="export-link" onClick={exportCsv}>
-            Download
+          <button type="button" className="export-link btn-icon-label" onClick={exportCsv}>
+            <IconDownload /> Download
           </button>
         </div>
         <div className="export-option">
@@ -62,8 +63,8 @@ export default function HostExportModal({ data, onClose }: { data: HostDetail; o
             <strong>JSON</strong>
             <div className="host-meta">The full host record plus its open ports.</div>
           </div>
-          <button type="button" className="export-link" onClick={exportJson}>
-            Download
+          <button type="button" className="export-link btn-icon-label" onClick={exportJson}>
+            <IconDownload /> Download
           </button>
         </div>
         <div className="export-option">
@@ -71,8 +72,8 @@ export default function HostExportModal({ data, onClose }: { data: HostDetail; o
             <strong>PDF</strong>
             <div className="host-meta">A snapshot of this page as shown, including screenshots.</div>
           </div>
-          <button type="button" className="export-link" onClick={exportPdf}>
-            Print / Save as PDF
+          <button type="button" className="export-link btn-icon-label" onClick={exportPdf}>
+            <IconPrinter /> Print / Save as PDF
           </button>
         </div>
       </div>

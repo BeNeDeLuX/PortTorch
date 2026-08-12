@@ -12,7 +12,7 @@ import {
   ScannerAgent,
 } from "../api";
 import ExportModal from "../components/ExportModal";
-import { IconBookmark, IconDownload, IconSearch } from "../components/icons";
+import { IconBookmark, IconDownload, IconInfo, IconPlus, IconRefresh, IconSearch, IconStop, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanProgressModal from "../components/ScanProgressModal";
@@ -600,13 +600,17 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                     stale
                   </span>
                 )}
-                <button onClick={() => setDetailsJobId(j.id)}>Details</button>
+                <button className="btn-icon-label" onClick={() => setDetailsJobId(j.id)}>
+                  <IconInfo /> Details
+                </button>
                 {j.is_stale && canEdit && (
-                  <button onClick={() => handleDismissScanJob(j.id)}>Dismiss</button>
+                  <button className="btn-icon-label" onClick={() => handleDismissScanJob(j.id)}>
+                    <IconX /> Dismiss
+                  </button>
                 )}
                 {j.cancellable && canEdit && (
-                  <button onClick={() => handleCancelScanJob(j.id)} disabled={j.cancel_requested}>
-                    {j.cancel_requested ? "Stopping..." : "Stop"}
+                  <button className="btn-icon-label" onClick={() => handleCancelScanJob(j.id)} disabled={j.cancel_requested}>
+                    <IconStop /> {j.cancel_requested ? "Stopping..." : "Stop"}
                   </button>
                 )}
                 {j.applicable_excludes && j.applicable_excludes.length > 0 && (
@@ -735,15 +739,15 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
           <span className="host-meta">{selected.size} selected</span>
           <form className="bulk-tag-form" onSubmit={handleBulkTag}>
             <input placeholder="Add tag to selected..." value={bulkTagInput} onChange={(e) => setBulkTagInput(e.target.value)} />
-            <button type="submit" disabled={bulkBusy || !bulkTagInput.trim()}>
-              Add tag
+            <button type="submit" className="btn-icon-label" disabled={bulkBusy || !bulkTagInput.trim()}>
+              <IconPlus /> Add tag
             </button>
           </form>
-          <button onClick={handleBulkRescan} disabled={bulkBusy}>
-            Rescan selected
+          <button className="btn-icon-label" onClick={handleBulkRescan} disabled={bulkBusy}>
+            <IconRefresh /> Rescan selected
           </button>
-          <button className="link-button" onClick={() => setSelected(new Set())}>
-            Clear selection
+          <button className="link-button btn-icon-label" onClick={() => setSelected(new Set())}>
+            <IconX /> Clear selection
           </button>
         </div>
       )}

@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, Me, ScanExclude, ScannerAgent } from "../api";
+import { IconPlus, IconTrash } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 
@@ -124,7 +125,9 @@ export default function Excludes({ me, onLogout }: { me: Me; onLogout: () => voi
             ))}
           </select>
         </label>
-        <button type="submit">Add</button>
+        <button type="submit" className="btn-icon-label">
+          <IconPlus /> Add
+        </button>
       </form>
 
       {loading ? (
@@ -159,7 +162,7 @@ export default function Excludes({ me, onLogout }: { me: Me; onLogout: () => voi
                     <span>
                       {x.value} <span className="chip-inline">{scopeLabel(x)}</span>
                     </span>
-                    <span className="facet-count">remove</span>
+                    <span className="facet-count btn-icon-label"><IconTrash size={12} /> remove</span>
                   </button>
                 </li>
               ))}
@@ -177,7 +180,7 @@ export default function Excludes({ me, onLogout }: { me: Me; onLogout: () => voi
                     <span>
                       {x.value} <span className="chip-inline">{scopeLabel(x)}</span>
                     </span>
-                    <span className="facet-count">remove</span>
+                    <span className="facet-count btn-icon-label"><IconTrash size={12} /> remove</span>
                   </button>
                 </li>
               ))}
@@ -195,7 +198,7 @@ export default function Excludes({ me, onLogout }: { me: Me; onLogout: () => voi
                     <span>
                       {x.value} <span className="chip-inline">{scopeLabel(x)}</span>
                     </span>
-                    <span className="facet-count">remove</span>
+                    <span className="facet-count btn-icon-label"><IconTrash size={12} /> remove</span>
                   </button>
                 </li>
               ))}

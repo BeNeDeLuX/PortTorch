@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { HostFilters, hostsExportJsonUrl, hostsExportUrl } from "../api";
+import { IconDownload } from "./icons";
 import Modal from "./Modal";
 
 // Opened from the Dashboard's "Export data" link, same Modal shell as the
@@ -41,8 +42,8 @@ export default function ExportModal({
             <strong>CSV - 1 row per host</strong>
             <div className="host-meta">Summary: one row per host, with an open-port count.</div>
           </div>
-          <a className="export-link" href={hostsExportUrl(filters, "host", scopeIds)} download>
-            Download
+          <a className="export-link btn-icon-label" href={hostsExportUrl(filters, "host", scopeIds)} download>
+            <IconDownload /> Download
           </a>
         </div>
         <div className="export-option">
@@ -50,8 +51,8 @@ export default function ExportModal({
             <strong>CSV - 1 row per host+port</strong>
             <div className="host-meta">Detailed: one row per open port, host columns repeated per row.</div>
           </div>
-          <a className="export-link" href={hostsExportUrl(filters, "port", scopeIds)} download>
-            Download
+          <a className="export-link btn-icon-label" href={hostsExportUrl(filters, "port", scopeIds)} download>
+            <IconDownload /> Download
           </a>
         </div>
         <div className="export-option">
@@ -59,8 +60,8 @@ export default function ExportModal({
             <strong>JSON</strong>
             <div className="host-meta">One object per host, with a nested list of its open ports.</div>
           </div>
-          <a className="export-link" href={hostsExportJsonUrl(filters, scopeIds)} download>
-            Download
+          <a className="export-link btn-icon-label" href={hostsExportJsonUrl(filters, scopeIds)} download>
+            <IconDownload /> Download
           </a>
         </div>
       </div>

@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { ActiveScanJob, api, Me, QueuedScanRequest, ScannerAgent } from "../api";
+import { IconBan, IconCheck, IconInfo, IconPlus, IconStop, IconTrash, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanProgressModal from "../components/ScanProgressModal";
@@ -260,14 +261,18 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
           <strong>API key for "{newKey.name}"</strong> (shown only now — add it to the
           scanner's config.yaml):
           <pre className="key-reveal">{newKey.apiKey}</pre>
-          <button onClick={() => setNewKey(null)}>Got it</button>
+          <button className="btn-icon-label" onClick={() => setNewKey(null)}>
+            <IconCheck /> Got it
+          </button>
         </div>
       )}
 
       {isAdmin && (
         <form className="inline-form" onSubmit={handleCreate}>
           <input placeholder="Scanner name, e.g. scanner-office-1" value={name} onChange={(e) => setName(e.target.value)} />
-          <button type="submit">Create</button>
+          <button type="submit" className="btn-icon-label">
+            <IconPlus /> Create
+          </button>
         </form>
       )}
 
@@ -324,20 +329,29 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
                         <td>
                           <div className="actions-cell">
                             {activeJob && (
-                              <button onClick={() => setDetailsJobId(activeJob.id)}>Details</button>
+                              <button className="btn-icon-label" onClick={() => setDetailsJobId(activeJob.id)}>
+                                <IconInfo /> Details
+                              </button>
                             )}
                             {activeJob?.is_stale && (
-                              <button onClick={() => handleDismissScanJob(activeJob.id)}>Dismiss</button>
+                              <button className="btn-icon-label" onClick={() => handleDismissScanJob(activeJob.id)}>
+                                <IconX /> Dismiss
+                              </button>
                             )}
                             {activeJob?.cancellable && (
                               <button
+                                className="btn-icon-label"
                                 onClick={() => handleCancelScanJob(activeJob.id)}
                                 disabled={activeJob.cancel_requested}
                               >
-                                {activeJob.cancel_requested ? "Stopping..." : "Stop"}
+                                <IconStop /> {activeJob.cancel_requested ? "Stopping..." : "Stop"}
                               </button>
                             )}
-                            {isAdmin && <button onClick={() => handleRevoke(a)}>Revoke</button>}
+                            {isAdmin && (
+                              <button className="btn-icon-label" onClick={() => handleRevoke(a)}>
+                                <IconBan /> Revoke
+                              </button>
+                            )}
                           </div>
                         </td>
                       )}
@@ -394,7 +408,9 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
                     {canEdit && (
                       <td>
                         <div className="actions-cell">
-                          <button onClick={() => handleCancelQueuedScanRequest(q.id)}>Cancel</button>
+                          <button className="btn-icon-label" onClick={() => handleCancelQueuedScanRequest(q.id)}>
+                            <IconX /> Cancel
+                          </button>
                         </div>
                       </td>
                     )}
@@ -424,7 +440,9 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
                     {isAdmin && (
                       <td>
                         <div className="actions-cell">
-                          <button onClick={() => handleRevoke(a)}>Revoke</button>
+                          <button className="btn-icon-label" onClick={() => handleRevoke(a)}>
+                            <IconBan /> Revoke
+                          </button>
                         </div>
                       </td>
                     )}
@@ -456,7 +474,9 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
                     {isAdmin && (
                       <td>
                         <div className="actions-cell">
-                          <button onClick={() => handleDelete(a)}>Delete</button>
+                          <button className="btn-icon-label" onClick={() => handleDelete(a)}>
+                            <IconTrash /> Delete
+                          </button>
                         </div>
                       </td>
                     )}

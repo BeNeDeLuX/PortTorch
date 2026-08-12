@@ -1,5 +1,6 @@
 import { FormEvent, useState } from "react";
 import { api, Me } from "../api";
+import { IconArrowLeft, IconCheck, IconLogIn } from "../components/icons";
 import ThemeToggle from "../components/ThemeToggle";
 
 export default function Login({ onLogin }: { onLogin: (me: Me) => void }) {
@@ -60,8 +61,14 @@ export default function Login({ onLogin }: { onLogin: (me: Me) => void }) {
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
           </label>
           {error && <p className="error">{error}</p>}
-          <button type="submit" disabled={submitting}>
-            {submitting ? "..." : "Log in"}
+          <button type="submit" className="btn-icon-label" disabled={submitting}>
+            {submitting ? (
+              "..."
+            ) : (
+              <>
+                <IconLogIn /> Log in
+              </>
+            )}
           </button>
         </form>
       ) : (
@@ -78,19 +85,25 @@ export default function Login({ onLogin }: { onLogin: (me: Me) => void }) {
             />
           </label>
           {error && <p className="error">{error}</p>}
-          <button type="submit" disabled={submitting}>
-            {submitting ? "..." : "Verify"}
+          <button type="submit" className="btn-icon-label" disabled={submitting}>
+            {submitting ? (
+              "..."
+            ) : (
+              <>
+                <IconCheck /> Verify
+              </>
+            )}
           </button>
           <button
             type="button"
-            className="link-button"
+            className="link-button btn-icon-label"
             onClick={() => {
               setAwaitingTotp(false);
               setCode("");
               setError(null);
             }}
           >
-            back to login
+            <IconArrowLeft /> back to login
           </button>
         </form>
       )}

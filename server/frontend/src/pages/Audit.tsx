@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, AuditEntry, Me } from "../api";
+import { IconSearch, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime } from "../lib/formatDate";
 
@@ -49,10 +50,12 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
           value={queryInput}
           onChange={(e) => setQueryInput(e.target.value)}
         />
-        <button type="submit">Search</button>
+        <button type="submit" className="btn-icon-label">
+          <IconSearch /> Search
+        </button>
         {(q || from || until) && (
-          <button type="button" onClick={clearQuery}>
-            Clear
+          <button type="button" className="btn-icon-label" onClick={clearQuery}>
+            <IconX /> Clear
           </button>
         )}
       </form>
