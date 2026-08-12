@@ -12,6 +12,7 @@ import {
   ScannerAgent,
 } from "../api";
 import ExportModal from "../components/ExportModal";
+import { IconDownload } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanProgressModal from "../components/ScanProgressModal";
@@ -707,8 +708,8 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
           </form>
         )}
         <div className="csv-export-controls">
-          <button type="button" className="link-button" onClick={() => setShowExportModal(true)}>
-            Export data
+          <button type="button" className="btn-icon-label" onClick={() => setShowExportModal(true)}>
+            <IconDownload /> Export data
           </button>
         </div>
       </div>
