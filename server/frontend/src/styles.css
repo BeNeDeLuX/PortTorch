@@ -570,7 +570,11 @@ button.export-link {
 }
 
 .bulk-tag-form input {
-  width: 160px;
+  /* Wide enough for the full "Add tag to selected..." placeholder in this
+     app's monospace font, not just an arbitrarily larger number - that
+     placeholder is longer than most other inputs' (e.g. Host Detail's
+     plain "Add tag..."), and used to get clipped at the old 160px. */
+  width: 260px;
 }
 
 .host-ip {
