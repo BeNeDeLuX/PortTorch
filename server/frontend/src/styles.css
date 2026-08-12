@@ -95,6 +95,14 @@
   box-sizing: border-box;
 }
 
+/* Host Detail's Open Ports table links a port number straight to its
+   card further down the page in Service Banners & Enumeration (see
+   styles.css's .port-link/.banner-card below) - smooth rather than an
+   instant jump makes it clear the page moved, not just re-rendered. */
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -863,23 +871,24 @@ th {
   cursor: zoom-in;
 }
 
-/* Older screenshots/RDP screenshots, grouped by capture date and
-   collapsed by default (see HostDetail.tsx) - only the most recent
-   date's screenshots render as a bare .screenshot-grid outside of one
-   of these. summary carries the date + count so both stay readable
-   without expanding. */
-.screenshot-date-group {
+/* Generic collapsed-by-default group for older items, keyed by calendar
+   date - used for screenshots/RDP screenshots and History entries alike
+   (see HostDetail.tsx's groupByDate) - only the most recent date's items
+   render directly outside of one of these. summary carries the date +
+   count so both stay readable without expanding. */
+.date-group {
   margin-top: 1.5rem;
 }
 
-.screenshot-date-group summary {
+.date-group summary {
   cursor: pointer;
   font-weight: 600;
   color: var(--accent);
   margin-bottom: 0.75rem;
 }
 
-.screenshot-date-group .screenshot-grid {
+.date-group .screenshot-grid,
+.date-group .timeline {
   margin-top: 0.75rem;
 }
 
@@ -1279,6 +1288,24 @@ th {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 0.75rem 1rem;
+  /* Some breathing room above the card when the Open Ports table's
+     .port-link below jumps straight to it, so it doesn't land flush
+     against the viewport's top edge. */
+  scroll-margin-top: 1rem;
+}
+
+/* Open Ports table's Port column, only for a port that actually has a
+   corresponding card in Service Banners & Enumeration further down the
+   page - a port with nothing to show there stays plain text, not a link
+   to nowhere. */
+.port-link {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.port-link:hover {
+  text-decoration: underline;
 }
 
 .banner-card-header {

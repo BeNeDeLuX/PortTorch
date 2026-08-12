@@ -288,6 +288,57 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
   // most recent capture date, which is what stays visible un-collapsed below.
   const screenshotDateGroups = groupByDate(data.screenshots, (s) => formatDateOnly(s.captured_at, me.preferences));
   const rdpScreenshotDateGroups = groupByDate(data.rdpScreenshots, (s) => formatDateOnly(s.captured_at, me.preferences));
+  // Same "most recent stays visible, older gets grouped+collapsed by date"
+  // treatment as the screenshot sections above, but keyed by count (the
+  // most recent 10 scan runs) rather than by date - a host rescanned many
+  // times in one day would otherwise never collapse anything under a
+  // date-only split. historyGroups is already newest-first, so slicing
+  // off the first 10 leaves the remainder still newest-first for
+  // groupByDate to bucket correctly.
+  const RECENT_HISTORY_COUNT = 10;
+  const recentHistory = historyGroups.slice(0, RECENT_HISTORY_COUNT);
+  const olderHistoryDateGroups = groupByDate(
+    historyGroups.slice(RECENT_HISTORY_COUNT),
+    (run) => formatDateOnly(run.observedAt, me.preferences)
+  );
+  // Which ports have a corresponding card in Service Banners & Enumeration
+  // below - same condition that section itself filters on - so the Open
+  // Ports table only links a port number when there's actually something
+  // to jump to, rather than linking to an anchor that doesn't exist.
+  const portsWithDetails = new Set(
+    data.ports
+      .filter(
+        (p) =>
+          p.banner ||
+          p.ftp_anon_listing ||
+          p.smb_shares ||
+          (p.nse_extra && p.nse_extra.length > 0) ||
+          data.sshHostKeys.some((k) => k.port === p.port)
+      )
+      .map((p) => `${p.port}-${p.protocol}`)
+  );
+
+  function renderHistoryEntry(run: ReturnType<typeof groupHistoryByScan>[number]) {
+    return (
+      <div key={run.scanJobId} className="timeline-entry">
+        <div className="timeline-dot" />
+        <div className="timeline-body">
+          <div className="timeline-time">
+            {formatDateTime(run.observedAt, me.preferences)}
+            {run.scannerAgentName && ` · ${run.scannerAgentName}`}
+          </div>
+          <div className="timeline-ports">
+            {run.ports.map((p, i) => (
+              <span key={i} className={`port-chip port-chip-${p.state}`}>
+                {p.port}
+                {p.service_name ? `/${p.service_name}` : ""} ({p.state})
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   function renderScreenshotCard(s: HostDetailData["screenshots"][number]) {
     const index = screenshotIndexById.get(s.id)!;
@@ -514,7 +565,9 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
               <th>Protocol</th>
               <th>Service</th>
               <th>Product/Version</th>
-              <th>Banner</th>
+              <th title="Only ports whose service greets a client unprompted (SSH, FTP, SMTP, ...) get a banner here - HTTP(S), RDP and similar 'client speaks first' protocols never will, by design. See Screenshots or Service Banners & Enumeration below for those instead.">
+                Banner
+              </th>
               <th>Last confirmed</th>
             </tr>
           </thead>
@@ -533,9 +586,18 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
               // cheap, false-positive-free signal: it means this specific
               // port wasn't part of the most recent run's results at all.
               const stale = new Date(p.observed_at).getTime() < latestPortObservedAt;
+              const hasDetails = portsWithDetails.has(`${p.port}-${p.protocol}`);
               return (
                 <tr key={`${p.port}-${p.protocol}`}>
-                  <td>{p.port}</td>
+                  <td>
+                    {hasDetails ? (
+                      <a className="port-link" href={`#port-detail-${p.port}-${p.protocol}`}>
+                        {p.port}
+                      </a>
+                    ) : (
+                      p.port
+                    )}
+                  </td>
                   <td>{p.protocol}</td>
                   <td>{p.service_name}</td>
                   <td>
@@ -610,7 +672,7 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
                   data.sshHostKeys.some((k) => k.port === p.port)
               )
               .map((p) => (
-                <div key={`${p.port}-${p.protocol}`} className="banner-card">
+                <div key={`${p.port}-${p.protocol}`} id={`port-detail-${p.port}-${p.protocol}`} className="banner-card">
                   <div className="banner-card-header">
                     Port {p.port} {p.service_name && `· ${p.service_name}`}
                   </div>
@@ -707,10 +769,10 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
 
       {data.screenshots.length > 0 && (
         <section>
-          <h2>Screenshots</h2>
+          <h2>Screenshot(s)</h2>
           <div className="screenshot-grid">{screenshotDateGroups[0].items.map(renderScreenshotCard)}</div>
           {screenshotDateGroups.slice(1).map((group) => (
-            <details className="screenshot-date-group" key={group.date}>
+            <details className="date-group" key={group.date}>
               <summary>
                 {group.date} ({group.items.length} screenshot{group.items.length === 1 ? "" : "s"})
               </summary>
@@ -722,10 +784,10 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
 
       {data.rdpScreenshots.length > 0 && (
         <section>
-          <h2>RDP Screenshots</h2>
+          <h2>RDP Screenshot(s)</h2>
           <div className="screenshot-grid">{rdpScreenshotDateGroups[0].items.map(renderRdpScreenshotCard)}</div>
           {rdpScreenshotDateGroups.slice(1).map((group) => (
-            <details className="screenshot-date-group" key={group.date}>
+            <details className="date-group" key={group.date}>
               <summary>
                 {group.date} ({group.items.length} screenshot{group.items.length === 1 ? "" : "s"})
               </summary>
@@ -737,27 +799,15 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
 
       <section>
         <h2>History</h2>
-        <div className="timeline">
-          {historyGroups.map((run) => (
-            <div key={run.scanJobId} className="timeline-entry">
-              <div className="timeline-dot" />
-              <div className="timeline-body">
-                <div className="timeline-time">
-                  {formatDateTime(run.observedAt, me.preferences)}
-                  {run.scannerAgentName && ` · ${run.scannerAgentName}`}
-                </div>
-                <div className="timeline-ports">
-                  {run.ports.map((p, i) => (
-                    <span key={i} className={`port-chip port-chip-${p.state}`}>
-                      {p.port}
-                      {p.service_name ? `/${p.service_name}` : ""} ({p.state})
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+        <div className="timeline">{recentHistory.map(renderHistoryEntry)}</div>
+        {olderHistoryDateGroups.map((group) => (
+          <details className="date-group" key={group.date}>
+            <summary>
+              {group.date} ({group.items.length} scan{group.items.length === 1 ? "" : "s"})
+            </summary>
+            <div className="timeline">{group.items.map(renderHistoryEntry)}</div>
+          </details>
+        ))}
       </section>
 
       {(data.comments.length > 0 || canEdit) && (
