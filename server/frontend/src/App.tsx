@@ -20,6 +20,7 @@ import Audit from "./pages/Audit";
 import Excludes from "./pages/Excludes";
 import ApiTokens from "./pages/ApiTokens";
 import ScanProfiles from "./pages/ScanProfiles";
+import Settings from "./pages/Settings";
 
 export default function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -132,6 +133,12 @@ export default function App() {
         path="/scan-profiles"
         element={
           me && me.role === "admin" ? <ScanProfiles me={me} onLogout={() => setMe(null)} /> : <Navigate to="/" replace />
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          me && me.role === "admin" ? <Settings me={me} onLogout={() => setMe(null)} /> : <Navigate to="/" replace />
         }
       />
       </Routes>

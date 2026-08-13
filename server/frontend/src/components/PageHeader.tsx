@@ -58,6 +58,7 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
               { to: "/audit", label: "Audit" },
               { to: "/excludes", label: "Excludes" },
               { to: "/api-tokens", label: "API Tokens" },
+              { to: "/settings", label: "Settings" },
             ]}
           />
         )}

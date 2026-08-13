@@ -467,6 +467,19 @@ export interface ApiTokenWithSecret extends ApiToken {
   token: string;
 }
 
+// The webserver's own TLS listener certificate (Settings page) - not to
+// be confused with TLSCertificate above, which is a *scanned host's*
+// certificate captured during a scan.
+export interface TlsCertificateInfo {
+  subjectCN: string | null;
+  issuerCN: string | null;
+  validFrom: string;
+  validTo: string;
+  fingerprint256: string;
+  selfSigned: boolean;
+  expired: boolean;
+}
+
 // A scan-profile pick - which NSE scripts a scan actually runs. "default"
 // is today's unchanged hardcoded list, "all_safe" is a broader,
 // still-safe nmap category (both resolved entirely scanner-side, see
@@ -692,6 +705,28 @@ export const api = {
   updateScanProfile: (id: string, patch: { name?: string; nseScripts?: string[] }) =>
     request<ScanProfile>(`/api/scan-profiles/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteScanProfile: (id: string) => request<void>(`/api/scan-profiles/${id}`, { method: "DELETE" }),
+
+  tlsCertificate: () => request<TlsCertificateInfo>("/api/settings/tls-certificate"),
+  // Bypasses request()'s JSON-only helper - a multipart body needs the
+  // browser to set its own Content-Type with a boundary, which it only
+  // does when Content-Type is left unset entirely.
+  uploadTlsCertificate: async (certificateFile: File, privateKeyFile: File) => {
+    const formData = new FormData();
+    formData.append("certificate", certificateFile);
+    formData.append("privateKey", privateKeyFile);
+    const res = await fetch("/api/settings/tls-certificate", {
+      method: "POST",
+      credentials: "include",
+      body: formData,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const message =
+        typeof body.error === "string" ? body.error : body.error ? JSON.stringify(body.error) : `Request failed: ${res.status}`;
+      throw new Error(message);
+    }
+    return res.json() as Promise<TlsCertificateInfo>;
+  },
 
   users: () => request<DashboardUser[]>("/api/users"),
   createUser: (input: { username: string; password: string; role: string; scannerAgentIds?: string[] }) =>

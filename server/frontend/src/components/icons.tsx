@@ -50,6 +50,16 @@ export function IconDownload({ size = 15 }: { size?: number }) {
   );
 }
 
+export function IconUpload({ size = 15 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
+  );
+}
+
 export function IconSearch({ size = 15 }: { size?: number }) {
   return (
     <svg {...iconProps(size)}>
