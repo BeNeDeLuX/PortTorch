@@ -2,6 +2,7 @@ import { Link, NavLink } from "react-router";
 import { api, Me } from "../api";
 import Brand from "./Brand";
 import { IconLogOut } from "./icons";
+import NavGroup from "./NavGroup";
 import ThemeToggle from "./ThemeToggle";
 
 export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => void }) {
@@ -30,19 +31,36 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
 
       <nav className="main-nav">
         <NavLink to="/" end>Scan Results</NavLink>
-        <NavLink to="/agents">Scanner Agents</NavLink>
-        <NavLink to="/schedules">Schedule Scans</NavLink>
-        <NavLink to="/scan-history">Scan History</NavLink>
-        <NavLink to="/certificates">Certificates</NavLink>
-        <NavLink to="/vulnerabilities">Vulnerabilities</NavLink>
-        <NavLink to="/digest">Digest</NavLink>
-        <NavLink to="/trends">Trends</NavLink>
-        <NavLink to="/webhooks">Webhooks</NavLink>
-        {me.role === "admin" && <NavLink to="/users">Users</NavLink>}
-        {me.role === "admin" && <NavLink to="/audit">Audit</NavLink>}
-        {me.role === "admin" && <NavLink to="/excludes">Excludes</NavLink>}
-        {me.role === "admin" && <NavLink to="/api-tokens">API Tokens</NavLink>}
-        {me.role === "admin" && <NavLink to="/scan-profiles">Scan Profiles</NavLink>}
+        <NavGroup
+          label="Scanning"
+          items={[
+            { to: "/agents", label: "Scanner Agents" },
+            { to: "/schedules", label: "Schedule Scans" },
+            { to: "/scan-history", label: "Scan History" },
+            ...(me.role === "admin" ? [{ to: "/scan-profiles", label: "Scan Profiles" }] : []),
+          ]}
+        />
+        <NavGroup
+          label="Insights"
+          items={[
+            { to: "/certificates", label: "Certificates" },
+            { to: "/vulnerabilities", label: "Vulnerabilities" },
+            { to: "/digest", label: "Digest" },
+            { to: "/trends", label: "Trends" },
+          ]}
+        />
+        {me.role === "admin" && (
+          <NavGroup
+            label="Admin"
+            items={[
+              { to: "/webhooks", label: "Webhooks" },
+              { to: "/users", label: "Users" },
+              { to: "/audit", label: "Audit" },
+              { to: "/excludes", label: "Excludes" },
+              { to: "/api-tokens", label: "API Tokens" },
+            ]}
+          />
+        )}
       </nav>
     </>
   );

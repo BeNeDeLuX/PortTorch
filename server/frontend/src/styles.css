@@ -1060,6 +1060,73 @@ th {
   font-weight: 600;
 }
 
+/* Grouped nav dropdown (components/NavGroup.tsx) - same toggle+panel
+   shape as .scanner-multiselect, but styled to sit flush in .main-nav's
+   plain-text-link row (no button chrome) rather than looking like a
+   form control. */
+.nav-group {
+  position: relative;
+}
+
+.nav-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: normal;
+  cursor: pointer;
+}
+
+.nav-group-toggle:hover {
+  color: var(--text);
+}
+
+.nav-group-toggle.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.nav-group-caret {
+  font-size: 0.65rem;
+  color: var(--muted);
+}
+
+.nav-group-panel {
+  position: absolute;
+  top: calc(100% + 0.6rem);
+  left: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 170px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.nav-group-panel a {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.nav-group-panel a:hover {
+  color: var(--text);
+}
+
+.nav-group-panel a.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .host-detail-header {
   display: flex;
   align-items: center;
