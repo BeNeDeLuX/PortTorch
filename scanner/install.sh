@@ -198,6 +198,22 @@ if $BUILT_FROM_SOURCE; then
   chmod 755 "$BIN_PATH"
 fi
 
+# The systemd service runs as the unprivileged $SERVICE_USER (setcap on
+# masscan/nmap - not the porttorch binary's own uid - is what grants raw-
+# socket access), but a root-owned 0755 binary can't be overwritten by
+# that user - which self-update (scanner/internal/updater) needs to do at
+# runtime. Covers both the from-source-build and downloaded-release paths
+# above in one line. On a fresh full install $SERVICE_USER doesn't exist
+# yet at this point (created further below), so this is a no-op there and
+# the equivalent chown after user creation below covers it instead; on
+# --rebuild-only (which requires the user to already exist, checked up
+# front) this is the only chown that runs, which is exactly what makes
+# --rebuild-only alone sufficient to fix ownership on an existing
+# deployment that predates this fix.
+if id "$SERVICE_USER" >/dev/null 2>&1; then
+  chown "$SERVICE_USER:$SERVICE_USER" "$BIN_PATH"
+fi
+
 if $REBUILD_ONLY; then
   log "--rebuild-only: skipping gowitness rebuild, setcap, user/config/systemd-unit setup"
 else
@@ -218,6 +234,12 @@ else
     useradd --system --create-home --home-dir "$SERVICE_HOME" --shell /usr/sbin/nologin "$SERVICE_USER"
   fi
   mkdir -p "$CONFIG_DIR"
+
+  # Fresh-install counterpart of the chown right after the build step
+  # above: $SERVICE_USER didn't exist yet at that point on a truly fresh
+  # install, so this is what actually applies it in that case (a no-op,
+  # already-owned re-chown on every other path that reaches here).
+  chown "$SERVICE_USER:$SERVICE_USER" "$BIN_PATH"
 
   # --- config.yaml ----------------------------------------------------------
   # sed replacement values come from the operator running this installer as

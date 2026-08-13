@@ -27,6 +27,7 @@ import { excludesRouter } from "./excludes/routes";
 import { apiTokensRouter } from "./apiTokens/routes";
 import { integrationsRouter } from "./integrations/routes";
 import { savedSearchesRouter } from "./savedSearches/routes";
+import { scanProfilesRouter } from "./scanProfiles/routes";
 
 // Pure Express app construction, split out from index.ts so integration
 // tests (see tests/integration/) can import a fully-wired app - routes,
@@ -76,6 +77,7 @@ export function buildApp() {
   app.use("/api/excludes", excludesRouter);
   app.use("/api/api-tokens", apiTokensRouter);
   app.use("/api/saved-searches", savedSearchesRouter);
+  app.use("/api/scan-profiles", scanProfilesRouter);
   // External/SOAR-facing API - own auth chain (tokenAuth), not session auth.
   app.use("/api/v1", integrationsRouter);
 

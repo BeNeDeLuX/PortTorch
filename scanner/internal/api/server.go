@@ -138,7 +138,10 @@ func (s *Server) handleCreateScan(c echo.Context) error {
 	s.mu.Unlock()
 
 	s.logger.Info("scan requested via rest api", "event", "scan.requested", "scan_job_id", jobID, "target", req.Target, "ports", req.Ports, "source_ip", c.RealIP())
-	go s.runScan(jobID, req.Target, req.Ports, state)
+	// nil nseScripts: this local REST endpoint (bypasses the webserver's
+	// scan_requests queue entirely) has no scan-profile concept - always
+	// runs DefaultNSEScripts, same as before this feature existed.
+	go s.runScan(jobID, req.Target, req.Ports, nil, state)
 
 	return c.JSON(http.StatusAccepted, map[string]string{"id": jobID, "status": "running"})
 }
@@ -190,6 +193,18 @@ func (s *Server) StartCancelWatcher(ctx context.Context, interval time.Duration)
 			s.checkCancellations(ctx)
 		}
 	}
+}
+
+// IsScanning reports whether this process currently has a scan in
+// progress - satisfies internal/updater's BusyChecker interface. s.cancels
+// only ever holds an entry for the duration of runScan's pipeline.RunScan
+// call (registered and deleted around it, see runScan below), so a
+// non-empty map is a reliable proxy for "a scan is actively running right
+// now", not just queued/completed.
+func (s *Server) IsScanning() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.cancels) > 0
 }
 
 func (s *Server) checkCancellations(ctx context.Context) {
@@ -248,13 +263,30 @@ func (s *Server) pollOnce(ctx context.Context) {
 	s.scans[jobID] = state
 	s.mu.Unlock()
 
-	s.runScan(jobID, scanReq.TargetSpec, scanReq.PortSpec, state)
+	s.runScan(jobID, scanReq.TargetSpec, scanReq.PortSpec, resolveNSEScripts(scanReq.NSEProfile, scanReq.NSEScripts), state)
 
 	snapshot := state.snapshot()
 	completeCtx, completeCancel := context.WithTimeout(context.Background(), timeoutCreateJob)
 	defer completeCancel()
 	if err := s.client.CompleteScanRequest(completeCtx, scanReq.ID, jobID, snapshot.Status); err != nil {
 		s.logger.Error("reporting scan request completion failed", "event", "poll.complete_report_failed", "scan_request_id", scanReq.ID, "error", err.Error())
+	}
+}
+
+// resolveNSEScripts turns a webserver-provided scan-profile kind + optional
+// custom list into the concrete []string RunNmap needs. "default" (or any
+// unrecognized/empty value - e.g. a pre-migration scan_requests row, or an
+// older webserver that doesn't send a profile at all) maps to nil, which
+// RunNmap's own fallback already treats as "use DefaultNSEScripts" - so
+// this never needs its own copy of that list.
+func resolveNSEScripts(profile string, custom []string) []string {
+	switch profile {
+	case "all_safe":
+		return pipeline.AllSafeNSEScripts
+	case "custom":
+		return custom
+	default:
+		return nil
 	}
 }
 
@@ -268,7 +300,7 @@ func (s *Server) pollOnce(ctx context.Context) {
 // cancellable=true (handleCreateScan, pollOnce) - callers that don't
 // (main.go, tui/commands.go) never register anything here, but registering
 // unconditionally is harmless and keeps this function the same for both.
-func (s *Server) runScan(jobID, target, ports string, state *scanState) {
+func (s *Server) runScan(jobID, target, ports string, nseScripts []string, state *scanState) {
 	start := time.Now()
 	s.logger.Info("scan started", "event", "scan.started", "scan_job_id", jobID, "target", target, "ports", ports)
 
@@ -319,7 +351,7 @@ func (s *Server) runScan(jobID, target, ports string, state *scanState) {
 	tracker := progress.NewTracker(s.client, jobID, progress.DefaultPushInterval)
 	defer tracker.Close()
 
-	result, err := pipeline.RunScan(scanCtx, s.pcfg, target, ports, excludes, probeHostnames,
+	result, err := pipeline.RunScan(scanCtx, s.pcfg, target, ports, excludes, probeHostnames, nseScripts,
 		func(stage, message string) {
 			state.appendLog("[" + stage + "] " + message)
 			s.logger.Info(message, "event", "scan.progress", "scan_job_id", jobID, "stage", stage)

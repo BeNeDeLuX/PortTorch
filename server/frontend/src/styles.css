@@ -1457,6 +1457,20 @@ th {
   white-space: nowrap;
 }
 
+/* Scanner self-update failure (Scanner Agents page) - same shape as
+   .stale-badge, --danger instead of --warning since exhausting its
+   retries is a harder failure than "just hasn't checked in in a while". */
+.update-failed-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  margin-left: 0.5rem;
+  white-space: nowrap;
+}
+
 .expiry-label {
   font-size: 0.8rem;
   font-weight: 600;

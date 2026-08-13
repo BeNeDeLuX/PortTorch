@@ -40,6 +40,26 @@ export interface ScannerAgentsTable {
   version: string | null;
   created_at: ColumnType<Date, string | undefined, never>;
   revoked_at: Date | null;
+  // Self-update (see src/scannerUpdate) - the webserver can never push to
+  // a scanner, so this is a flag the scanner's own update watcher polls
+  // for (GET /api/ingest/update-requested), mirroring scan_jobs'
+  // cancel_requested_at exactly. update_request_status is null except
+  // while a request is outstanding ('pending') or has exhausted its
+  // retries ('failed', requiring an explicit admin re-trigger).
+  update_requested_at: Date | null;
+  update_request_status: "pending" | "failed" | null;
+  update_failure_reason: string | null;
+  update_attempt_count: ColumnType<number, number | undefined, number>;
+}
+
+// Singleton (id always 1) cache of the latest published scanner-vX.Y.Z
+// GitHub release - see src/scannerUpdate/githubSync.ts.
+export interface ScannerReleaseCacheTable {
+  id: Generated<number>;
+  latest_version: string | null;
+  latest_tag: string | null;
+  release_url: string | null;
+  synced_at: Date | null;
 }
 
 // For external, non-interactive callers (SOAR/enrichment tools) - distinct
@@ -234,6 +254,12 @@ export interface ScanSchedulesTable {
   last_run_at: ColumnType<Date | null, string | undefined, string>;
   created_by: string | null;
   created_at: ColumnType<Date, string | undefined, never>;
+  // Scan-profile pick (see scanProfiles/resolve.ts's resolveNSEProfile) -
+  // a resolved snapshot at creation/last-edit time, never a live join
+  // against scan_profiles. nse_scripts is only ever set for 'custom'.
+  nse_profile: ColumnType<"default" | "all_safe" | "custom", "default" | "all_safe" | "custom" | undefined, "default" | "all_safe" | "custom">;
+  nse_scripts: string[] | null;
+  nse_profile_label: string | null;
 }
 
 export interface ScanRequestsTable {
@@ -251,6 +277,19 @@ export interface ScanRequestsTable {
   created_at: ColumnType<Date, string | undefined, never>;
   claimed_at: ColumnType<Date | null, string | undefined, string>;
   completed_at: ColumnType<Date | null, string | undefined, string>;
+  // Same scan-profile snapshot shape as ScanSchedulesTable above.
+  nse_profile: ColumnType<"default" | "all_safe" | "custom", "default" | "all_safe" | "custom" | undefined, "default" | "all_safe" | "custom">;
+  nse_scripts: string[] | null;
+  nse_profile_label: string | null;
+}
+
+export interface ScanProfilesTable {
+  id: Generated<string>;
+  name: string;
+  nse_scripts: string[];
+  created_by: string | null;
+  created_at: ColumnType<Date, string | undefined, never>;
+  updated_at: ColumnType<Date, string | undefined, string>;
 }
 
 export interface TlsCertificatesTable {
@@ -456,4 +495,6 @@ export interface Database {
   scan_requests: ScanRequestsTable;
   tls_certificates: TlsCertificatesTable;
   ssh_host_keys: SshHostKeysTable;
+  scan_profiles: ScanProfilesTable;
+  scanner_release_cache: ScannerReleaseCacheTable;
 }

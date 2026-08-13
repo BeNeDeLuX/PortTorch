@@ -12,6 +12,7 @@ import { startKevSync } from "./cve/kevSync";
 import { startScheduler } from "./scheduler";
 import { startRetention } from "./retention";
 import { startDailyDigestEmail } from "./digest/emailDigest";
+import { startGithubSync } from "./scannerUpdate/githubSync";
 
 // An error on an idle pool client would otherwise arrive as an
 // uncaughtException on the process and take down the entire server.
@@ -34,3 +35,4 @@ startCveSync();
 startEpssSync();
 startKevSync();
 startDailyDigestEmail();
+startGithubSync();

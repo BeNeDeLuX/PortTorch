@@ -1,12 +1,13 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router";
-import { api, HostDetail as HostDetailData, HostFilters, Me } from "../api";
+import { api, HostDetail as HostDetailData, HostFilters, Me, NSEProfileSelection } from "../api";
 import { certExpiryStatus, certExpiryLabel } from "../lib/certExpiry";
 import { cveSeverityClass } from "../lib/cveSeverity";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime, formatDateOnly } from "../lib/formatDate";
 import Lightbox, { LightboxItem } from "../components/Lightbox";
 import HostExportModal from "../components/HostExportModal";
+import RescanModal from "../components/RescanModal";
 import { IconDownload, IconPlus, IconRefresh, IconSave, IconTrash, IconX } from "../components/icons";
 
 // Router state Dashboard.tsx hands off when navigating to a host - see
@@ -152,6 +153,7 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
   const [data, setData] = useState<HostDetailData | null>(null);
   const [rescanError, setRescanError] = useState<string | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showRescanModal, setShowRescanModal] = useState(false);
   const [newTag, setNewTag] = useState("");
   const [newComment, setNewComment] = useState("");
   const [probeHostnameInput, setProbeHostnameInput] = useState("");
@@ -191,11 +193,12 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
     }, 5000);
   }
 
-  async function handleRescan() {
+  async function handleRescan(profile: NSEProfileSelection) {
     if (!id) return;
+    setShowRescanModal(false);
     setRescanError(null);
     try {
-      await api.rescan(id);
+      await api.rescan(id, profile);
       await load(id);
       startPollingForRescan(id);
     } catch (err) {
@@ -444,12 +447,15 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
           <IconDownload /> Export data
         </button>
         {canEdit && (
-          <button className="btn-icon-label" onClick={handleRescan} disabled={rescanInFlight}>
+          <button className="btn-icon-label" onClick={() => setShowRescanModal(true)} disabled={rescanInFlight}>
             <IconRefresh /> {rescanInFlight ? "Rescan running..." : "Rescan"}
           </button>
         )}
       </div>
       {showExportModal && <HostExportModal data={data} onClose={() => setShowExportModal(false)} />}
+      {showRescanModal && (
+        <RescanModal hostCount={1} onConfirm={handleRescan} onClose={() => setShowRescanModal(false)} />
+      )}
       <p className="host-meta host-seen-summary">
         First seen {formatDateTime(data.host.first_seen_at, me.preferences)} · last seen{" "}
         {formatDateTime(data.host.last_seen_at, me.preferences)}

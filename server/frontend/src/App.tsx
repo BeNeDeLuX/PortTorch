@@ -19,6 +19,7 @@ import Webhooks from "./pages/Webhooks";
 import Audit from "./pages/Audit";
 import Excludes from "./pages/Excludes";
 import ApiTokens from "./pages/ApiTokens";
+import ScanProfiles from "./pages/ScanProfiles";
 
 export default function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -125,6 +126,12 @@ export default function App() {
         path="/api-tokens"
         element={
           me && me.role === "admin" ? <ApiTokens me={me} onLogout={() => setMe(null)} /> : <Navigate to="/" replace />
+        }
+      />
+      <Route
+        path="/scan-profiles"
+        element={
+          me && me.role === "admin" ? <ScanProfiles me={me} onLogout={() => setMe(null)} /> : <Navigate to="/" replace />
         }
       />
       </Routes>

@@ -12,6 +12,7 @@ import { parseDateOnly, toDateOnlyString } from "../lib/dateOnly";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { requestRescan } from "../rescan";
+import { NSEProfileSelection } from "../scanProfiles/resolve";
 import { singleParam } from "../lib/reqParams";
 
 declare global {
@@ -1045,8 +1046,22 @@ hostsRouter.patch("/:id/probe-hostname", requireOperator, asyncHandler(async (re
   res.status(200).json({ probe_hostname: parsed.data.hostname });
 }));
 
+const nseProfileSelectionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("default") }),
+  z.object({ kind: z.literal("all_safe") }),
+  z.object({ kind: z.literal("custom"), profileId: z.string().uuid() }),
+]);
+
+const rescanBodySchema = z.object({ profile: nseProfileSelectionSchema.optional() });
+
 hostsRouter.post("/:id/rescan", requireOperator, asyncHandler(async (req, res) => {
-  const outcome = await requestRescan(singleParam(req.params.id), req.session.username ?? null);
+  const parsedBody = rescanBodySchema.safeParse(req.body ?? {});
+  if (!parsedBody.success) {
+    res.status(400).json({ error: parsedBody.error.flatten() });
+    return;
+  }
+  const profile: NSEProfileSelection = parsedBody.data.profile ?? { kind: "default" };
+  const outcome = await requestRescan(singleParam(req.params.id), req.session.username ?? null, profile);
   if (!outcome.ok) {
     res.status(outcome.status).json({ error: outcome.error });
     return;

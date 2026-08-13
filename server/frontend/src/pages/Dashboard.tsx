@@ -8,12 +8,14 @@ import {
   HostListResult,
   HostSummary,
   Me,
+  NSEProfileSelection,
   SavedSearch,
   ScannerAgent,
 } from "../api";
 import ExportModal from "../components/ExportModal";
 import { IconBookmark, IconDownload, IconInfo, IconPlus, IconRefresh, IconSearch, IconStop, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
+import RescanModal from "../components/RescanModal";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanProgressModal from "../components/ScanProgressModal";
 import { elapsedLabel } from "../lib/elapsed";
@@ -209,6 +211,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
   const [showAllPorts, setShowAllPorts] = useState(false);
   const [agents, setAgents] = useState<ScannerAgent[]>([]);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showRescanModal, setShowRescanModal] = useState(false);
   const [loading, setLoading] = useState(true);
   // View mode / column visibility / sort are display preferences, not
   // search filters, so they live in localStorage rather than the URL.
@@ -400,12 +403,13 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
     }
   }
 
-  async function handleBulkRescan() {
+  async function handleBulkRescan(profile: NSEProfileSelection) {
     if (selected.size === 0) return;
+    setShowRescanModal(false);
     setBulkBusy(true);
     setBulkStatus(null);
     try {
-      const results = await Promise.allSettled([...selected].map((id) => api.rescan(id)));
+      const results = await Promise.allSettled([...selected].map((id) => api.rescan(id, profile)));
       const failed = results.filter((r) => r.status === "rejected").length;
       setBulkStatus(
         failed === 0
@@ -724,6 +728,10 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
         <ExportModal filters={filters} selectedIds={[...selected]} onClose={() => setShowExportModal(false)} />
       )}
 
+      {showRescanModal && (
+        <RescanModal hostCount={selected.size} onConfirm={handleBulkRescan} onClose={() => setShowRescanModal(false)} />
+      )}
+
       {activeChips.length > 0 && (
         <div className="filter-chips">
           {activeChips.map((chip) => (
@@ -743,7 +751,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
               <IconPlus /> Add tag
             </button>
           </form>
-          <button className="btn-icon-label" onClick={handleBulkRescan} disabled={bulkBusy}>
+          <button className="btn-icon-label" onClick={() => setShowRescanModal(true)} disabled={bulkBusy}>
             <IconRefresh /> Rescan selected
           </button>
           <button className="link-button btn-icon-label" onClick={() => setSelected(new Set())}>

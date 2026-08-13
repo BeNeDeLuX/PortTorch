@@ -51,4 +51,8 @@ export const config = {
   // UTC hour (0-23) the daily digest email fires at, if any webhook/email
   // channel is subscribed to "digest.daily" - see src/digest/emailDigest.ts.
   digestEmailHourUtc: parseInt(process.env.DIGEST_EMAIL_HOUR_UTC ?? "8", 10),
+  // GitHub "owner/repo" slug scanner-vX.Y.Z releases are published under
+  // (see src/scannerUpdate/githubSync.ts) - overridable for a fork/mirror,
+  // defaults to this project's own repo.
+  githubRepoSlug: process.env.GITHUB_REPO_SLUG ?? "BeNeDeLuX/PortTorch",
 };

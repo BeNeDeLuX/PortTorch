@@ -1,8 +1,9 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
-import { api, Me, ScannerAgent, Schedule } from "../api";
+import { api, Me, NSEProfileSelection, ScannerAgent, Schedule } from "../api";
 import { IconEdit, IconPause, IconPlay, IconPlus, IconSave, IconTrash, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
+import ScanProfilePicker from "../components/ScanProfilePicker";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import { formatDateTime } from "../lib/formatDate";
 import {
@@ -159,6 +160,20 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
   const [scannerAgentId, setScannerAgentId] = useState("");
   const [targetSpec, setTargetSpec] = useState("");
   const [portSpec, setPortSpec] = useState("");
+  // profileTouched tracks whether the user actually interacted with the
+  // picker in this form session - profile is only ever included in the
+  // create/update payload when true. This matters specifically for edit
+  // mode: a schedule's "custom" profile is a resolved snapshot (name +
+  // scripts, no live profile id - see the scan_profiles migration's own
+  // comment on why), so there's no reliable way to pre-select the exact
+  // matching option in the picker on edit. Rather than guess (and risk
+  // silently reverting a custom profile to Default on an unrelated field
+  // edit), profile is simply omitted from the PATCH unless the user
+  // deliberately changed it - editingProfileLabel shows what's currently
+  // in effect instead.
+  const [profile, setProfile] = useState<NSEProfileSelection>({ kind: "default" });
+  const [profileTouched, setProfileTouched] = useState(false);
+  const [editingProfileLabel, setEditingProfileLabel] = useState<string | null>(null);
   const [scheduleType, setScheduleType] = useState<"interval" | "cron" | "once">("interval");
   const [intervalMinutes, setIntervalMinutes] = useState(60);
   const [runAt, setRunAt] = useState("");
@@ -238,6 +253,9 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     setTargetSpec("");
     setPortSpec("");
     setRunAt("");
+    setProfile({ kind: "default" });
+    setProfileTouched(false);
+    setEditingProfileLabel(null);
     setScheduleType("interval");
     setIntervalMinutes(60);
     setRepeatMode("daily");
@@ -263,6 +281,9 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     setScannerAgentId(s.scanner_agent_id);
     setTargetSpec(s.target_spec);
     setPortSpec(s.port_spec);
+    setProfile({ kind: s.nse_profile === "custom" ? "default" : s.nse_profile });
+    setProfileTouched(false);
+    setEditingProfileLabel(s.nse_profile_label);
     setScheduleType(s.schedule_type);
 
     if (s.schedule_type === "interval") {
@@ -297,7 +318,12 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     if (!scannerAgentId || !targetSpec.trim() || !portSpec.trim()) return;
 
     if (editingId) {
-      const base = { targetSpec: targetSpec.trim(), portSpec: portSpec.trim(), scannerAgentId };
+      const base = {
+        targetSpec: targetSpec.trim(),
+        portSpec: portSpec.trim(),
+        scannerAgentId,
+        ...(profileTouched ? { profile } : {}),
+      };
       if (scheduleType === "interval") {
         await api.updateSchedule(editingId, { ...base, intervalMinutes });
       } else if (scheduleType === "once") {
@@ -321,6 +347,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         targetSpec: targetSpec.trim(),
         portSpec: portSpec.trim(),
         intervalMinutes,
+        profile,
       });
     } else if (scheduleType === "once") {
       if (!runAt) return;
@@ -336,6 +363,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         targetSpec: targetSpec.trim(),
         portSpec: portSpec.trim(),
         runAt: zonedDateTimeToUtcIso(datePart, timePart, timezone),
+        profile,
       });
     } else {
       const cronExpression = advancedCron ? rawCronExpression.trim() : generatedCron;
@@ -346,11 +374,14 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         targetSpec: targetSpec.trim(),
         portSpec: portSpec.trim(),
         cronExpression,
+        profile,
       });
     }
     setTargetSpec("");
     setPortSpec("");
     setRunAt("");
+    setProfile({ kind: "default" });
+    setProfileTouched(false);
     await load();
   }
 
@@ -468,6 +499,22 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
             Ports
             <input placeholder="1-1000" value={portSpec} onChange={(e) => setPortSpec(e.target.value)} />
           </label>
+          <label>
+            Scan profile
+            <ScanProfilePicker
+              value={profile}
+              onChange={(p: NSEProfileSelection) => {
+                setProfile(p);
+                setProfileTouched(true);
+              }}
+            />
+          </label>
+          {editingId !== null && !profileTouched && editingProfileLabel && (
+            <p className="empty">
+              Currently: {editingProfileLabel}. Picking a profile above will change it - leave it alone to keep this
+              schedule's existing profile untouched.
+            </p>
+          )}
           <label>
             Schedule type
             <select

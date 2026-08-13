@@ -34,6 +34,15 @@ async function tick(): Promise<void> {
           target_spec: schedule.target_spec,
           port_spec: schedule.port_spec,
           requested_by: "schedule",
+          // Copied straight from the schedule's own already-resolved
+          // snapshot, not re-resolved live from scan_profiles - a custom
+          // profile edited/deleted after this schedule was last saved must
+          // not silently change what it fires (see the scan_profiles
+          // migration's own comment). Only re-resolved when the schedule
+          // itself is explicitly edited (schedules/routes.ts's PATCH).
+          nse_profile: schedule.nse_profile,
+          nse_scripts: schedule.nse_scripts,
+          nse_profile_label: schedule.nse_profile_label,
         })
         .execute();
 

@@ -180,7 +180,11 @@ func noopHostComplete(HostResult) {}
 // targets that reject/misroute a bare-IP (no working SNI) connection, e.g.
 // nginx-style virtual hosting. A nil map is safe: a missing entry just
 // means "no override, use the IP" (today's unchanged behavior).
-func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, excludes Excludes, probeHostnames map[string]string, onProgress ProgressFunc, onHostComplete HostCompleteFunc) (*ScanResult, error) {
+//
+// nseScripts is the resolved scan-profile script list passed straight
+// through to RunNmap (see that function's own doc comment) - nil/empty
+// means "Default", today's unchanged behavior.
+func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, excludes Excludes, probeHostnames map[string]string, nseScripts []string, onProgress ProgressFunc, onHostComplete HostCompleteFunc) (*ScanResult, error) {
 	cfg = cfg.withDefaults()
 	if onProgress == nil {
 		onProgress = noopProgress
@@ -301,7 +305,7 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 			defer nmapWG.Done()
 			for j := range nmapJobs {
 				onProgress("nmap", fmt.Sprintf("probing %s (%d port(s))", j.ip, len(j.ports)))
-				host, err := RunNmap(ctx, cfg.NmapPath, j.ip, j.ports)
+				host, err := RunNmap(ctx, cfg.NmapPath, j.ip, j.ports, nseScripts)
 				if err != nil {
 					onProgress("nmap", fmt.Sprintf("failed for %s: %v", j.ip, err))
 					nmapCountMu.Lock()

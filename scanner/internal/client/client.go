@@ -443,10 +443,19 @@ func (c *Client) uploadImage(ctx context.Context, path, imagePath string, fields
 
 // ScanRequest is a scan job created by the webserver via the rescan button
 // or a schedule, picked up via polling.
+//
+// NSEProfile/NSEScripts carry the scan-profile pick (see
+// internal/pipeline's nse_default_scripts.go/nse_safe_scripts.go and
+// internal/api/server.go's resolveNSEScripts) - both are absent-safe: an
+// older webserver that predates the scan-profile feature simply never
+// sends them, decoding to zero values, which resolveNSEScripts already
+// treats as "Default", today's unchanged behavior.
 type ScanRequest struct {
 	ID         string
 	TargetSpec string
 	PortSpec   string
+	NSEProfile string
+	NSEScripts []string
 }
 
 // PollNextScanRequest asks the webserver for the next pending scan request
@@ -474,14 +483,19 @@ func (c *Client) PollNextScanRequest(ctx context.Context) (*ScanRequest, error) 
 	}
 
 	var out struct {
-		ID         string `json:"id"`
-		TargetSpec string `json:"targetSpec"`
-		PortSpec   string `json:"portSpec"`
+		ID         string   `json:"id"`
+		TargetSpec string   `json:"targetSpec"`
+		PortSpec   string   `json:"portSpec"`
+		NSEProfile string   `json:"nseProfile"`
+		NSEScripts []string `json:"nseScripts"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, fmt.Errorf("decoding scan request: %w", err)
 	}
-	return &ScanRequest{ID: out.ID, TargetSpec: out.TargetSpec, PortSpec: out.PortSpec}, nil
+	return &ScanRequest{
+		ID: out.ID, TargetSpec: out.TargetSpec, PortSpec: out.PortSpec,
+		NSEProfile: out.NSEProfile, NSEScripts: out.NSEScripts,
+	}, nil
 }
 
 // CompleteScanRequest reports back the result of a claimed scan request
@@ -532,6 +546,70 @@ func (c *Client) GetProbeHostnames(ctx context.Context) (map[string]string, erro
 		hostnames[e.IP] = e.Hostname
 	}
 	return hostnames, nil
+}
+
+// CheckUpdateRequested asks whether an admin has requested this scanner
+// self-update (see the ScannerAgents "Update" button) - polled by
+// internal/updater's StartUpdateWatcher, mirroring CheckCancelRequested's
+// shape exactly. Scoped implicitly to this scanner's own authenticated
+// agent, unlike CheckCancelRequested (which takes a job ID) - the
+// scanner never needs to know its own scanner_agents.id.
+func (c *Client) CheckUpdateRequested(ctx context.Context) (bool, error) {
+	var resp struct {
+		Requested bool `json:"requested"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/api/ingest/update-requested", nil, &resp); err != nil {
+		return false, err
+	}
+	return resp.Requested, nil
+}
+
+// ReleaseInfo is the webserver's cached view of the latest published
+// scanner-vX.Y.Z GitHub release (see server/src/scannerUpdate/githubSync.ts).
+// LatestVersion/LatestTag/ReleaseURL are all empty strings if the webserver
+// hasn't synced one yet.
+type ReleaseInfo struct {
+	LatestVersion string
+	LatestTag     string
+	ReleaseURL    string
+}
+
+// GetScannerRelease fetches the webserver's cached latest-release info -
+// the scanner needs this to know *which* version to actually
+// download/verify once CheckUpdateRequested says an update was requested.
+func (c *Client) GetScannerRelease(ctx context.Context) (ReleaseInfo, error) {
+	var out struct {
+		LatestVersion *string `json:"latestVersion"`
+		LatestTag     *string `json:"latestTag"`
+		ReleaseURL    *string `json:"releaseUrl"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/api/ingest/scanner-release", nil, &out); err != nil {
+		return ReleaseInfo{}, fmt.Errorf("fetching scanner release info: %w", err)
+	}
+	info := ReleaseInfo{}
+	if out.LatestVersion != nil {
+		info.LatestVersion = *out.LatestVersion
+	}
+	if out.LatestTag != nil {
+		info.LatestTag = *out.LatestTag
+	}
+	if out.ReleaseURL != nil {
+		info.ReleaseURL = *out.ReleaseURL
+	}
+	return info, nil
+}
+
+// ReportUpdateOutcome tells the webserver whether a self-update attempt
+// succeeded or failed - a "failed" outcome needs a human-readable reason
+// so it's visible on the Scanner Agents page (update_failure_reason).
+func (c *Client) ReportUpdateOutcome(ctx context.Context, succeeded bool, failureReason string) error {
+	var body map[string]string
+	if succeeded {
+		body = map[string]string{"status": "succeeded"}
+	} else {
+		body = map[string]string{"status": "failed", "reason": failureReason}
+	}
+	return c.doJSON(ctx, http.MethodPatch, "/api/ingest/update-outcome", body, nil)
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, body any, out any) error {

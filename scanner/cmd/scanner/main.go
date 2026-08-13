@@ -19,6 +19,7 @@ import (
 	"porttorch/scanner/internal/pipeline"
 	"porttorch/scanner/internal/progress"
 	"porttorch/scanner/internal/tui"
+	"porttorch/scanner/internal/updater"
 	"porttorch/scanner/internal/version"
 )
 
@@ -131,6 +132,12 @@ func newServeCmd(configPath *string) *cobra.Command {
 			go server.StartCancelWatcher(context.Background(), pollInterval)
 			log.Info("scan cancellation watcher started", "event", "serve.cancel_watcher_started", "poll_interval", pollInterval.String())
 
+			// Only "serve" mode has any persistent polling loop at all, so
+			// self-update - like cancellation - only ever applies here,
+			// never to the one-shot "scan"/"menu" processes.
+			go updater.StartUpdateWatcher(context.Background(), c, server, pollInterval, log)
+			log.Info("scanner update watcher started", "event", "serve.update_watcher_started", "poll_interval", pollInterval.String())
+
 			log.Info("scanner api started", "event", "serve.started", "listen_addr", listenAddr)
 			return server.Start(listenAddr)
 		},
@@ -198,7 +205,9 @@ func runScan(configPath, target, ports string) error {
 	var tallyMu sync.Mutex
 	var hostsSubmitted, openPorts, screenshots, rdpScreenshots, tlsCertificates int
 
-	result, scanErr := pipeline.RunScan(ctx, cfg.Pipeline(), target, ports, excludes, probeHostnames,
+	// nil nseScripts: the one-shot scan CLI has no scan-profile concept -
+	// always runs DefaultNSEScripts, same as before this feature existed.
+	result, scanErr := pipeline.RunScan(ctx, cfg.Pipeline(), target, ports, excludes, probeHostnames, nil,
 		func(stage, message string) {
 			log.Info(message, "event", "scan.progress", "scan_job_id", jobID, "stage", stage)
 			tracker.Progress(stage, message)

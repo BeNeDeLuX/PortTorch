@@ -65,7 +65,9 @@ func runScanCmd(c *client.Client, pcfg pipeline.Config, jobID, target, ports str
 		tracker := scanprogress.NewTracker(c, jobID, scanprogress.DefaultPushInterval)
 		defer tracker.Close()
 
-		result, scanErr := pipeline.RunScan(context.Background(), pcfg, target, ports, excludes, probeHostnames,
+		// nil nseScripts: the menu TUI has no scan-profile concept - always
+		// runs DefaultNSEScripts, same as before this feature existed.
+		result, scanErr := pipeline.RunScan(context.Background(), pcfg, target, ports, excludes, probeHostnames, nil,
 			func(stage, message string) {
 				progressCh <- progressMsg{stage: stage, message: message}
 				tracker.Progress(stage, message)

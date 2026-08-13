@@ -42,6 +42,7 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
         {me.role === "admin" && <NavLink to="/audit">Audit</NavLink>}
         {me.role === "admin" && <NavLink to="/excludes">Excludes</NavLink>}
         {me.role === "admin" && <NavLink to="/api-tokens">API Tokens</NavLink>}
+        {me.role === "admin" && <NavLink to="/scan-profiles">Scan Profiles</NavLink>}
       </nav>
     </>
   );

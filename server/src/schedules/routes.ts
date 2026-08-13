@@ -7,6 +7,7 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { isValidCronExpression, nextCronRun } from "../lib/cron";
+import { ScanProfileNotFoundError, resolveNSEProfile } from "../scanProfiles/resolve";
 
 export const schedulesRouter = Router();
 schedulesRouter.use(requireAuth);
@@ -30,6 +31,9 @@ schedulesRouter.get("/", asyncHandler(async (req, res) => {
       "scan_schedules.last_run_at as last_run_at",
       "scan_schedules.created_by as created_by",
       "scan_schedules.created_at as created_at",
+      "scan_schedules.nse_profile as nse_profile",
+      "scan_schedules.nse_scripts as nse_scripts",
+      "scan_schedules.nse_profile_label as nse_profile_label",
       "scanner_agents.name as scanner_agent_name",
     ]);
 
@@ -41,10 +45,18 @@ schedulesRouter.get("/", asyncHandler(async (req, res) => {
   res.json(schedules);
 }));
 
+const nseProfileSelectionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("default") }),
+  z.object({ kind: z.literal("all_safe") }),
+  z.object({ kind: z.literal("custom"), profileId: z.string().uuid() }),
+]);
+
 const baseScheduleFields = {
   scannerAgentId: z.string().uuid(),
   targetSpec: z.string().min(1),
   portSpec: z.string().min(1),
+  // Omitted = Default, same as every scan-profile picker elsewhere.
+  profile: nseProfileSelectionSchema.optional(),
 };
 
 const createScheduleSchema = z.discriminatedUnion("scheduleType", [
@@ -79,6 +91,17 @@ schedulesRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
     return;
   }
 
+  let resolvedProfile;
+  try {
+    resolvedProfile = await resolveNSEProfile(parsed.data.profile ?? { kind: "default" });
+  } catch (err) {
+    if (err instanceof ScanProfileNotFoundError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    throw err;
+  }
+
   // The interval type's next_run_at can rely on the column default (now())
   // for an immediate first run, but a cron schedule's first run is whatever
   // the expression's own next occurrence actually is - "now" would be
@@ -99,6 +122,9 @@ schedulesRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
         : parsed.data.scheduleType === "once"
           ? { next_run_at: parsed.data.runAt }
           : {}),
+      nse_profile: resolvedProfile.nseProfile,
+      nse_scripts: resolvedProfile.nseScripts,
+      nse_profile_label: resolvedProfile.nseProfileLabel,
       created_by: req.session.username ?? null,
     })
     .returning(["id"])
@@ -144,6 +170,9 @@ const updateScheduleSchema = z.object({
   portSpec: z.string().min(1).optional(),
   scannerAgentId: z.string().uuid().optional(),
   runAt: z.string().datetime().optional(),
+  // Omitted = leave unchanged, same discipline as every other optional
+  // field here.
+  profile: nseProfileSelectionSchema.optional(),
 });
 
 schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
@@ -163,7 +192,8 @@ schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
     parsed.data.targetSpec === undefined &&
     parsed.data.portSpec === undefined &&
     parsed.data.scannerAgentId === undefined &&
-    parsed.data.runAt === undefined
+    parsed.data.runAt === undefined &&
+    parsed.data.profile === undefined
   ) {
     res.status(400).json({ error: "nothing to update" });
     return;
@@ -200,6 +230,19 @@ schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
   if (parsed.data.runAt !== undefined && existing.schedule_type !== "once") {
     res.status(400).json({ error: `this schedule is ${existing.schedule_type}-based - runAt doesn't apply` });
     return;
+  }
+
+  let resolvedProfile: Awaited<ReturnType<typeof resolveNSEProfile>> | undefined;
+  if (parsed.data.profile !== undefined) {
+    try {
+      resolvedProfile = await resolveNSEProfile(parsed.data.profile);
+    } catch (err) {
+      if (err instanceof ScanProfileNotFoundError) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
+      throw err;
+    }
   }
 
   let scannerAgentName: string | null = null;
@@ -274,6 +317,13 @@ schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
       ...(parsed.data.scannerAgentId !== undefined ? { scanner_agent_id: parsed.data.scannerAgentId } : {}),
       ...(parsed.data.runAt !== undefined ? { run_at: parsed.data.runAt } : {}),
       ...(nextRunAt !== undefined ? { next_run_at: nextRunAt } : {}),
+      ...(resolvedProfile !== undefined
+        ? {
+            nse_profile: resolvedProfile.nseProfile,
+            nse_scripts: resolvedProfile.nseScripts,
+            nse_profile_label: resolvedProfile.nseProfileLabel,
+          }
+        : {}),
     })
     .where("id", "=", req.params.id)
     .executeTakeFirst();

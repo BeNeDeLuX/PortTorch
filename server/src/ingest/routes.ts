@@ -148,6 +148,103 @@ ingestRouter.get("/scan-jobs/:id/cancel-requested", asyncHandler(async (req, res
   res.json({ cancelRequested: job.cancel_requested_at !== null });
 }));
 
+// Polled by "serve" mode's update watcher (scanner/internal/updater) - the
+// webserver can never push to a scanner (see CLAUDE.md's "Why two
+// separate services"), so self-update starts here. Scoped implicitly to
+// the authenticated agent (req.scannerAgentId) - the scanner never needs
+// to know its own scanner_agents.id.
+ingestRouter.get("/update-requested", asyncHandler(async (req, res) => {
+  const agent = await db
+    .selectFrom("scanner_agents")
+    .select(["update_requested_at"])
+    .where("id", "=", req.scannerAgentId!)
+    .executeTakeFirstOrThrow();
+  res.json({ requested: agent.update_requested_at !== null });
+}));
+
+// The cached latest-release row (see scannerUpdate/githubSync.ts) - the
+// scanner needs this to know *which* version to actually fetch/verify.
+ingestRouter.get("/scanner-release", asyncHandler(async (req, res) => {
+  const release = await db
+    .selectFrom("scanner_release_cache")
+    .select(["latest_version", "latest_tag", "release_url"])
+    .where("id", "=", 1)
+    .executeTakeFirstOrThrow();
+  res.json({
+    latestVersion: release.latest_version,
+    latestTag: release.latest_tag,
+    releaseUrl: release.release_url,
+  });
+}));
+
+const updateOutcomeSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("succeeded") }),
+  z.object({ status: z.literal("failed"), reason: z.string().min(1) }),
+]);
+
+// A "failed" outcome increments update_attempt_count; after 3 failures the
+// request is given up on (cleared, status set to 'failed') rather than
+// retried forever - re-triggering requires an explicit admin action
+// (POST /api/agents/:id/request-update), same as any other terminal
+// failure state elsewhere in this codebase (scan_schedules' 'once' type,
+// etc.) not silently auto-retrying past a point.
+const MAX_UPDATE_ATTEMPTS = 3;
+
+ingestRouter.patch("/update-outcome", asyncHandler(async (req, res) => {
+  const parsed = updateOutcomeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  if (parsed.data.status === "succeeded") {
+    await db
+      .updateTable("scanner_agents")
+      .set({ update_requested_at: null, update_request_status: null, update_failure_reason: null, update_attempt_count: 0 })
+      .where("id", "=", req.scannerAgentId!)
+      .execute();
+    logger.info({ event: "scanner.update_succeeded", scanner_agent_id: req.scannerAgentId, scanner_agent_name: req.scannerAgentName });
+    res.status(204).end();
+    return;
+  }
+
+  const agent = await db
+    .selectFrom("scanner_agents")
+    .select(["update_attempt_count"])
+    .where("id", "=", req.scannerAgentId!)
+    .executeTakeFirstOrThrow();
+  const attempts = agent.update_attempt_count + 1;
+
+  if (attempts >= MAX_UPDATE_ATTEMPTS) {
+    await db
+      .updateTable("scanner_agents")
+      .set({
+        update_requested_at: null,
+        update_request_status: "failed",
+        update_failure_reason: parsed.data.reason,
+        update_attempt_count: attempts,
+      })
+      .where("id", "=", req.scannerAgentId!)
+      .execute();
+  } else {
+    await db
+      .updateTable("scanner_agents")
+      .set({ update_request_status: "pending", update_failure_reason: parsed.data.reason, update_attempt_count: attempts })
+      .where("id", "=", req.scannerAgentId!)
+      .execute();
+  }
+
+  logger.info({
+    event: "scanner.update_failed",
+    scanner_agent_id: req.scannerAgentId,
+    scanner_agent_name: req.scannerAgentName,
+    attempt: attempts,
+    reason: parsed.data.reason,
+    gave_up: attempts >= MAX_UPDATE_ATTEMPTS,
+  });
+  res.status(204).end();
+}));
+
 const progressLogLineSchema = z.object({
   time: z.string(),
   stage: z.string(),
@@ -661,6 +758,8 @@ ingestRouter.get("/scan-requests/next", asyncHandler(async (req, res) => {
     id: string;
     target_spec: string;
     port_spec: string;
+    nse_profile: string;
+    nse_scripts: string[] | null;
   }>`
     UPDATE scan_requests
     SET status = 'claimed', claimed_at = now()
@@ -671,7 +770,7 @@ ingestRouter.get("/scan-requests/next", asyncHandler(async (req, res) => {
       FOR UPDATE SKIP LOCKED
       LIMIT 1
     )
-    RETURNING id, target_spec, port_spec
+    RETURNING id, target_spec, port_spec, nse_profile, nse_scripts
   `.execute(db);
 
   const next = claimed.rows[0];
@@ -689,7 +788,15 @@ ingestRouter.get("/scan-requests/next", asyncHandler(async (req, res) => {
     port_spec: next.port_spec,
   });
 
-  res.json({ id: next.id, targetSpec: next.target_spec, portSpec: next.port_spec });
+  // nse_profile_label is display-only and never needed by the scanner -
+  // not included here.
+  res.json({
+    id: next.id,
+    targetSpec: next.target_spec,
+    portSpec: next.port_spec,
+    nseProfile: next.nse_profile,
+    nseScripts: next.nse_scripts,
+  });
 }));
 
 const completeScanRequestSchema = z.object({

@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { NSEProfileSelection, ScanProfileNotFoundError, resolveNSEProfile } from "./scanProfiles/resolve";
 
 export type RescanOutcome =
   | { ok: true; request: { id: string; status: string; created_at: Date | string } }
@@ -9,7 +10,15 @@ export type RescanOutcome =
 // exact same "infer port spec from currently known open ports, use
 // whichever scanner last scanned this host" logic, so it lives in one
 // place rather than risking the two callers drifting apart.
-export async function requestRescan(hostId: string, requestedBy: string | null): Promise<RescanOutcome> {
+//
+// profile defaults to Default so the External API's rescan endpoint
+// (which never sends one - a scan-profile picker was never asked for
+// there) keeps behaving exactly as before this feature existed.
+export async function requestRescan(
+  hostId: string,
+  requestedBy: string | null,
+  profile: NSEProfileSelection = { kind: "default" }
+): Promise<RescanOutcome> {
   const host = await db.selectFrom("hosts").select(["id", "ip"]).where("id", "=", hostId).executeTakeFirst();
   if (!host) {
     return { ok: false, status: 404, error: "host not found" };
@@ -47,6 +56,16 @@ export async function requestRescan(hostId: string, requestedBy: string | null):
     return { ok: false, status: 400, error: "the scanner that last scanned this host no longer exists" };
   }
 
+  let resolvedProfile;
+  try {
+    resolvedProfile = await resolveNSEProfile(profile);
+  } catch (err) {
+    if (err instanceof ScanProfileNotFoundError) {
+      return { ok: false, status: 400, error: err.message };
+    }
+    throw err;
+  }
+
   const request = await db
     .insertInto("scan_requests")
     .values({
@@ -55,6 +74,9 @@ export async function requestRescan(hostId: string, requestedBy: string | null):
       target_spec: host.ip,
       port_spec: portSpec,
       requested_by: requestedBy,
+      nse_profile: resolvedProfile.nseProfile,
+      nse_scripts: resolvedProfile.nseScripts,
+      nse_profile_label: resolvedProfile.nseProfileLabel,
     })
     .returning(["id", "status", "created_at"])
     .executeTakeFirstOrThrow();

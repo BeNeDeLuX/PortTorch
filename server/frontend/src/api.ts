@@ -382,6 +382,19 @@ export interface ScannerAgent {
   version: string | null;
   created_at: string;
   revoked_at: string | null;
+  // Self-update (see the "Update" button on the Scanner Agents page) -
+  // update_requested_at set means an update is outstanding;
+  // update_request_status is null except while pending or after
+  // exhausting its retries ('failed', with update_failure_reason set).
+  update_requested_at: string | null;
+  update_request_status: "pending" | "failed" | null;
+  update_failure_reason: string | null;
+}
+
+export interface ScannerReleaseInfo {
+  latestVersion: string | null;
+  latestTag: string | null;
+  releaseUrl: string | null;
 }
 
 export interface ActiveScanJob {
@@ -454,6 +467,22 @@ export interface ApiTokenWithSecret extends ApiToken {
   token: string;
 }
 
+// A scan-profile pick - which NSE scripts a scan actually runs. "default"
+// is today's unchanged hardcoded list, "all_safe" is a broader,
+// still-safe nmap category (both resolved entirely scanner-side, see
+// CLAUDE.md's Scan Profiles section - the webserver never needs to know
+// their contents), "custom" points at a named, admin-managed ScanProfile.
+export type NSEProfileSelection = { kind: "default" } | { kind: "all_safe" } | { kind: "custom"; profileId: string };
+
+export interface ScanProfile {
+  id: string;
+  name: string;
+  nse_scripts: string[];
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Schedule {
   id: string;
   scanner_agent_id: string;
@@ -469,6 +498,9 @@ export interface Schedule {
   created_by: string | null;
   created_at: string;
   scanner_agent_name: string | null;
+  nse_profile: "default" | "all_safe" | "custom";
+  nse_scripts: string[] | null;
+  nse_profile_label: string | null;
 }
 
 export interface ScanHistoryEntry {
@@ -562,7 +594,8 @@ export const api = {
   facets: (filters: HostFilters = {}) => request<Facets>(`/api/hosts/facets${hostsQueryString(filters)}`),
   allPortFacets: (filters: HostFilters = {}) => request<Facets["ports"]>(`/api/hosts/facets/ports${hostsQueryString(filters)}`),
   host: (id: string) => request<HostDetail>(`/api/hosts/${id}`),
-  rescan: (id: string) => request<ScanRequest>(`/api/hosts/${id}/rescan`, { method: "POST" }),
+  rescan: (id: string, profile: NSEProfileSelection = { kind: "default" }) =>
+    request<ScanRequest>(`/api/hosts/${id}/rescan`, { method: "POST", body: JSON.stringify({ profile }) }),
   dismissRescan: (id: string) => request<void>(`/api/hosts/${id}/rescan/dismiss`, { method: "POST" }),
   addHostTag: (id: string, tag: string) =>
     request<{ tag: string }>(`/api/hosts/${id}/tags`, { method: "POST", body: JSON.stringify({ tag }) }),
@@ -594,6 +627,8 @@ export const api = {
     ),
 
   agents: () => request<ScannerAgent[]>("/api/agents"),
+  latestScannerRelease: () => request<ScannerReleaseInfo>("/api/agents/latest-release"),
+  requestScannerUpdate: (id: string) => request<void>(`/api/agents/${id}/request-update`, { method: "POST" }),
   activeScanJobs: () => request<ActiveScanJob[]>("/api/scan-jobs/active"),
   scanJobProgress: (id: string) => request<ScanJobProgress>(`/api/scan-jobs/${id}/progress`),
   scanQueue: () => request<QueuedScanRequest[]>("/api/scan-jobs/queue"),
@@ -629,10 +664,11 @@ export const api = {
 
   schedules: () => request<Schedule[]>("/api/schedules"),
   createSchedule: (
-    input:
+    input: (
       | { scheduleType: "interval"; scannerAgentId: string; targetSpec: string; portSpec: string; intervalMinutes: number }
       | { scheduleType: "cron"; scannerAgentId: string; targetSpec: string; portSpec: string; cronExpression: string }
       | { scheduleType: "once"; scannerAgentId: string; targetSpec: string; portSpec: string; runAt: string }
+    ) & { profile?: NSEProfileSelection }
   ) => request<{ id: string }>("/api/schedules", { method: "POST", body: JSON.stringify(input) }),
   setScheduleEnabled: (id: string, enabled: boolean) =>
     request<void>(`/api/schedules/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
@@ -645,9 +681,17 @@ export const api = {
       intervalMinutes?: number;
       cronExpression?: string;
       runAt?: string;
+      profile?: NSEProfileSelection;
     }
   ) => request<void>(`/api/schedules/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteSchedule: (id: string) => request<void>(`/api/schedules/${id}`, { method: "DELETE" }),
+
+  scanProfiles: () => request<ScanProfile[]>("/api/scan-profiles"),
+  createScanProfile: (name: string, nseScripts: string[]) =>
+    request<ScanProfile>("/api/scan-profiles", { method: "POST", body: JSON.stringify({ name, nseScripts }) }),
+  updateScanProfile: (id: string, patch: { name?: string; nseScripts?: string[] }) =>
+    request<ScanProfile>(`/api/scan-profiles/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteScanProfile: (id: string) => request<void>(`/api/scan-profiles/${id}`, { method: "DELETE" }),
 
   users: () => request<DashboardUser[]>("/api/users"),
   createUser: (input: { username: string; password: string; role: string; scannerAgentIds?: string[] }) =>

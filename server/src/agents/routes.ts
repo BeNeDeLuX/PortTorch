@@ -8,15 +8,44 @@ import { hashApiKey } from "../ingest/apiKeyAuth";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
+import { requestScannerUpdate } from "../scannerUpdate/requestUpdate";
 
 export const agentsRouter = Router();
 agentsRouter.use(requireAuth);
+
+// The cached latest scanner-vX.Y.Z release (see scannerUpdate/githubSync.ts)
+// - read-only fleet info, not admin-gated (same access level as the agent
+// list itself), so the Scanner Agents page can show every viewer which
+// version is current even though only an admin can trigger an update.
+agentsRouter.get("/latest-release", asyncHandler(async (req, res) => {
+  const release = await db
+    .selectFrom("scanner_release_cache")
+    .select(["latest_version", "latest_tag", "release_url"])
+    .where("id", "=", 1)
+    .executeTakeFirstOrThrow();
+  res.json({
+    latestVersion: release.latest_version,
+    latestTag: release.latest_tag,
+    releaseUrl: release.release_url,
+  });
+}));
 
 agentsRouter.get("/", asyncHandler(async (req, res) => {
   const allowed = getAllowedScannerAgentIds(req);
   let query = db
     .selectFrom("scanner_agents")
-    .select(["id", "name", "last_seen_at", "last_seen_ip", "version", "created_at", "revoked_at"]);
+    .select([
+      "id",
+      "name",
+      "last_seen_at",
+      "last_seen_ip",
+      "version",
+      "created_at",
+      "revoked_at",
+      "update_requested_at",
+      "update_request_status",
+      "update_failure_reason",
+    ]);
   if (allowed) {
     query = query.where("id", "in", allowed);
   }
@@ -82,6 +111,34 @@ agentsRouter.post("/:id/revoke", requireAdmin, asyncHandler(async (req, res) => 
     source_ip: req.ip,
   });
   recordAudit("agent.revoked", req.session.username, req.ip, { scanner_agent_id: req.params.id, name: result.name });
+
+  res.status(204).end();
+}));
+
+// Flags the agent for its own update watcher (serve mode only, see
+// scanner/internal/updater) to notice on its next poll - the webserver
+// can never push to a scanner directly. 409 if already revoked or an
+// update is already outstanding (requestScannerUpdate re-checks both,
+// not trusted from the frontend's last poll).
+agentsRouter.post("/:id/request-update", requireAdmin, asyncHandler(async (req, res) => {
+  if (!uuidSchema.safeParse(req.params.id).success) {
+    res.status(400).json({ error: "invalid scanner agent id" });
+    return;
+  }
+
+  const outcome = await requestScannerUpdate(req.params.id as string);
+  if (!outcome.ok) {
+    res.status(outcome.status).json({ error: outcome.error });
+    return;
+  }
+
+  logger.info({
+    event: "agent.update_requested",
+    scanner_agent_id: req.params.id,
+    requested_by: req.session.username,
+    source_ip: req.ip,
+  });
+  recordAudit("agent.update_requested", req.session.username, req.ip, { scanner_agent_id: req.params.id });
 
   res.status(204).end();
 }));

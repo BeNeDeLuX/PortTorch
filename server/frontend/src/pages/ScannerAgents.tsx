@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
-import { ActiveScanJob, api, Me, QueuedScanRequest, ScannerAgent } from "../api";
-import { IconBan, IconCheck, IconInfo, IconPlus, IconStop, IconTrash, IconX } from "../components/icons";
+import { ActiveScanJob, api, Me, QueuedScanRequest, ScannerAgent, ScannerReleaseInfo } from "../api";
+import { IconBan, IconCheck, IconInfo, IconPlus, IconRocket, IconStop, IconTrash, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanProgressModal from "../components/ScanProgressModal";
@@ -9,6 +9,39 @@ import { elapsedLabel } from "../lib/elapsed";
 
 type SortKey = "name" | "last_seen_at" | "last_seen_ip" | "version" | "current_scan" | "created_at";
 type SortDirection = "asc" | "desc";
+
+// Plain X.Y.Z numeric compare, mirroring the webserver's own
+// scannerUpdate/githubSync.ts compareSemver and the scanner's own
+// internal/updater compareSemver exactly - same "no pre-release/build-
+// metadata suffix" assumption, since neither this project's version.go
+// nor its scanner-vX.Y.Z release tags ever use one.
+function compareSemver(a: string, b: string): number {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
+  }
+  return 0;
+}
+
+function isVersionBehind(current: string | null, latest: string | null): boolean {
+  if (!current || !latest) return false;
+  return compareSemver(latest, current) > 0;
+}
+
+// The "Update" button's own imperfect, documented heuristic for "this
+// agent is actually running in serve mode right now" - scanner_agents has
+// no explicit flag for that, and only serve mode runs the update watcher
+// that can ever act on a request. A recent last_seen_at is a reasonable
+// proxy (every serve-mode request, including the update watcher's own
+// polls, refreshes it) - a false positive here just means the button does
+// nothing until the agent's next poll interval, not anything harmful.
+const RECENTLY_SEEN_THRESHOLD_MS = 5 * 60_000;
+
+function looksLikeServeMode(a: ScannerAgent): boolean {
+  if (!a.last_seen_at) return false;
+  return Date.now() - new Date(a.last_seen_at).getTime() < RECENTLY_SEEN_THRESHOLD_MS;
+}
 
 type QueueSortKey = "target_spec" | "port_spec" | "scanner_agent_name" | "host" | "requested_by" | "created_at";
 
@@ -87,6 +120,7 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
   const [detailsJobId, setDetailsJobId] = useState<string | null>(null);
   const [scanQueue, setScanQueue] = useState<QueuedScanRequest[]>([]);
   const [queueScannerFilterIds, setQueueScannerFilterIds] = useState<string[]>([]);
+  const [latestRelease, setLatestRelease] = useState<ScannerReleaseInfo | null>(null);
   // Forces a re-render every few seconds so elapsedLabel's "running for
   // Xm Ys" stays live between polls, not just when the job list changes.
   const [, setClockTick] = useState(0);
@@ -121,6 +155,10 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
 
   useEffect(() => {
     load();
+    api
+      .latestScannerRelease()
+      .then(setLatestRelease)
+      .catch(() => setLatestRelease(null));
   }, []);
 
   useEffect(() => {
@@ -202,6 +240,18 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
     await load();
   }
 
+  async function handleRequestUpdate(a: ScannerAgent) {
+    if (
+      !window.confirm(
+        `Request that "${a.name}" update itself to ${latestRelease?.latestVersion ?? "the latest version"}? It downloads, verifies, and applies the new binary on its own next poll, then resumes serving automatically - no restart needed.`
+      )
+    ) {
+      return;
+    }
+    await api.requestScannerUpdate(a.id);
+    await load();
+  }
+
   async function handleDelete(a: ScannerAgent) {
     if (
       !window.confirm(
@@ -240,12 +290,44 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
   );
 
   function sharedCells(a: ScannerAgent) {
+    const behind = isVersionBehind(a.version, latestRelease?.latestVersion ?? null);
     return (
       <>
         <td>{a.name}</td>
         <td>{a.last_seen_at ? formatDateTime(a.last_seen_at, me.preferences) : "never"}</td>
         <td>{a.last_seen_ip ?? "-"}</td>
-        <td>{a.version ?? "-"}</td>
+        <td>
+          {a.version ?? "-"}
+          {behind && (
+            <span className="host-meta"> → {latestRelease!.latestVersion} available</span>
+          )}
+        </td>
+      </>
+    );
+  }
+
+  // Shared by the Scanning/Idle actions cells below - not Revoked (a
+  // revoked agent can no longer authenticate at all, so it can never
+  // pick up an update request).
+  function updateActions(a: ScannerAgent) {
+    const behind = isVersionBehind(a.version, latestRelease?.latestVersion ?? null);
+    return (
+      <>
+        {behind && looksLikeServeMode(a) && !a.update_requested_at && (
+          <button className="btn-icon-label" onClick={() => handleRequestUpdate(a)}>
+            <IconRocket /> Update
+          </button>
+        )}
+        {a.update_requested_at && a.update_request_status !== "failed" && (
+          <span className="stale-badge" title="Waiting for this scanner to pick up the update on its next poll">
+            update pending
+          </span>
+        )}
+        {a.update_request_status === "failed" && (
+          <span className="update-failed-badge" title={a.update_failure_reason ?? "Update failed"}>
+            update failed
+          </span>
+        )}
       </>
     );
   }
@@ -347,6 +429,7 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
                                 <IconStop /> {activeJob.cancel_requested ? "Stopping..." : "Stop"}
                               </button>
                             )}
+                            {isAdmin && updateActions(a)}
                             {isAdmin && (
                               <button className="btn-icon-label" onClick={() => handleRevoke(a)}>
                                 <IconBan /> Revoke
@@ -440,6 +523,7 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
                     {isAdmin && (
                       <td>
                         <div className="actions-cell">
+                          {updateActions(a)}
                           <button className="btn-icon-label" onClick={() => handleRevoke(a)}>
                             <IconBan /> Revoke
                           </button>

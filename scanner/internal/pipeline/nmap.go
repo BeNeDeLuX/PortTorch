@@ -104,6 +104,16 @@ type nmapPort struct {
 // single host. When running as root, it also attempts OS/device-type
 // fingerprinting (-O).
 //
+// The specific script list documented below (banner, ssh-hostkey,
+// ftp-anon, ...) is DefaultNSEScripts, one of three scan-profile choices
+// (see nse_default_scripts.go/nse_safe_scripts.go) - RunNmap's own
+// nseScripts parameter lets a caller substitute AllSafeNSEScripts or a
+// user-authored Custom list instead; nil/empty falls back to exactly this
+// Default list, so every caller written before the scan-profile feature
+// existed is unaffected. This doc comment's per-script rationale below
+// still applies unchanged to Default - it just isn't the only option
+// anymore.
+//
 // Also runs "ftp-anon" (checks whether anonymous/guest FTP login is
 // allowed and, if so, lists the root directory) and "smb-enum-shares"
 // (lists SMB shares visible over an anonymous/guest session). Both are in
@@ -239,7 +249,14 @@ type nmapPort struct {
 // already requires the same raw-socket capability just to run at all
 // (RunMasscan below), so if this function is reached with any ports to
 // scan, that capability is already known to be present.
-func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult) (*HostResult, error) {
+// nseScripts is the resolved NSE script list for the "Default"/"All Safe
+// Modules"/"Custom" scan-profile feature (see nse_default_scripts.go/
+// nse_safe_scripts.go) - nil or empty reproduces exactly the historical,
+// unconfigurable behavior (DefaultNSEScripts), so every caller that
+// doesn't know about profiles (the one-shot scan CLI, the menu TUI, the
+// scanner's own local serve REST API, and any scan_requests/scan_schedules
+// row created before this feature existed) keeps working unchanged.
+func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult, nseScripts []string) (*HostResult, error) {
 	if len(ports) == 0 {
 		return &HostResult{IP: ip}, nil
 	}
@@ -249,16 +266,13 @@ func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult) (*Host
 		portList[i] = strconv.Itoa(p.Port)
 	}
 
+	scripts := nseScripts
+	if len(scripts) == 0 {
+		scripts = DefaultNSEScripts
+	}
 	args := []string{
 		"-Pn", "-R", "--privileged",
-		"-sV", "--script=banner,ssh-hostkey,ftp-anon,smb-enum-shares," +
-			"smb-os-discovery,nbstat,smb-protocols,smb-security-mode,smb2-security-mode," +
-			"nfs-showmount,rsync-list-modules,ldap-rootdse," +
-			"mongodb-info,mongodb-databases,redis-info,mysql-info,memcached-info,oracle-tns-version," +
-			"docker-version,couchdb-databases,cassandra-info,smtp-open-relay," +
-			"http-methods,http-auth,http-git," +
-			"rdp-ntlm-info,rdp-enum-encryption,ssh2-enum-algos,sshv1," +
-			"rpcinfo,msrpc-enum",
+		"-sV", "--script=" + strings.Join(scripts, ","),
 	}
 	if os.Geteuid() == 0 {
 		args = append(args, "-O")
