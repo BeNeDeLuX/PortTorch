@@ -15,6 +15,13 @@ export interface NavGroupItem {
 export default function NavGroup({ label, items }: { label: string; items: NavGroupItem[] }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  // Closing on mouseleave is delayed slightly rather than instant - the
+  // panel sits a few pixels below the toggle (see .nav-group-panel's
+  // "top: calc(100% + 0.6rem)" in styles.css), and moving the mouse
+  // diagonally from toggle to panel briefly crosses that gap, which
+  // would otherwise register as leaving .nav-group and close the panel
+  // before the pointer ever reaches it.
+  const closeTimer = useRef<number | null>(null);
   const location = useLocation();
 
   // Mirrors NavLink's own active-match closely enough for this purpose:
@@ -43,9 +50,37 @@ export default function NavGroup({ label, items }: { label: string; items: NavGr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
+  // Cancel any pending close if the component unmounts mid-delay (e.g.
+  // navigating away right as the mouse leaves) - avoids a setState call
+  // on an unmounted component.
+  useEffect(() => {
+    return () => {
+      if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
+    };
+  }, []);
+
+  function openNow() {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+    setOpen(true);
+  }
+
+  function closeSoon() {
+    closeTimer.current = window.setTimeout(() => {
+      setOpen(false);
+      closeTimer.current = null;
+    }, 150);
+  }
+
   return (
-    <div className="nav-group" ref={ref}>
-      <button type="button" className={`nav-group-toggle${isActive ? " active" : ""}`} onClick={() => setOpen((o) => !o)}>
+    <div className="nav-group" ref={ref} onMouseEnter={openNow} onMouseLeave={closeSoon}>
+      <button
+        type="button"
+        className={`nav-group-toggle${isActive ? " active" : ""}`}
+        onClick={() => setOpen((o) => !o)}
+      >
         {label}
         <span className="nav-group-caret">▾</span>
       </button>
