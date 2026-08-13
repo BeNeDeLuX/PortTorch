@@ -37,7 +37,12 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
             { to: "/agents", label: "Scanner Agents" },
             { to: "/schedules", label: "Schedule Scans" },
             { to: "/scan-history", label: "Scan History" },
-            ...(me.role === "admin" ? [{ to: "/scan-profiles", label: "Scan Profiles" }] : []),
+            ...(me.role === "admin"
+              ? [
+                  { to: "/scan-profiles", label: "Scan Profiles" },
+                  { to: "/excludes", label: "Excludes" },
+                ]
+              : []),
           ]}
         />
         <NavLink to="/certificates">Certificates</NavLink>
@@ -51,7 +56,6 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
               { to: "/webhooks", label: "Webhooks" },
               { to: "/users", label: "Users" },
               { to: "/audit", label: "Audit" },
-              { to: "/excludes", label: "Excludes" },
               { to: "/api-tokens", label: "API Tokens" },
               { to: "/settings", label: "Settings" },
             ]}
