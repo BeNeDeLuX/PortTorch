@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, Me, Webhook, WebhookChannelType, WebhookEvent } from "../api";
-import { IconPause, IconPlay, IconPlus, IconSend, IconTrash } from "../components/icons";
+import { IconInfo, IconPause, IconPlay, IconPlus, IconSend, IconTrash } from "../components/icons";
 import PageHeader from "../components/PageHeader";
+import WebhookDeliveriesModal from "../components/WebhookDeliveriesModal";
 
 const CHANNEL_LABELS: Record<WebhookChannelType, string> = {
   webhook: "Webhook",
@@ -34,6 +35,7 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
   const [error, setError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [historyWebhook, setHistoryWebhook] = useState<Webhook | null>(null);
 
   useEffect(() => {
     load();
@@ -167,6 +169,7 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
               <th>Target</th>
               <th>Events</th>
               <th>Status</th>
+              <th></th>
               {isAdmin && <th></th>}
             </tr>
           </thead>
@@ -178,6 +181,11 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
                 <td className="banner">{w.channel_type === "email" ? w.email_to : w.url}</td>
                 <td>{w.events.join(", ")}</td>
                 <td>{w.enabled ? "active" : "paused"}</td>
+                <td>
+                  <button className="btn-icon-label" onClick={() => setHistoryWebhook(w)}>
+                    <IconInfo /> History
+                  </button>
+                </td>
                 {isAdmin && (
                   <td>
                     <button className="btn-icon-label" onClick={() => handleToggle(w)}>
@@ -204,6 +212,15 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
             ))}
           </tbody>
         </table>
+      )}
+
+      {historyWebhook && (
+        <WebhookDeliveriesModal
+          webhookId={historyWebhook.id}
+          webhookName={historyWebhook.name}
+          preferences={me.preferences}
+          onClose={() => setHistoryWebhook(null)}
+        />
       )}
     </div>
   );

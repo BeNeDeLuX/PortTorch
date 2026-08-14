@@ -4,7 +4,7 @@ import { db } from "../db";
 import { requireAuth, requireAdmin } from "../auth/middleware";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
-import { buildTeamsAdaptiveCardBody, WebhookEvent } from "./dispatch";
+import { buildTeamsAdaptiveCardBody, recordDelivery, WebhookEvent } from "./dispatch";
 import { sendEmailAlert } from "./email";
 import { recordAudit } from "../audit/log";
 
@@ -34,6 +34,25 @@ webhooksRouter.get("/", asyncHandler(async (_req, res) => {
     .orderBy("created_at", "desc")
     .execute();
   res.json(webhooks);
+}));
+
+// The most recent deliveries for one webhook (see dispatch.ts's
+// recordDelivery, which trims this to MAX_DELIVERIES_PER_WEBHOOK rows at
+// insert time) - same read access level as the webhook list itself
+// (requireAuth only, not requireAdmin), since seeing whether a webhook is
+// actually working isn't more sensitive than seeing that it exists.
+webhooksRouter.get("/:id/deliveries", asyncHandler(async (req, res) => {
+  if (!uuidSchema.safeParse(req.params.id).success) {
+    res.status(400).json({ error: "invalid webhook id" });
+    return;
+  }
+  const deliveries = await db
+    .selectFrom("webhook_deliveries")
+    .select(["id", "event", "success", "status_code", "error", "created_at"])
+    .where("webhook_id", "=", req.params.id)
+    .orderBy("created_at", "desc")
+    .execute();
+  res.json(deliveries);
 }));
 
 // Comma-joined list, same convention as every other multi-value field in
@@ -152,7 +171,8 @@ webhooksRouter.post("/:id/test", requireAdmin, asyncHandler(async (req, res) => 
     res.status(400).json({ error: "invalid webhook id" });
     return;
   }
-  const webhook = await db.selectFrom("webhooks").select(["channel_type", "url", "email_to"]).where("id", "=", req.params.id).executeTakeFirst();
+  const webhookId = req.params.id as string;
+  const webhook = await db.selectFrom("webhooks").select(["channel_type", "url", "email_to"]).where("id", "=", webhookId).executeTakeFirst();
   if (!webhook) {
     res.status(404).json({ error: "webhook not found" });
     return;
@@ -161,9 +181,12 @@ webhooksRouter.post("/:id/test", requireAdmin, asyncHandler(async (req, res) => 
   if (webhook.channel_type === "email") {
     try {
       await sendEmailAlert(webhook.email_to!, "PortTorch test notification", "PortTorch test notification");
+      await recordDelivery(webhookId, "test", true, null, null);
       res.json({ ok: true });
     } catch (err) {
-      res.json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+      const message = err instanceof Error ? err.message : String(err);
+      await recordDelivery(webhookId, "test", false, null, message);
+      res.json({ ok: false, error: message });
     }
     return;
   }
@@ -185,9 +208,12 @@ webhooksRouter.post("/:id/test", requireAdmin, asyncHandler(async (req, res) => 
       headers: { "Content-Type": "application/json" },
       body: testBody,
     });
+    await recordDelivery(webhookId, "test", testResponse.ok, testResponse.status, null);
     res.json({ ok: testResponse.ok, status: testResponse.status });
   } catch (err) {
-    res.json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    const message = err instanceof Error ? err.message : String(err);
+    await recordDelivery(webhookId, "test", false, null, message);
+    res.json({ ok: false, error: message });
   }
 }));
 

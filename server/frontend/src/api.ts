@@ -275,6 +275,15 @@ export interface Webhook {
   created_at: string;
 }
 
+export interface WebhookDelivery {
+  id: string;
+  event: string;
+  success: boolean;
+  status_code: number | null;
+  error: string | null;
+  created_at: string;
+}
+
 export interface DigestResult {
   from: string;
   to: string;
@@ -805,6 +814,7 @@ export const api = {
     request<void>(`/api/webhooks/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
   deleteWebhook: (id: string) => request<void>(`/api/webhooks/${id}`, { method: "DELETE" }),
   testWebhook: (id: string) => request<{ ok: boolean; status?: number; error?: string }>(`/api/webhooks/${id}/test`, { method: "POST" }),
+  webhookDeliveries: (id: string) => request<WebhookDelivery[]>(`/api/webhooks/${id}/deliveries`),
 
   excludes: () => request<ScanExclude[]>("/api/excludes"),
   createExclude: (kind: "ip" | "port" | "ip_port", value: string, scannerAgentId: string | null) =>

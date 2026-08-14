@@ -2,6 +2,50 @@ import { db } from "../db";
 import { logger } from "../logger";
 import { sendEmailAlert } from "./email";
 
+// Most recent deliveries kept per webhook (webhook_deliveries table) -
+// a diagnostic tail for the Webhooks page's "History" view, not a
+// permanent record, so it's trimmed at insert time rather than left to
+// grow forever like audit_log.
+const MAX_DELIVERIES_PER_WEBHOOK = 50;
+
+// Best-effort, like recordAudit - a failed write here must never affect
+// delivery itself, which has already happened (or failed) by the time
+// this is called. Exported so webhooks/routes.ts's "/test" endpoint can
+// record its own send too ("test" isn't a real WebhookEvent - it's the
+// same synthetic value that endpoint's own test payload already uses) -
+// without this, the one action an admin is most likely to check the
+// History modal right after (clicking "Test") would show nothing.
+export async function recordDelivery(
+  webhookId: string,
+  event: WebhookEvent | "test",
+  success: boolean,
+  statusCode: number | null,
+  error: string | null
+): Promise<void> {
+  try {
+    await db
+      .insertInto("webhook_deliveries")
+      .values({ webhook_id: webhookId, event, success, status_code: statusCode, error })
+      .execute();
+    await db
+      .deleteFrom("webhook_deliveries")
+      .where("webhook_id", "=", webhookId)
+      .where(
+        "id",
+        "not in",
+        db
+          .selectFrom("webhook_deliveries")
+          .select("id")
+          .where("webhook_id", "=", webhookId)
+          .orderBy("created_at", "desc")
+          .limit(MAX_DELIVERIES_PER_WEBHOOK)
+      )
+      .execute();
+  } catch (err) {
+    logger.warn({ event: "webhook.delivery_record_failed", webhook_id: webhookId, err: err instanceof Error ? err.message : String(err) });
+  }
+}
+
 export type WebhookEvent =
   | "host.new"
   | "port.opened"
@@ -90,15 +134,19 @@ export async function dispatchWebhook(event: WebhookEvent, message: string, data
   for (const channel of targets) {
     if (channel.channel_type === "email") {
       if (!channel.email_to) continue;
-      sendEmailAlert(channel.email_to, subject, message).catch((err) => {
-        logger.warn({
-          event: "webhook.delivery_failed",
-          webhook_id: channel.id,
-          webhook_event: event,
-          channel_type: "email",
-          error: err instanceof Error ? err.message : String(err),
+      sendEmailAlert(channel.email_to, subject, message)
+        .then(() => recordDelivery(channel.id, event, true, null, null))
+        .catch((err) => {
+          const errMessage = err instanceof Error ? err.message : String(err);
+          logger.warn({
+            event: "webhook.delivery_failed",
+            webhook_id: channel.id,
+            webhook_event: event,
+            channel_type: "email",
+            error: errMessage,
+          });
+          recordDelivery(channel.id, event, false, null, errMessage);
         });
-      });
       continue;
     }
 
@@ -112,14 +160,17 @@ export async function dispatchWebhook(event: WebhookEvent, message: string, data
         if (!res.ok) {
           logger.warn({ event: "webhook.delivery_failed", webhook_id: channel.id, webhook_event: event, status: res.status });
         }
+        recordDelivery(channel.id, event, res.ok, res.status, null);
       })
       .catch((err) => {
+        const errMessage = err instanceof Error ? err.message : String(err);
         logger.warn({
           event: "webhook.delivery_failed",
           webhook_id: channel.id,
           webhook_event: event,
-          error: err instanceof Error ? err.message : String(err),
+          error: errMessage,
         });
+        recordDelivery(channel.id, event, false, null, errMessage);
       });
   }
 }

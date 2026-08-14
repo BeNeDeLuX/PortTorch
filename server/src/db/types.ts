@@ -479,6 +479,20 @@ export interface WebhooksTable {
   created_at: ColumnType<Date, string | undefined, never>;
 }
 
+// One row per actual delivery attempt (webhooks/dispatch.ts) - trimmed to
+// the most recent rows per webhook_id at insert time, not kept forever
+// like audit_log, since this is a diagnostic tail for "is this webhook
+// actually working" rather than a permanent record.
+export interface WebhookDeliveriesTable {
+  id: Generated<string>;
+  webhook_id: string;
+  event: string;
+  success: boolean;
+  status_code: number | null;
+  error: string | null;
+  created_at: ColumnType<Date, string | undefined, never>;
+}
+
 // Singleton row (id always 1) of global, admin-configurable toggles that
 // don't belong to any one user's account - see settings/appSettings.ts.
 export interface AppSettingsTable {
@@ -519,6 +533,7 @@ export interface Database {
   kev_cache: KevCacheTable;
   digest_email_state: DigestEmailStateTable;
   webhooks: WebhooksTable;
+  webhook_deliveries: WebhookDeliveriesTable;
   audit_log: AuditLogTable;
   rdp_screenshots: RdpScreenshotsTable;
   scan_schedules: ScanSchedulesTable;
