@@ -580,11 +580,12 @@ export type HostsExportDetail = "host" | "port";
 // Same "plain <a href download>" export pattern as hostsExportUrl below -
 // exports every entry matching the current q/from/until filters, not
 // just the current page (no page/pageSize passed).
-export function auditExportUrl(q: string, from: string, until: string): string {
+export function auditExportUrl(q: string, from: string, until: string, events: string[] = []): string {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   if (from) params.set("from", from);
   if (until) params.set("until", until);
+  if (events.length) params.set("events", events.join(","));
   const qs = params.toString();
   return `/api/audit/export.csv${qs ? `?${qs}` : ""}`;
 }
@@ -657,12 +658,13 @@ export const api = {
     request<TrendsResult>(
       `/api/trends?days=${days}${scannerAgentIds.length ? `&scannerAgentId=${scannerAgentIds.join(",")}` : ""}`
     ),
-  audit: (page = 1, pageSize = 50, q = "", from = "", until = "") =>
+  audit: (page = 1, pageSize = 50, q = "", from = "", until = "", events: string[] = []) =>
     request<AuditListResult>(
       `/api/audit?page=${page}&pageSize=${pageSize}${q ? `&q=${encodeURIComponent(q)}` : ""}${
         from ? `&from=${from}` : ""
-      }${until ? `&until=${until}` : ""}`
+      }${until ? `&until=${until}` : ""}${events.length ? `&events=${events.join(",")}` : ""}`
     ),
+  auditEvents: () => request<string[]>("/api/audit/events"),
 
   agents: () => request<ScannerAgent[]>("/api/agents"),
   latestScannerRelease: () => request<ScannerReleaseInfo>("/api/agents/latest-release"),

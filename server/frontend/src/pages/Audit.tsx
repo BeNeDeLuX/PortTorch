@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { api, auditExportUrl, AuditEntry, Me } from "../api";
 import { IconDownload, IconSearch, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
+import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import { formatDateTime } from "../lib/formatDate";
 
 const PAGE_SIZE = 50;
@@ -42,16 +43,22 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
   const [until, setUntil] = useState("");
+  const [availableEvents, setAvailableEvents] = useState<string[]>([]);
+  const [selectedEvents, setSelectedEvents] = useState<string[]>([]);
 
   useEffect(() => {
-    load(page, q, from, until);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, q, from, until]);
+    api.auditEvents().then(setAvailableEvents).catch(() => setAvailableEvents([]));
+  }, []);
 
-  async function load(pageNum: number, query: string, fromDate: string, untilDate: string) {
+  useEffect(() => {
+    load(page, q, from, until, selectedEvents);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, q, from, until, selectedEvents]);
+
+  async function load(pageNum: number, query: string, fromDate: string, untilDate: string, events: string[]) {
     setLoading(true);
     try {
-      const result = await api.audit(pageNum, PAGE_SIZE, query, fromDate, untilDate);
+      const result = await api.audit(pageNum, PAGE_SIZE, query, fromDate, untilDate, events);
       setEntries(result.items);
       setTotal(result.total);
     } finally {
@@ -71,6 +78,7 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
     setQ("");
     setFrom("");
     setUntil("");
+    setSelectedEvents([]);
   }
 
   return (
@@ -88,17 +96,33 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
         <button type="submit" className="btn-icon-label">
           <IconSearch /> Search
         </button>
-        {(q || from || until) && (
+        {(q || from || until || selectedEvents.length > 0) && (
           <button type="button" className="btn-icon-label" onClick={clearQuery}>
             <IconX /> Clear
           </button>
         )}
-        <a className="export-link btn-icon-label push-right" href={auditExportUrl(q, from, until)} download>
+        <a
+          className="export-link btn-icon-label push-right"
+          href={auditExportUrl(q, from, until, selectedEvents)}
+          download
+        >
           <IconDownload /> Export
         </a>
       </form>
 
       <div className="list-controls-filters">
+        <label className="hide-empty-toggle">
+          Event
+          <ScannerMultiSelect
+            agents={availableEvents.map((e) => ({ id: e, name: e }))}
+            selectedIds={selectedEvents}
+            onChange={(ids) => {
+              setPage(1);
+              setSelectedEvents(ids);
+            }}
+            emptyLabel="All Events"
+          />
+        </label>
         <label className="date-range-filter">
           From
           <input
@@ -127,6 +151,7 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
         {(() => {
           const parts: string[] = [];
           if (q) parts.push(`matching "${q}"`);
+          if (selectedEvents.length > 0) parts.push(`event(s): ${selectedEvents.join(", ")}`);
           if (from) parts.push(`from ${from}`);
           if (until) parts.push(`until ${until}`);
           return parts.length > 0 ? `${total} entries ${parts.join(", ")}` : `${total} security-relevant actions`;
@@ -137,7 +162,9 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
       {loading ? (
         <p>Loading...</p>
       ) : entries.length === 0 ? (
-        <p className="empty">{q ? "No audit entries match that search." : "No audit entries yet."}</p>
+        <p className="empty">
+          {q || from || until || selectedEvents.length > 0 ? "No audit entries match that search." : "No audit entries yet."}
+        </p>
       ) : (
         <table>
           <thead>

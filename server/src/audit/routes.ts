@@ -19,6 +19,7 @@ interface AuditFilterParams {
   q: string;
   from: string;
   until: string;
+  events: string[];
 }
 
 function parseAuditFilterParams(req: { query: Record<string, unknown> }): AuditFilterParams {
@@ -26,6 +27,9 @@ function parseAuditFilterParams(req: { query: Record<string, unknown> }): AuditF
     q: typeof req.query.q === "string" ? req.query.q.trim() : "",
     from: typeof req.query.from === "string" ? req.query.from.trim() : "",
     until: typeof req.query.until === "string" ? req.query.until.trim() : "",
+    // Comma-joined, same convention as every other multi-value filter in
+    // this app (port/service/tag on the dashboard, scannerAgentIds, ...).
+    events: typeof req.query.events === "string" ? req.query.events.split(",").filter(Boolean) : [],
   };
 }
 
@@ -36,8 +40,12 @@ function parseAuditFilterParams(req: { query: Record<string, unknown> }): AuditF
 // the same reason: a Kysely query builder's own type changes shape with
 // every .where() call, which a reusable filter function can't express
 // without fighting the type system for no real safety benefit here).
-function applyAuditFilters(query: any, { q, from, until }: AuditFilterParams): any {
+function applyAuditFilters(query: any, { q, from, until, events }: AuditFilterParams): any {
   let result = query;
+
+  if (events.length > 0) {
+    result = result.where("event", "in", events);
+  }
 
   if (q) {
     // Free text across event/actor/source_ip and the details blob (e.g. a
@@ -73,6 +81,18 @@ function applyAuditFilters(query: any, { q, from, until }: AuditFilterParams): a
 
   return result;
 }
+
+// Distinct event strings actually present in the table, for the
+// frontend's event-type filter dropdown - not a hardcoded enum, since
+// audit events are free-form strings written from ~20 different call
+// sites across the codebase (see audit/log.ts's recordAudit), unlike
+// webhook events (a genuinely closed, deliberately curated set). A
+// hardcoded list here would drift the moment a new recordAudit call
+// site was added elsewhere and forgot to also update this one.
+auditRouter.get("/events", asyncHandler(async (req, res) => {
+  const rows = await db.selectFrom("audit_log").select("event").distinct().orderBy("event", "asc").execute();
+  res.json(rows.map((r) => r.event));
+}));
 
 auditRouter.get("/", asyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
