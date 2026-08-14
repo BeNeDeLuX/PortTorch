@@ -1696,12 +1696,6 @@ th {
   margin-bottom: 1.5rem;
 }
 
-.trend-hero {
-  font-weight: 600;
-  font-size: 1.1rem;
-  color: var(--text);
-  margin-left: 0.5rem;
-}
 
 .trend-legend {
   display: flex;

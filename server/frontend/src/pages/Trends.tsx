@@ -209,8 +209,6 @@ export default function Trends({ me, onLogout }: { me: Me; onLogout: () => void 
     []
   );
 
-  const latestTotal = trends ? trends.series[trends.series.length - 1]?.totalHosts ?? null : null;
-
   return (
     <div className="dashboard">
       <PageHeader me={me} onLogout={onLogout} />
@@ -249,10 +247,7 @@ export default function Trends({ me, onLogout }: { me: Me; onLogout: () => void 
       ) : (
         <>
           <section>
-            <h2>
-              Total hosts (all time){" "}
-              {latestTotal !== null && <span className="trend-hero">{latestTotal.toLocaleString()}</span>}
-            </h2>
+            <h2>Total hosts (all time)</h2>
             {showTable ? (
               <TrendTable data={trends.series} columns={[{ key: "totalHosts", label: "Total hosts" }]} />
             ) : (
