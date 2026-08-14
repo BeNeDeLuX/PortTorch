@@ -1,8 +1,10 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, AuditEntry, Me } from "../api";
-import { IconSearch, IconX } from "../components/icons";
+import { api, auditExportUrl, AuditEntry, Me } from "../api";
+import { IconDownload, IconSearch, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime } from "../lib/formatDate";
+
+const PAGE_SIZE = 50;
 
 function formatDetailValue(value: unknown): string {
   if (Array.isArray(value)) return value.join(", ");
@@ -33,6 +35,8 @@ function AuditDetails({ entry }: { entry: AuditEntry }) {
 
 export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [queryInput, setQueryInput] = useState("");
   const [q, setQ] = useState("");
@@ -40,14 +44,16 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
   const [until, setUntil] = useState("");
 
   useEffect(() => {
-    load(q, from, until);
+    load(page, q, from, until);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, from, until]);
+  }, [page, q, from, until]);
 
-  async function load(query: string, fromDate: string, untilDate: string) {
+  async function load(pageNum: number, query: string, fromDate: string, untilDate: string) {
     setLoading(true);
     try {
-      setEntries(await api.audit(200, query, fromDate, untilDate));
+      const result = await api.audit(pageNum, PAGE_SIZE, query, fromDate, untilDate);
+      setEntries(result.items);
+      setTotal(result.total);
     } finally {
       setLoading(false);
     }
@@ -55,11 +61,13 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
 
   function applyQuery(e: FormEvent) {
     e.preventDefault();
+    setPage(1);
     setQ(queryInput.trim());
   }
 
   function clearQuery() {
     setQueryInput("");
+    setPage(1);
     setQ("");
     setFrom("");
     setUntil("");
@@ -85,16 +93,33 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
             <IconX /> Clear
           </button>
         )}
+        <a className="export-link btn-icon-label push-right" href={auditExportUrl(q, from, until)} download>
+          <IconDownload /> Export
+        </a>
       </form>
 
-      <div className="list-controls-filters push-right">
+      <div className="list-controls-filters">
         <label className="date-range-filter">
           From
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <input
+            type="date"
+            value={from}
+            onChange={(e) => {
+              setPage(1);
+              setFrom(e.target.value);
+            }}
+          />
         </label>
         <label className="date-range-filter">
           until
-          <input type="date" value={until} onChange={(e) => setUntil(e.target.value)} />
+          <input
+            type="date"
+            value={until}
+            onChange={(e) => {
+              setPage(1);
+              setUntil(e.target.value);
+            }}
+          />
         </label>
       </div>
 
@@ -104,9 +129,7 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
           if (q) parts.push(`matching "${q}"`);
           if (from) parts.push(`from ${from}`);
           if (until) parts.push(`until ${until}`);
-          return parts.length > 0
-            ? `${entries.length} entries ${parts.join(", ")}`
-            : `Latest ${entries.length} security-relevant actions`;
+          return parts.length > 0 ? `${total} entries ${parts.join(", ")}` : `${total} security-relevant actions`;
         })()}
         , most recent first.
       </p>
@@ -140,6 +163,21 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
             ))}
           </tbody>
         </table>
+      )}
+
+      {!loading && total > PAGE_SIZE && (
+        <div className="pagination">
+          <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+            &larr; Prev
+          </button>
+          <span className="host-meta">
+            Showing {(page - 1) * PAGE_SIZE + 1}
+            &ndash;{Math.min(page * PAGE_SIZE, total)} of {total}
+          </span>
+          <button disabled={page * PAGE_SIZE >= total} onClick={() => setPage((p) => p + 1)}>
+            Next &rarr;
+          </button>
+        </div>
       )}
     </div>
   );

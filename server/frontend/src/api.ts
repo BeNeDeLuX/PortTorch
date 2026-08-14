@@ -72,6 +72,13 @@ export interface AuditEntry {
   resolvedNames: Record<string, string>;
 }
 
+export interface AuditListResult {
+  items: AuditEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export interface HostSummary {
   id: string;
   ip: string;
@@ -570,6 +577,18 @@ export type HostsExportDetail = "host" | "port";
 // (still AND'd with allowedScannerAgentIds server-side, see
 // search/routes.ts's HostFilterParams.ids) rather than every host the
 // current filters match - the Dashboard's "export selected" option.
+// Same "plain <a href download>" export pattern as hostsExportUrl below -
+// exports every entry matching the current q/from/until filters, not
+// just the current page (no page/pageSize passed).
+export function auditExportUrl(q: string, from: string, until: string): string {
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (from) params.set("from", from);
+  if (until) params.set("until", until);
+  const qs = params.toString();
+  return `/api/audit/export.csv${qs ? `?${qs}` : ""}`;
+}
+
 export function hostsExportUrl(filters: HostFilters, detail: HostsExportDetail = "host", selectedIds?: string[]): string {
   const qs = hostsQueryString(filters);
   let url = `/api/hosts/export.csv${qs}${qs ? "&" : "?"}detail=${detail}`;
@@ -638,11 +657,11 @@ export const api = {
     request<TrendsResult>(
       `/api/trends?days=${days}${scannerAgentIds.length ? `&scannerAgentId=${scannerAgentIds.join(",")}` : ""}`
     ),
-  audit: (limit = 200, q = "", from = "", until = "") =>
-    request<AuditEntry[]>(
-      `/api/audit?limit=${limit}${q ? `&q=${encodeURIComponent(q)}` : ""}${from ? `&from=${from}` : ""}${
-        until ? `&until=${until}` : ""
-      }`
+  audit: (page = 1, pageSize = 50, q = "", from = "", until = "") =>
+    request<AuditListResult>(
+      `/api/audit?page=${page}&pageSize=${pageSize}${q ? `&q=${encodeURIComponent(q)}` : ""}${
+        from ? `&from=${from}` : ""
+      }${until ? `&until=${until}` : ""}`
     ),
 
   agents: () => request<ScannerAgent[]>("/api/agents"),

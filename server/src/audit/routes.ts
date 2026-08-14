@@ -1,33 +1,56 @@
 import { Router } from "express";
-import { sql } from "kysely";
+import { sql, type Selectable } from "kysely";
 import { db } from "../db";
+import type { AuditLogTable } from "../db/types";
 import { requireAdmin } from "../auth/middleware";
 import { asyncHandler } from "../lib/asyncHandler";
 import { parseDateOnly } from "../lib/dateOnly";
 import { resolveAuditNames } from "./resolveNames";
 
+type AuditLogRow = Selectable<AuditLogTable>;
+
 export const auditRouter = Router();
 auditRouter.use(requireAdmin);
 
-auditRouter.get("/", asyncHandler(async (req, res) => {
-  const limit = Math.min(500, Math.max(1, parseInt(String(req.query.limit ?? "200"), 10) || 200));
-  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
-  const from = typeof req.query.from === "string" ? req.query.from.trim() : "";
-  const until = typeof req.query.until === "string" ? req.query.until.trim() : "";
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 200;
 
-  let query = db.selectFrom("audit_log").selectAll();
+interface AuditFilterParams {
+  q: string;
+  from: string;
+  until: string;
+}
+
+function parseAuditFilterParams(req: { query: Record<string, unknown> }): AuditFilterParams {
+  return {
+    q: typeof req.query.q === "string" ? req.query.q.trim() : "",
+    from: typeof req.query.from === "string" ? req.query.from.trim() : "",
+    until: typeof req.query.until === "string" ? req.query.until.trim() : "",
+  };
+}
+
+// Shared between the paginated list below and export.csv, so an export
+// always matches exactly what the current search/date-range view shows -
+// same "one filter function, every reader of it stays in sync" pattern
+// as search/routes.ts's applyHostFilters (query typed any there too, for
+// the same reason: a Kysely query builder's own type changes shape with
+// every .where() call, which a reusable filter function can't express
+// without fighting the type system for no real safety benefit here).
+function applyAuditFilters(query: any, { q, from, until }: AuditFilterParams): any {
+  let result = query;
 
   if (q) {
     // Free text across event/actor/source_ip and the details blob (e.g. a
     // host id or IP mentioned inside details) - casts to text so this
     // works the same way regardless of column type (source_ip is inet,
     // details is jsonb).
-    query = query.where((eb) =>
+    const like = `%${q}%`;
+    result = result.where((eb: any) =>
       eb.or([
-        eb("event", "ilike", `%${q}%`),
-        eb("actor", "ilike", `%${q}%`),
-        sql<boolean>`source_ip::text ilike ${`%${q}%`}`,
-        sql<boolean>`details::text ilike ${`%${q}%`}`,
+        eb("event", "ilike", like),
+        eb("actor", "ilike", like),
+        sql<boolean>`source_ip::text ilike ${like}`,
+        sql<boolean>`details::text ilike ${like}`,
       ])
     );
   }
@@ -38,24 +61,77 @@ auditRouter.get("/", asyncHandler(async (req, res) => {
   // date picked here means the same thing it would there.
   if (from) {
     const after = parseDateOnly(from);
-    if (after) {
-      query = query.where("created_at", ">=", after);
-    }
+    if (after) result = result.where("created_at", ">=", after);
   }
   if (until) {
     const before = parseDateOnly(until);
     if (before) {
       const endOfDay = new Date(before.getTime() + 24 * 60 * 60_000);
-      query = query.where("created_at", "<", endOfDay);
+      result = result.where("created_at", "<", endOfDay);
     }
   }
 
-  const entries = await query.orderBy("created_at", "desc").limit(limit).execute();
+  return result;
+}
+
+auditRouter.get("/", asyncHandler(async (req, res) => {
+  const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
+  const pageSize = Math.min(
+    MAX_PAGE_SIZE,
+    Math.max(1, parseInt(String(req.query.pageSize ?? DEFAULT_PAGE_SIZE), 10) || DEFAULT_PAGE_SIZE)
+  );
+  const filters = parseAuditFilterParams(req);
+
+  const countQuery = applyAuditFilters(db.selectFrom("audit_log"), filters);
+  const { count } = await countQuery.select(sql<number>`count(*)`.as("count")).executeTakeFirstOrThrow();
+
+  const listQuery = applyAuditFilters(db.selectFrom("audit_log").selectAll(), filters);
+  const entries = await listQuery
+    .orderBy("created_at", "desc")
+    .limit(pageSize)
+    .offset((page - 1) * pageSize)
+    .execute();
 
   // Resolves every id-shaped field in each entry's details (scanner
   // agent, host, user, webhook, ...) to a human name in one batch of
   // lookups - see resolveNames.ts for why this happens here, at read
   // time, rather than baking a name into details at write time.
   const resolvedNames = await resolveAuditNames(entries);
-  res.json(entries.map((entry, i) => ({ ...entry, resolvedNames: resolvedNames[i] })));
+  res.json({
+    items: entries.map((entry: AuditLogRow, i: number) => ({ ...entry, resolvedNames: resolvedNames[i] })),
+    total: Number(count),
+    page,
+    pageSize,
+  });
+}));
+
+function csvEscape(value: string | number): string {
+  const s = String(value);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// Exports every entry matching the current q/from/until filters (no
+// pagination applied) - same "the export always matches exactly what the
+// current view is scoped to" contract as the Dashboard's hosts export.
+auditRouter.get("/export.csv", asyncHandler(async (req, res) => {
+  const filters = parseAuditFilterParams(req);
+  const query = applyAuditFilters(db.selectFrom("audit_log").selectAll(), filters);
+  const entries = await query.orderBy("created_at", "desc").execute();
+
+  const header = ["time", "event", "actor", "source_ip", "details"];
+  const rows = entries.map((e: AuditLogRow) =>
+    [
+      e.created_at.toISOString(),
+      e.event,
+      e.actor ?? "",
+      e.source_ip ?? "",
+      e.details ? JSON.stringify(e.details) : "",
+    ]
+      .map(csvEscape)
+      .join(",")
+  );
+
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", 'attachment; filename="audit-log.csv"');
+  res.status(200).send([header.join(","), ...rows].join("\r\n"));
 }));
