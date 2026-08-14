@@ -6,6 +6,7 @@ export type WebhookEvent =
   | "host.new"
   | "port.opened"
   | "certificate.expiring_soon"
+  | "webserver_certificate.expiring_soon"
   | "saved_search.match"
   | "vulnerability.high_epss"
   | "vulnerability.kev"
@@ -18,6 +19,7 @@ const EVENT_SUBJECTS: Record<WebhookEvent, string> = {
   "host.new": "New host discovered",
   "port.opened": "Port newly open",
   "certificate.expiring_soon": "Certificate expiring soon",
+  "webserver_certificate.expiring_soon": "Webserver TLS certificate expiring soon",
   "saved_search.match": "Saved search matched a new host",
   "vulnerability.high_epss": "High EPSS score on a known CVE",
   "vulnerability.kev": "CVE added to CISA's Known Exploited Vulnerabilities catalog",

@@ -13,6 +13,7 @@ const ALL_EVENTS: Array<{ key: WebhookEvent; label: string }> = [
   { key: "host.new", label: "New host discovered" },
   { key: "port.opened", label: "Port newly open" },
   { key: "certificate.expiring_soon", label: "Certificate expiring soon" },
+  { key: "webserver_certificate.expiring_soon", label: "Webserver's own TLS certificate expiring soon" },
   { key: "saved_search.match", label: "Saved search matched a new host" },
   { key: "vulnerability.high_epss", label: "High EPSS score on a known CVE" },
   { key: "vulnerability.kev", label: "CVE added to CISA's Known Exploited Vulnerabilities catalog" },

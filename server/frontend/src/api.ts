@@ -237,6 +237,7 @@ export type WebhookEvent =
   | "host.new"
   | "port.opened"
   | "certificate.expiring_soon"
+  | "webserver_certificate.expiring_soon"
   | "saved_search.match"
   | "vulnerability.high_epss"
   | "vulnerability.kev"

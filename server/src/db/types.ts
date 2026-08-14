@@ -62,6 +62,18 @@ export interface ScannerReleaseCacheTable {
   synced_at: Date | null;
 }
 
+// Singleton (id always 1) alert-dedup state for the webserver's own TLS
+// listener certificate - see src/settings/certExpiryAlert.ts. Keyed by
+// fingerprint rather than a plain "already alerted" boolean so an
+// uploaded replacement certificate (Settings page) is treated as a
+// fresh, not-yet-alerted certificate even if the previous one had
+// already fired.
+export interface WebserverTlsAlertStateTable {
+  id: Generated<number>;
+  fingerprint: string | null;
+  alert_sent_at: Date | null;
+}
+
 // For external, non-interactive callers (SOAR/enrichment tools) - distinct
 // from scanner_agents (which authenticate a specific scanner submitting
 // scan results) and from session auth (interactive dashboard users).
@@ -497,4 +509,5 @@ export interface Database {
   ssh_host_keys: SshHostKeysTable;
   scan_profiles: ScanProfilesTable;
   scanner_release_cache: ScannerReleaseCacheTable;
+  webserver_tls_alert_state: WebserverTlsAlertStateTable;
 }

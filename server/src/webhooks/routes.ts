@@ -15,6 +15,7 @@ const EVENTS: WebhookEvent[] = [
   "host.new",
   "port.opened",
   "certificate.expiring_soon",
+  "webserver_certificate.expiring_soon",
   "saved_search.match",
   "vulnerability.high_epss",
   "vulnerability.kev",
@@ -52,7 +53,18 @@ const createWebhookSchema = z
     url: z.string().url().optional(),
     emailTo: emailListSchema.optional(),
     events: z
-      .array(z.enum(["host.new", "port.opened", "certificate.expiring_soon", "saved_search.match", "vulnerability.high_epss", "vulnerability.kev", "digest.daily"]))
+      .array(
+        z.enum([
+          "host.new",
+          "port.opened",
+          "certificate.expiring_soon",
+          "webserver_certificate.expiring_soon",
+          "saved_search.match",
+          "vulnerability.high_epss",
+          "vulnerability.kev",
+          "digest.daily",
+        ])
+      )
       .min(1),
   })
   .refine((data) => (data.channelType === "email" ? !!data.emailTo : !!data.url), {
