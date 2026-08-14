@@ -20,6 +20,7 @@ interface AuditFilterParams {
   from: string;
   until: string;
   events: string[];
+  actors: string[];
 }
 
 function parseAuditFilterParams(req: { query: Record<string, unknown> }): AuditFilterParams {
@@ -30,6 +31,7 @@ function parseAuditFilterParams(req: { query: Record<string, unknown> }): AuditF
     // Comma-joined, same convention as every other multi-value filter in
     // this app (port/service/tag on the dashboard, scannerAgentIds, ...).
     events: typeof req.query.events === "string" ? req.query.events.split(",").filter(Boolean) : [],
+    actors: typeof req.query.actors === "string" ? req.query.actors.split(",").filter(Boolean) : [],
   };
 }
 
@@ -40,11 +42,14 @@ function parseAuditFilterParams(req: { query: Record<string, unknown> }): AuditF
 // the same reason: a Kysely query builder's own type changes shape with
 // every .where() call, which a reusable filter function can't express
 // without fighting the type system for no real safety benefit here).
-function applyAuditFilters(query: any, { q, from, until, events }: AuditFilterParams): any {
+function applyAuditFilters(query: any, { q, from, until, events, actors }: AuditFilterParams): any {
   let result = query;
 
   if (events.length > 0) {
     result = result.where("event", "in", events);
+  }
+  if (actors.length > 0) {
+    result = result.where("actor", "in", actors);
   }
 
   if (q) {
@@ -92,6 +97,21 @@ function applyAuditFilters(query: any, { q, from, until, events }: AuditFilterPa
 auditRouter.get("/events", asyncHandler(async (req, res) => {
   const rows = await db.selectFrom("audit_log").select("event").distinct().orderBy("event", "asc").execute();
   res.json(rows.map((r) => r.event));
+}));
+
+// Same idea for the actor filter - distinct non-null actors actually
+// present (a system-initiated entry, e.g. retention.host_purged, has
+// actor = null and is deliberately excluded here, since "null" isn't a
+// selectable filter option).
+auditRouter.get("/actors", asyncHandler(async (req, res) => {
+  const rows = await db
+    .selectFrom("audit_log")
+    .select("actor")
+    .distinct()
+    .where("actor", "is not", null)
+    .orderBy("actor", "asc")
+    .execute();
+  res.json(rows.map((r) => r.actor));
 }));
 
 auditRouter.get("/", asyncHandler(async (req, res) => {

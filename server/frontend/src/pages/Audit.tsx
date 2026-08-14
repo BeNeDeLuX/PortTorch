@@ -45,20 +45,30 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
   const [until, setUntil] = useState("");
   const [availableEvents, setAvailableEvents] = useState<string[]>([]);
   const [selectedEvents, setSelectedEvents] = useState<string[]>([]);
+  const [availableActors, setAvailableActors] = useState<string[]>([]);
+  const [selectedActors, setSelectedActors] = useState<string[]>([]);
 
   useEffect(() => {
     api.auditEvents().then(setAvailableEvents).catch(() => setAvailableEvents([]));
+    api.auditActors().then(setAvailableActors).catch(() => setAvailableActors([]));
   }, []);
 
   useEffect(() => {
-    load(page, q, from, until, selectedEvents);
+    load(page, q, from, until, selectedEvents, selectedActors);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, q, from, until, selectedEvents]);
+  }, [page, q, from, until, selectedEvents, selectedActors]);
 
-  async function load(pageNum: number, query: string, fromDate: string, untilDate: string, events: string[]) {
+  async function load(
+    pageNum: number,
+    query: string,
+    fromDate: string,
+    untilDate: string,
+    events: string[],
+    actors: string[]
+  ) {
     setLoading(true);
     try {
-      const result = await api.audit(pageNum, PAGE_SIZE, query, fromDate, untilDate, events);
+      const result = await api.audit(pageNum, PAGE_SIZE, query, fromDate, untilDate, events, actors);
       setEntries(result.items);
       setTotal(result.total);
     } finally {
@@ -79,6 +89,7 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
     setFrom("");
     setUntil("");
     setSelectedEvents([]);
+    setSelectedActors([]);
   }
 
   return (
@@ -96,14 +107,14 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
         <button type="submit" className="btn-icon-label">
           <IconSearch /> Search
         </button>
-        {(q || from || until || selectedEvents.length > 0) && (
+        {(q || from || until || selectedEvents.length > 0 || selectedActors.length > 0) && (
           <button type="button" className="btn-icon-label" onClick={clearQuery}>
             <IconX /> Clear
           </button>
         )}
         <a
           className="export-link btn-icon-label push-right"
-          href={auditExportUrl(q, from, until, selectedEvents)}
+          href={auditExportUrl(q, from, until, selectedEvents, selectedActors)}
           download
         >
           <IconDownload /> Export
@@ -121,6 +132,18 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
               setSelectedEvents(ids);
             }}
             emptyLabel="All Events"
+          />
+        </label>
+        <label className="hide-empty-toggle">
+          Actor
+          <ScannerMultiSelect
+            agents={availableActors.map((a) => ({ id: a, name: a }))}
+            selectedIds={selectedActors}
+            onChange={(ids) => {
+              setPage(1);
+              setSelectedActors(ids);
+            }}
+            emptyLabel="All Actors"
           />
         </label>
         <label className="date-range-filter">
@@ -152,6 +175,7 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
           const parts: string[] = [];
           if (q) parts.push(`matching "${q}"`);
           if (selectedEvents.length > 0) parts.push(`event(s): ${selectedEvents.join(", ")}`);
+          if (selectedActors.length > 0) parts.push(`actor(s): ${selectedActors.join(", ")}`);
           if (from) parts.push(`from ${from}`);
           if (until) parts.push(`until ${until}`);
           return parts.length > 0 ? `${total} entries ${parts.join(", ")}` : `${total} security-relevant actions`;
@@ -163,7 +187,9 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
         <p>Loading...</p>
       ) : entries.length === 0 ? (
         <p className="empty">
-          {q || from || until || selectedEvents.length > 0 ? "No audit entries match that search." : "No audit entries yet."}
+          {q || from || until || selectedEvents.length > 0 || selectedActors.length > 0
+            ? "No audit entries match that search."
+            : "No audit entries yet."}
         </p>
       ) : (
         <table>
