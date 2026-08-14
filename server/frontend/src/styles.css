@@ -492,6 +492,63 @@ button.export-link {
   cursor: pointer;
 }
 
+/* One-entry-per-line checkbox lists (checkbox, then label) - used by the
+   Scan Profiles page's NSE script lists and the Webhooks form's Events
+   list. Deliberately not .column-toggles' flex-wrap multi-column layout,
+   which reads fine for a handful of short table-column names but becomes
+   an unscannable grid once there are more than a few, or longer, names -
+   NSE script names especially, but the same problem was starting to show
+   up for webhook event names too. */
+.checkbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* .schedule-form label's own flex-direction: column (for its "Name
+   above input" fields) has equal selector specificity to a bare
+   ".checkbox-list label" rule, so source order alone would decide the
+   winner - scoping with the .schedule-form ancestor class explicitly
+   guarantees this one-line-per-entry layout wins regardless of where
+   either rule sits in the file. */
+.schedule-form .checkbox-list label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+}
+
+.nse-group {
+  margin: 0.5rem 0 0.5rem 1rem;
+}
+
+.nse-group summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.nse-group .checkbox-list {
+  margin: 0.5rem 0 0.25rem 1.5rem;
+}
+
+/* .schedule-form is a flex-wrap row of compact, single-line fields
+   (Name, dropdowns, ...) - a multi-line checkbox-list section is tall by
+   comparison, and without forcing a line break it'd get packed into the
+   same row as those short fields (flex-wrap fills leftover horizontal
+   space in a row before wrapping, not just when a row's own width runs
+   out). flex-basis: 100% forces each onto its own row regardless of how
+   little height it currently has (e.g. collapsed). */
+.form-fullwidth-section {
+  flex-basis: 100%;
+}
+
 .host-table th {
   cursor: pointer;
   user-select: none;

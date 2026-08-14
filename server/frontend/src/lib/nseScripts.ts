@@ -95,3 +95,92 @@ export const ALL_SAFE_NSE_SCRIPTS: string[] = [
 export const ADDITIONAL_SAFE_NSE_SCRIPTS: string[] = ALL_SAFE_NSE_SCRIPTS.filter(
   (s) => !DEFAULT_NSE_SCRIPTS.includes(s)
 );
+
+// Purely a UI-side grouping for the Scan Profiles page's "Additional
+// Safe Modules" checkbox list - 313 flat checkboxes in one long list has
+// no way to select a whole family of related scripts at once, or even
+// visually scan for one. Rules are prefix/name-based against nmap's own
+// script-name conventions (there's no category metadata anywhere else to
+// derive this from - nmap's own script.db only tags safe/intrusive/etc,
+// not a finer protocol taxonomy), evaluated in order - each script lands
+// in the first matching group. Deliberately a function over the flat
+// list, not a hand-maintained per-script map: a future script added to
+// ALL_SAFE_NSE_SCRIPTS automatically finds a home (falling back to
+// "Other") without needing a second manual edit here. ~48 of 313 land in
+// "Other" - a genuinely heterogeneous long tail of one-off protocol
+// scripts that don't share a clear family, not a sign the rules are
+// incomplete.
+const CATEGORY_RULES: { name: string; match: (s: string) => boolean }[] = [
+  { name: "HTTP / Web", match: (s) => s.startsWith("http-") },
+  {
+    name: "Broadcast / Network Discovery",
+    match: (s) =>
+      s.startsWith("broadcast-") ||
+      ["dhcp-discover", "lltd-discovery", "llmnr-resolve", "wsdd-discover", "upnp-info", "xdmcp-discover",
+        "targets-asn", "targets-sniffer", "targets-traceroute", "targets-xml", "bjnp-discover", "stun-info"].includes(s),
+  },
+  { name: "DNS", match: (s) => s.startsWith("dns-") },
+  { name: "SSL / TLS", match: (s) => s.startsWith("ssl") || s.startsWith("tls-") },
+  { name: "SNMP", match: (s) => s.startsWith("snmp-") },
+  {
+    name: "Databases",
+    match: (s) =>
+      s.startsWith("mysql-") || s.startsWith("ms-sql-") || s.startsWith("couchdb-") ||
+      ["db2-das-info", "maxdb-info", "riak-http-info", "membase-http-info", "drda-info", "voldemort-info"].includes(s),
+  },
+  { name: "Big Data (Hadoop/HBase)", match: (s) => s.startsWith("hadoop-") || s.startsWith("hbase-") || ["flume-master-info", "ganglia-info"].includes(s) },
+  { name: "Mail (SMTP/IMAP/POP3/NNTP)", match: (s) => s.startsWith("smtp-") || s.startsWith("imap-") || s.startsWith("pop3-") || s.startsWith("nntp-") },
+  { name: "IP Geolocation", match: (s) => s.startsWith("ip-geolocation-") },
+  { name: "Remote Access (RDP/VNC/Telnet)", match: (s) => s.startsWith("telnet-") || ["vnc-info", "realvnc-auth-bypass", "sstp-discover"].includes(s) },
+  { name: "SMB / Windows", match: (s) => s.startsWith("smb") || s.startsWith("ncp-") || s === "nbns-interfaces" },
+  { name: "Citrix", match: (s) => s.startsWith("citrix-") },
+  {
+    name: "Industrial / IoT",
+    match: (s) =>
+      s.startsWith("ipmi-") || s.startsWith("knx-gateway-") ||
+      ["multicast-profinet-discovery", "openwebnet-discovery", "dicom-ping", "gpsd-info", "hddtemp-info"].includes(s),
+  },
+  {
+    name: "App Servers (AJP/RMI/RPC)",
+    match: (s) => s.startsWith("ajp-") || ["jdwp-info", "weblogic-t3-info", "eppc-enum-processes", "rmi-dumpregistry", "rpcap-info", "epmd-info"].includes(s),
+  },
+  { name: "Legacy Backdoors", match: (s) => s.startsWith("netbus-") || ["backorifice-info", "smb-double-pulsar-backdoor", "p2p-conficker"].includes(s) },
+  { name: "Game Servers", match: (s) => s.startsWith("quake") || ["ventrilo-info", "wdb-version"].includes(s) },
+  { name: "P2P / Cryptocurrency", match: (s) => s.startsWith("bitcoin") || ["bittorrent-discovery", "vuze-dht-info"].includes(s) },
+  { name: "Messaging (IRC/XMPP/MQTT)", match: (s) => s.startsWith("irc-") || ["xmpp-info", "mqtt-subscribe", "amqp-info"].includes(s) },
+  { name: "AFP / Apple", match: (s) => s.startsWith("afp-") },
+  { name: "Time Services", match: (s) => ["daytime", "rfc868-time", "ntp-info"].includes(s) },
+  { name: "Auth / Proxy Checks", match: (s) => ["auth-owners", "auth-spoof", "creds-summary", "socks-auth-info", "socks-open-proxy", "rsa-vuln-roca"].includes(s) },
+  {
+    name: "Network Fingerprinting / Recon",
+    match: (s) =>
+      ["fcrdns", "hostmap-robtex", "ipidseq", "path-mtu", "port-states", "unusual-port", "duplicates", "firewalk",
+        "traceroute-geolocation", "tor-consensus-checker", "whois-domain", "whois-ip", "asn-query", "resolveall",
+        "reverse-index", "ubiquiti-discovery", "ip-forwarding", "ip-https-discover", "ipv6-node-info"].includes(s),
+  },
+  { name: "NFS / Filesystem", match: (s) => ["nfs-ls", "nfs-statfs", "ndmp-fs-info", "iscsi-info", "isns-info"].includes(s) },
+];
+
+export interface NSEScriptGroup {
+  name: string;
+  scripts: string[];
+}
+
+// Groups are returned in a fixed, deterministic order (declaration order
+// of CATEGORY_RULES, "Other" always last) - so the page's layout doesn't
+// reshuffle between renders or reloads.
+export function groupAdditionalNseScripts(scripts: string[] = ADDITIONAL_SAFE_NSE_SCRIPTS): NSEScriptGroup[] {
+  const groups: NSEScriptGroup[] = CATEGORY_RULES.map((rule) => ({ name: rule.name, scripts: [] as string[] }));
+  const other: string[] = [];
+  for (const script of scripts) {
+    const rule = CATEGORY_RULES.find((r) => r.match(script));
+    if (rule) {
+      groups.find((g) => g.name === rule.name)!.scripts.push(script);
+    } else {
+      other.push(script);
+    }
+  }
+  const nonEmpty = groups.filter((g) => g.scripts.length > 0);
+  if (other.length > 0) nonEmpty.push({ name: "Other", scripts: other });
+  return nonEmpty;
+}

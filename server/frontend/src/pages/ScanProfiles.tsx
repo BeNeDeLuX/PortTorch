@@ -2,7 +2,9 @@ import { FormEvent, useEffect, useState } from "react";
 import { api, Me, ScanProfile } from "../api";
 import { IconEdit, IconPlus, IconSave, IconTrash, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
-import { ADDITIONAL_SAFE_NSE_SCRIPTS, DEFAULT_NSE_SCRIPTS } from "../lib/nseScripts";
+import { DEFAULT_NSE_SCRIPTS, groupAdditionalNseScripts, NSEScriptGroup } from "../lib/nseScripts";
+
+const ADDITIONAL_GROUPS = groupAdditionalNseScripts();
 
 // Admin-only, like Excludes/Webhooks/Scanner Agents - lets an admin build
 // a named, reusable "Custom" scan profile (a specific set of NSE
@@ -36,6 +38,22 @@ export default function ScanProfiles({ me, onLogout }: { me: Me; onLogout: () =>
       const next = new Set(prev);
       if (next.has(script)) next.delete(script);
       else next.add(script);
+      return next;
+    });
+  }
+
+  // Selects every script in the group if any are still unselected, or
+  // clears the whole group if it's already fully selected - same
+  // "select all / clear all" toggle a checkbox-with-indeterminate-state
+  // conventionally does.
+  function toggleGroup(scripts: string[]) {
+    setSelectedScripts((prev) => {
+      const allSelected = scripts.every((s) => prev.has(s));
+      const next = new Set(prev);
+      for (const s of scripts) {
+        if (allSelected) next.delete(s);
+        else next.add(s);
+      }
       return next;
     });
   }
@@ -97,26 +115,51 @@ export default function ScanProfiles({ me, onLogout }: { me: Me; onLogout: () =>
           <input placeholder="e.g. web-only" value={name} onChange={(e) => setName(e.target.value)} />
         </label>
 
-        <div className="column-toggles">
-          Default ({DEFAULT_NSE_SCRIPTS.length}):
-          {DEFAULT_NSE_SCRIPTS.map((script) => (
-            <label key={script}>
-              <input type="checkbox" checked={selectedScripts.has(script)} onChange={() => toggleScript(script)} />
-              {script}
-            </label>
-          ))}
-        </div>
-
-        <details>
-          <summary>Additional Safe Modules ({ADDITIONAL_SAFE_NSE_SCRIPTS.length})</summary>
-          <div className="column-toggles">
-            {ADDITIONAL_SAFE_NSE_SCRIPTS.map((script) => (
+        <details open className="form-fullwidth-section">
+          <summary>Default ({DEFAULT_NSE_SCRIPTS.length})</summary>
+          <div className="checkbox-list">
+            {DEFAULT_NSE_SCRIPTS.map((script) => (
               <label key={script}>
                 <input type="checkbox" checked={selectedScripts.has(script)} onChange={() => toggleScript(script)} />
                 {script}
               </label>
             ))}
           </div>
+        </details>
+
+        <details className="form-fullwidth-section">
+          <summary>Additional Safe Modules ({ADDITIONAL_GROUPS.reduce((n, g) => n + g.scripts.length, 0)})</summary>
+          {ADDITIONAL_GROUPS.map((group: NSEScriptGroup) => {
+            const selectedCount = group.scripts.filter((s) => selectedScripts.has(s)).length;
+            return (
+              <details key={group.name} className="nse-group">
+                <summary>
+                  <input
+                    type="checkbox"
+                    checked={selectedCount === group.scripts.length}
+                    ref={(el) => {
+                      if (el) el.indeterminate = selectedCount > 0 && selectedCount < group.scripts.length;
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={() => toggleGroup(group.scripts)}
+                  />
+                  {group.name} ({selectedCount}/{group.scripts.length})
+                </summary>
+                <div className="checkbox-list">
+                  {group.scripts.map((script) => (
+                    <label key={script}>
+                      <input
+                        type="checkbox"
+                        checked={selectedScripts.has(script)}
+                        onChange={() => toggleScript(script)}
+                      />
+                      {script}
+                    </label>
+                  ))}
+                </div>
+              </details>
+            );
+          })}
         </details>
 
         <p className="host-meta">{selectedScripts.size} script(s) selected</p>
