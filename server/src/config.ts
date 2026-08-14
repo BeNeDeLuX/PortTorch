@@ -55,4 +55,12 @@ export const config = {
   // (see src/scannerUpdate/githubSync.ts) - overridable for a fork/mirror,
   // defaults to this project's own repo.
   githubRepoSlug: process.env.GITHUB_REPO_SLUG ?? "BeNeDeLuX/PortTorch",
+  // A scanner's oldest pending scan_requests row older than this fires a
+  // "scan_queue.backlog" webhook (see src/webhooks/operationalAlerts.ts) -
+  // a strong signal that scanner has stopped polling entirely, not just
+  // that it's mid-scan on something else. Same default as Fleet Health's
+  // own client-side display heuristic (frontend/src/pages/FleetHealth.tsx)
+  // - independently configurable here since, unlike that page's coloring,
+  // this one has a real side effect (an outbound webhook).
+  queueBacklogThresholdMinutes: parseInt(process.env.QUEUE_BACKLOG_THRESHOLD_MINUTES ?? "30", 10),
 };

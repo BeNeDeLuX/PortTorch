@@ -6,6 +6,7 @@ import { loadOrCreateSelfSignedCert } from "./tls/generateCert";
 import { setActiveHttpsServer } from "./tls/activeServer";
 import { buildApp } from "./app";
 import { startCertificateExpiryAlerts } from "./webhooks/expiryAlerts";
+import { startOperationalAlerts } from "./webhooks/operationalAlerts";
 import { startWebserverCertExpiryAlert } from "./settings/certExpiryAlert";
 import { startSavedSearchAlerts } from "./savedSearches/checker";
 import { startCveSync } from "./cve/sync";
@@ -38,6 +39,7 @@ httpsServer.listen(config.port, () => {
 startScheduler();
 startCertificateExpiryAlerts();
 startWebserverCertExpiryAlert();
+startOperationalAlerts();
 startRetention();
 startSavedSearchAlerts();
 startCveSync();

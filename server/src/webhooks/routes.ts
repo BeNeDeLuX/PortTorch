@@ -20,6 +20,9 @@ const EVENTS: WebhookEvent[] = [
   "vulnerability.high_epss",
   "vulnerability.kev",
   "digest.daily",
+  "scan.stale",
+  "scanner.update_failed",
+  "scan_queue.backlog",
 ];
 const uuidSchema = z.string().uuid();
 const WEBHOOK_COLUMNS = ["id", "name", "channel_type", "url", "email_to", "enabled", "events", "created_at"] as const;
@@ -63,6 +66,9 @@ const createWebhookSchema = z
           "vulnerability.high_epss",
           "vulnerability.kev",
           "digest.daily",
+          "scan.stale",
+          "scanner.update_failed",
+          "scan_queue.backlog",
         ])
       )
       .min(1),

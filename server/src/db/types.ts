@@ -50,6 +50,12 @@ export interface ScannerAgentsTable {
   update_request_status: "pending" | "failed" | null;
   update_failure_reason: string | null;
   update_attempt_count: ColumnType<number, number | undefined, number>;
+  // Dedup state for the scan_queue.backlog webhook (see
+  // webhooks/operationalAlerts.ts) - unlike most alert-dedup columns in
+  // this codebase, this one is cleared back to null once the backlog
+  // clears, since a queue backlog is a recurring condition, not a
+  // one-time event like a certificate approaching expiry.
+  queue_backlog_alert_sent_at: Date | null;
 }
 
 // Singleton (id always 1) cache of the latest published scanner-vX.Y.Z
@@ -106,6 +112,11 @@ export interface ScanJobsTable {
   // blocking scan, so cancellation could never reach it.
   cancellable: ColumnType<boolean, boolean | undefined, never>;
   cancel_requested_at: ColumnType<Date | null, string | undefined, string>;
+  // Dedup state for the scan.stale webhook (see
+  // webhooks/operationalAlerts.ts) - fires once per row, never reset,
+  // since a scan_jobs row is created fresh per scan and either finishes
+  // normally or stays stuck in "running" forever.
+  stale_alert_sent_at: Date | null;
 }
 
 // Live-ish progress pushed by the scanner itself while a scan runs (see

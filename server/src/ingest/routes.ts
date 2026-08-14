@@ -226,6 +226,18 @@ ingestRouter.patch("/update-outcome", asyncHandler(async (req, res) => {
       })
       .where("id", "=", req.scannerAgentId!)
       .execute();
+
+    // Ingest-path-triggered, like host.new/port.opened - this is a
+    // discrete state transition (pending -> given up) detected right at
+    // write time, so unlike scan.stale/scan_queue.backlog below it needs
+    // no periodic checker or dedup column of its own: it only ever fires
+    // once per exhausted retry cycle, and a fresh one only starts after
+    // an admin explicitly re-triggers the update (POST /:id/request-update).
+    await dispatchWebhook(
+      "scanner.update_failed",
+      `Scanner "${req.scannerAgentName}" failed to self-update after ${attempts} attempts: ${parsed.data.reason}`,
+      { scanner_agent_id: req.scannerAgentId, scanner_agent_name: req.scannerAgentName, attempts, reason: parsed.data.reason }
+    );
   } else {
     await db
       .updateTable("scanner_agents")

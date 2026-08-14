@@ -248,7 +248,10 @@ export type WebhookEvent =
   | "saved_search.match"
   | "vulnerability.high_epss"
   | "vulnerability.kev"
-  | "digest.daily";
+  | "digest.daily"
+  | "scan.stale"
+  | "scanner.update_failed"
+  | "scan_queue.backlog";
 
 export type WebhookChannelType = "webhook" | "email" | "teams";
 

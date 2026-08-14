@@ -18,6 +18,9 @@ const ALL_EVENTS: Array<{ key: WebhookEvent; label: string }> = [
   { key: "vulnerability.high_epss", label: "High EPSS score on a known CVE" },
   { key: "vulnerability.kev", label: "CVE added to CISA's Known Exploited Vulnerabilities catalog" },
   { key: "digest.daily", label: "Daily digest (fleet-wide, once a day)" },
+  { key: "scan.stale", label: "A running scan looks stalled" },
+  { key: "scanner.update_failed", label: "Scanner self-update failed" },
+  { key: "scan_queue.backlog", label: "A scanner's request queue is backing up" },
 ];
 
 export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => void }) {

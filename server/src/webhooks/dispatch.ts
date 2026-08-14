@@ -10,7 +10,10 @@ export type WebhookEvent =
   | "saved_search.match"
   | "vulnerability.high_epss"
   | "vulnerability.kev"
-  | "digest.daily";
+  | "digest.daily"
+  | "scan.stale"
+  | "scanner.update_failed"
+  | "scan_queue.backlog";
 
 // Plain-English subject line for an email channel - a webhook channel has
 // no equivalent need, since "event"/"data" already ride along in the JSON
@@ -24,6 +27,9 @@ const EVENT_SUBJECTS: Record<WebhookEvent, string> = {
   "vulnerability.high_epss": "High EPSS score on a known CVE",
   "vulnerability.kev": "CVE added to CISA's Known Exploited Vulnerabilities catalog",
   "digest.daily": "Daily digest",
+  "scan.stale": "Scan looks stalled",
+  "scanner.update_failed": "Scanner self-update failed",
+  "scan_queue.backlog": "Scan queue backlog",
 };
 
 // A Teams "Workflows" webhook (the current replacement for the classic,
