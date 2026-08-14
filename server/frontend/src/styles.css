@@ -1270,6 +1270,38 @@ th {
   margin-bottom: 1rem;
 }
 
+/* Active Modules' risk warning (Scan Profiles page) - same box shape as
+   .callout, --danger border/icon instead of --accent since this is a
+   caution, not an informational aside. */
+.callout-danger {
+  background: var(--panel);
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  color: var(--danger);
+}
+
+.callout-danger svg {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+/* Inline variant - a short "this contains risky scripts" note next to
+   plain text (the selected-count line, a table cell), rather than the
+   full boxed .callout-danger. */
+.callout-danger-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--danger);
+  margin-left: 0.75rem;
+  font-weight: 600;
+}
+
 .key-reveal {
   background: var(--bg);
   border: 1px solid var(--border);

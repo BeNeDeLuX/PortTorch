@@ -1,10 +1,56 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, Me, ScanProfile } from "../api";
-import { IconEdit, IconPlus, IconSave, IconTrash, IconX } from "../components/icons";
+import { IconEdit, IconPlus, IconSave, IconTrash, IconWarning, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
-import { DEFAULT_NSE_SCRIPTS, groupAdditionalNseScripts, NSEScriptGroup } from "../lib/nseScripts";
+import { DEFAULT_NSE_SCRIPTS, groupActiveNseScripts, groupAdditionalNseScripts, NSEScriptGroup } from "../lib/nseScripts";
 
 const ADDITIONAL_GROUPS = groupAdditionalNseScripts();
+const ACTIVE_GROUPS = groupActiveNseScripts();
+const ACTIVE_SCRIPTS = new Set(ACTIVE_GROUPS.flatMap((g) => g.scripts));
+
+function NseGroupList({
+  groups,
+  selectedScripts,
+  toggleScript,
+  toggleGroup,
+}: {
+  groups: NSEScriptGroup[];
+  selectedScripts: Set<string>;
+  toggleScript: (script: string) => void;
+  toggleGroup: (scripts: string[]) => void;
+}) {
+  return (
+    <>
+      {groups.map((group) => {
+        const selectedCount = group.scripts.filter((s) => selectedScripts.has(s)).length;
+        return (
+          <details key={group.name} className="nse-group">
+            <summary>
+              <input
+                type="checkbox"
+                checked={selectedCount === group.scripts.length}
+                ref={(el) => {
+                  if (el) el.indeterminate = selectedCount > 0 && selectedCount < group.scripts.length;
+                }}
+                onClick={(e) => e.stopPropagation()}
+                onChange={() => toggleGroup(group.scripts)}
+              />
+              {group.name} ({selectedCount}/{group.scripts.length})
+            </summary>
+            <div className="checkbox-list">
+              {group.scripts.map((script) => (
+                <label key={script}>
+                  <input type="checkbox" checked={selectedScripts.has(script)} onChange={() => toggleScript(script)} />
+                  {script}
+                </label>
+              ))}
+            </div>
+          </details>
+        );
+      })}
+    </>
+  );
+}
 
 // Admin-only, like Excludes/Webhooks/Scanner Agents - lets an admin build
 // a named, reusable "Custom" scan profile (a specific set of NSE
@@ -129,40 +175,42 @@ export default function ScanProfiles({ me, onLogout }: { me: Me; onLogout: () =>
 
         <details className="form-fullwidth-section">
           <summary>Additional Safe Modules ({ADDITIONAL_GROUPS.reduce((n, g) => n + g.scripts.length, 0)})</summary>
-          {ADDITIONAL_GROUPS.map((group: NSEScriptGroup) => {
-            const selectedCount = group.scripts.filter((s) => selectedScripts.has(s)).length;
-            return (
-              <details key={group.name} className="nse-group">
-                <summary>
-                  <input
-                    type="checkbox"
-                    checked={selectedCount === group.scripts.length}
-                    ref={(el) => {
-                      if (el) el.indeterminate = selectedCount > 0 && selectedCount < group.scripts.length;
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={() => toggleGroup(group.scripts)}
-                  />
-                  {group.name} ({selectedCount}/{group.scripts.length})
-                </summary>
-                <div className="checkbox-list">
-                  {group.scripts.map((script) => (
-                    <label key={script}>
-                      <input
-                        type="checkbox"
-                        checked={selectedScripts.has(script)}
-                        onChange={() => toggleScript(script)}
-                      />
-                      {script}
-                    </label>
-                  ))}
-                </div>
-              </details>
-            );
-          })}
+          <NseGroupList
+            groups={ADDITIONAL_GROUPS}
+            selectedScripts={selectedScripts}
+            toggleScript={toggleScript}
+            toggleGroup={toggleGroup}
+          />
         </details>
 
-        <p className="host-meta">{selectedScripts.size} script(s) selected</p>
+        <details className="form-fullwidth-section">
+          <summary>Active Modules ({ACTIVE_GROUPS.reduce((n, g) => n + g.scripts.length, 0)})</summary>
+          <div className="callout-danger">
+            <IconWarning />
+            <span>
+              These scripts are intrusive, exploit-attempting, credential-guessing, or can disrupt the target
+              (nmap's own "intrusive"/"exploit"/"brute"/"dos" categories) - unlike Default/Additional Safe Modules,
+              they can crash a service, lock out an account, or actively attempt an exploit. Only ever run them
+              against systems you're explicitly authorized to test this way, and only pick specific scripts you
+              actually intend to run - there is no "select all" shortcut across the whole Active Modules section.
+            </span>
+          </div>
+          <NseGroupList
+            groups={ACTIVE_GROUPS}
+            selectedScripts={selectedScripts}
+            toggleScript={toggleScript}
+            toggleGroup={toggleGroup}
+          />
+        </details>
+
+        <p className="host-meta">
+          {selectedScripts.size} script(s) selected
+          {[...selectedScripts].some((s) => ACTIVE_SCRIPTS.has(s)) && (
+            <span className="callout-danger-inline">
+              <IconWarning size={13} /> includes Active Modules scripts
+            </span>
+          )}
+        </p>
 
         <button type="submit" className="btn-icon-label" disabled={!name.trim() || selectedScripts.size === 0}>
           {editingId ? (
@@ -199,7 +247,14 @@ export default function ScanProfiles({ me, onLogout }: { me: Me; onLogout: () =>
           <tbody>
             {profiles.map((p) => (
               <tr key={p.id}>
-                <td>{p.name}</td>
+                <td>
+                  {p.name}
+                  {p.nse_scripts.some((s) => ACTIVE_SCRIPTS.has(s)) && (
+                    <span className="callout-danger-inline" title="Includes Active Modules scripts (intrusive/exploit/brute/dos)">
+                      <IconWarning size={13} />
+                    </span>
+                  )}
+                </td>
                 <td className="banner">{p.nse_scripts.join(", ")}</td>
                 <td>{p.created_by ?? "-"}</td>
                 <td>

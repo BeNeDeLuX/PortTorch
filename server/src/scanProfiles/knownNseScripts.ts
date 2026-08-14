@@ -94,6 +94,78 @@ export const ALL_SAFE_NSE_SCRIPTS: string[] = [
   "xdmcp-discover", "xmlrpc-methods", "xmpp-info",
 ];
 
-// Validation/UI allowlist for Custom profiles - the union of both lists
+// "Active Modules" - nmap's intrusive/exploit/brute/dos categories, split
+// into four subcategories (mirrors nse_active_scripts.go's doc comment
+// for the full "why" and the derivation command). Deliberately NOT a
+// one-click profile kind like ALL_SAFE_NSE_SCRIPTS - these scripts can
+// crash services, lock out accounts, or actively exploit a real
+// vulnerability, so they're only ever reachable by hand-picking specific
+// scripts into a named Custom profile. Each already excludes anything in
+// DEFAULT_NSE_SCRIPTS (nothing to add there).
+export const EXPLOIT_NSE_SCRIPTS: string[] = [
+  "afp-path-vuln", "clamav-exec", "distcc-cve2004-2687", "ftp-proftpd-backdoor", "ftp-vsftpd-backdoor",
+  "http-adobe-coldfusion-apsa1301", "http-avaya-ipoffice-users", "http-awstatstotals-exec",
+  "http-axis2-dir-traversal", "http-barracuda-dir-traversal", "http-coldfusion-subzero", "http-csrf",
+  "http-dlink-backdoor", "http-dombased-xss", "http-fileupload-exploiter", "http-huawei-hg5xx-vuln",
+  "http-litespeed-sourcecode-download", "http-majordomo2-dir-traversal", "http-phpmyadmin-dir-traversal",
+  "http-shellshock", "http-stored-xss", "http-tplink-dir-traversal", "http-vuln-cve2006-3392",
+  "http-vuln-cve2009-3960", "http-vuln-cve2012-1823", "http-vuln-cve2013-0156", "http-vuln-cve2013-6786",
+  "http-vuln-cve2013-7091", "http-vuln-cve2014-3704", "http-vuln-cve2014-8877", "http-vuln-cve2017-5689",
+  "http-vuln-wnr1000-creds", "irc-unrealircd-backdoor", "jdwp-exec", "jdwp-inject", "qconn-exec",
+  "smb-vuln-conficker", "smb-vuln-cve2009-3103", "smb-vuln-ms06-025", "smb-vuln-ms07-029", "smb-vuln-ms08-067",
+  "smb-vuln-regsvc-dos", "smb-webexec-exploit", "smtp-vuln-cve2010-4344", "supermicro-ipmi-conf",
+];
+
+export const BRUTE_NSE_SCRIPTS: string[] = [
+  "afp-brute", "ajp-brute", "backorifice-brute", "cassandra-brute", "cics-enum", "cics-user-brute", "cics-user-enum",
+  "citrix-brute-xml", "cvs-brute", "cvs-brute-repository", "deluge-rpc-brute", "dicom-brute", "domcon-brute",
+  "dpap-brute", "drda-brute", "ftp-brute", "http-brute", "http-form-brute", "http-iis-short-name-brute",
+  "http-joomla-brute", "http-proxy-brute", "http-wordpress-brute", "iax2-brute", "imap-brute",
+  "impress-remote-discover", "informix-brute", "ipmi-brute", "irc-brute", "irc-sasl-brute", "iscsi-brute",
+  "ldap-brute", "lu-enum", "membase-brute", "metasploit-msgrpc-brute", "metasploit-xmlrpc-brute",
+  "mikrotik-routeros-brute", "mmouse-brute", "mongodb-brute", "ms-sql-brute", "mysql-brute", "mysql-enum",
+  "nessus-brute", "nessus-xmlrpc-brute", "netbus-brute", "nexpose-brute", "nje-node-brute", "nje-pass-brute",
+  "nping-brute", "omp2-brute", "openvas-otp-brute", "oracle-brute", "oracle-brute-stealth", "oracle-sid-brute",
+  "pcanywhere-brute", "pgsql-brute", "pop3-brute", "redis-brute", "rexec-brute", "rlogin-brute", "rpcap-brute",
+  "rsync-brute", "rtsp-url-brute", "sip-brute", "smb-brute", "smtp-brute", "snmp-brute", "socks-brute", "ssh-brute",
+  "svn-brute", "telnet-brute", "tso-enum", "vmauthd-brute", "vnc-brute", "vtam-enum", "xmpp-brute",
+];
+
+export const DOS_NSE_SCRIPTS: string[] = [
+  "broadcast-avahi-dos", "http-slowloris", "ipv6-ra-flood", "smb-flood", "smb-vuln-conficker",
+  "smb-vuln-cve2009-3103", "smb-vuln-ms06-025", "smb-vuln-ms07-029", "smb-vuln-ms08-067", "smb-vuln-ms10-054",
+  "smb-vuln-regsvc-dos",
+];
+
+export const OTHER_INTRUSIVE_NSE_SCRIPTS: string[] = [
+  "dns-brute", "dns-cache-snoop", "dns-fuzz", "dns-ip6-arpa-scan", "dns-nsec-enum", "dns-nsec3-enum",
+  "dns-random-srcport", "dns-random-txid", "dns-update", "dns-zone-transfer", "domcon-cmd", "domino-enum-users",
+  "firewall-bypass", "ftp-libopie", "ftp-vuln-cve2010-4221", "hartip-info", "http-chrono", "http-config-backup",
+  "http-default-accounts", "http-devframework", "http-domino-enum-passwords", "http-drupal-enum",
+  "http-drupal-enum-users", "http-enum", "http-errors", "http-exif-spider", "http-feed", "http-form-fuzzer",
+  "http-iis-webdav-vuln", "http-open-redirect", "http-passwd", "http-phpself-xss", "http-put", "http-rfi-spider",
+  "http-sitemap-generator", "http-sql-injection", "http-unsafe-output-escaping", "http-userdir-enum", "http-vhosts",
+  "http-vuln-cve2010-2861", "http-vuln-cve2011-3368", "http-vuln-cve2015-1427", "http-vuln-cve2017-8917",
+  "http-vuln-misfortune-cookie", "http-waf-detect", "http-waf-fingerprint", "http-wordpress-enum",
+  "http-wordpress-users", "iec-identify", "iec61850-mms", "informix-query", "informix-tables", "krb5-enum-users",
+  "metasploit-info", "mmouse-exec", "modbus-discover", "ms-sql-empty-password", "ms-sql-xp-cmdshell",
+  "mysql-databases", "mysql-empty-password", "mysql-users", "mysql-variables", "mysql-vuln-cve2012-2122", "nbd-info",
+  "nrpe-enum", "ntp-monlist", "oracle-enum-users", "pjl-ready-message", "profinet-cm-lookup", "puppet-naivesigning",
+  "rdp-vuln-ms12-020", "rmi-vuln-classloader", "samba-vuln-cve-2012-1182", "sip-call-spoof", "sip-enum-users",
+  "smb-enum-domains", "smb-enum-groups", "smb-enum-processes", "smb-enum-services", "smb-enum-sessions",
+  "smb-enum-users", "smb-print-text", "smb-psexec", "smb-server-stats", "smb-system-info", "smb-vuln-cve-2017-7494",
+  "smb-vuln-ms10-061", "smb-vuln-webexec", "smtp-enum-users", "smtp-vuln-cve2011-1720", "smtp-vuln-cve2011-1764",
+  "sniffer-detect", "snmp-ios-config", "ssh-auth-methods", "ssh-publickey-acceptance", "ssh-run", "ssl-enum-ciphers",
+  "sslv2-drown", "stuxnet-detect", "tftp-enum", "tso-brute", "vnc-title",
+];
+
+// Validation/UI allowlist for Custom profiles - the union of every list
 // above (deduplicated by Set).
-export const KNOWN_NSE_SCRIPTS: Set<string> = new Set([...DEFAULT_NSE_SCRIPTS, ...ALL_SAFE_NSE_SCRIPTS]);
+export const KNOWN_NSE_SCRIPTS: Set<string> = new Set([
+  ...DEFAULT_NSE_SCRIPTS,
+  ...ALL_SAFE_NSE_SCRIPTS,
+  ...EXPLOIT_NSE_SCRIPTS,
+  ...BRUTE_NSE_SCRIPTS,
+  ...DOS_NSE_SCRIPTS,
+  ...OTHER_INTRUSIVE_NSE_SCRIPTS,
+]);
