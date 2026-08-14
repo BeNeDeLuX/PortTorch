@@ -133,14 +133,16 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
               />
             </label>
           )}
-          <div className="column-toggles">
+          <div className="form-fullwidth-section">
             Events:
-            {ALL_EVENTS.map((e) => (
-              <label key={e.key}>
-                <input type="checkbox" checked={events.includes(e.key)} onChange={() => toggleEventChoice(e.key)} />
-                {e.label}
-              </label>
-            ))}
+            <div className="checkbox-list">
+              {ALL_EVENTS.map((e) => (
+                <label key={e.key}>
+                  <input type="checkbox" checked={events.includes(e.key)} onChange={() => toggleEventChoice(e.key)} />
+                  {e.label}
+                </label>
+              ))}
+            </div>
           </div>
           <button type="submit" className="btn-icon-label">
             <IconPlus /> Create
