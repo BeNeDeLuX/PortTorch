@@ -277,6 +277,7 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 	snmpJobs := make(chan snmpJob, cfg.Concurrency)
 	ipmiJobs := make(chan ipmiJob, cfg.Concurrency)
 	dnsRecursionJobs := make(chan dnsRecursionJob, cfg.Concurrency)
+	upnpJobs := make(chan upnpJob, cfg.Concurrency)
 
 	var subWG sync.WaitGroup
 	startGowitnessWorkers(ctx, cfg, shotJobs, tracker, onProgress, &subWG)
@@ -285,6 +286,7 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 	startSNMPWorkers(ctx, cfg, snmpJobs, tracker, onProgress, &subWG)
 	startIPMIWorkers(ctx, cfg, ipmiJobs, tracker, onProgress, &subWG)
 	startDNSRecursionWorkers(ctx, cfg, dnsRecursionJobs, tracker, onProgress, &subWG)
+	startUPnPWorkers(ctx, cfg, upnpJobs, tracker, onProgress, &subWG)
 
 	type nmapJob struct {
 		ip    string
@@ -332,15 +334,15 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 						subTasks++
 					}
 				}
-				// SNMP, IPMI, and DNS recursion are all unconditional
+				// SNMP, IPMI, DNS recursion, and UPnP are all unconditional
 				// (every host, not gated on any already-discovered port -
 				// see snmp.go's doc comment for why; ipmi.go's
-				// RunIPMIProbe and dnsrecursion.go's RunDNSRecursionProbe
-				// are the identical exception for UDP/623 and UDP/53
-				// respectively), except when an exclude specifically
-				// covers that port for this host - none of the TCP-only
-				// exclude mechanisms above would otherwise ever see any
-				// of these three ports.
+				// RunIPMIProbe, dnsrecursion.go's RunDNSRecursionProbe, and
+				// upnp.go's RunUPnPProbe are the identical exception for
+				// UDP/623, UDP/53, and UDP/1900 respectively), except when
+				// an exclude specifically covers that port for this host -
+				// none of the TCP-only exclude mechanisms above would
+				// otherwise ever see any of these four ports.
 				probeSNMP := !isPortExcludedForHost(host.IP, 161, excludes)
 				if probeSNMP {
 					subTasks++
@@ -351,6 +353,10 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 				}
 				probeDNSRecursion := !isPortExcludedForHost(host.IP, 53, excludes)
 				if probeDNSRecursion {
+					subTasks++
+				}
+				probeUPnP := !isPortExcludedForHost(host.IP, 1900, excludes)
+				if probeUPnP {
 					subTasks++
 				}
 				// Registered before any job is enqueued below, so the
@@ -377,6 +383,13 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 				if probeDNSRecursion {
 					select {
 					case dnsRecursionJobs <- dnsRecursionJob{ip: host.IP}:
+					case <-ctx.Done():
+						tracker.complete(host.IP, nil)
+					}
+				}
+				if probeUPnP {
+					select {
+					case upnpJobs <- upnpJob{ip: host.IP}:
 					case <-ctx.Done():
 						tracker.complete(host.IP, nil)
 					}
@@ -427,6 +440,7 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 	close(snmpJobs)
 	close(ipmiJobs)
 	close(dnsRecursionJobs)
+	close(upnpJobs)
 	subWG.Wait()
 
 	if nmapOK == 0 && nmapFailed > 0 {
@@ -750,6 +764,39 @@ func startDNSRecursionWorkers(ctx context.Context, cfg Config, jobs <-chan dnsRe
 				port, err := RunDNSRecursionProbe(ctx, cfg.NmapPath, j.ip)
 				if err != nil {
 					onProgress("dnsrecursion", fmt.Sprintf("failed for %s: %v", j.ip, err))
+					tracker.complete(j.ip, nil)
+					continue
+				}
+				if port == nil {
+					tracker.complete(j.ip, nil)
+					continue
+				}
+				tracker.complete(j.ip, func(h *HostResult) { h.Ports = append(h.Ports, *port) })
+			}
+		}()
+	}
+}
+
+type upnpJob struct {
+	ip string
+}
+
+// startUPnPWorkers is startSNMPWorkers'/startIPMIWorkers'/
+// startDNSRecursionWorkers' UPnP-probe equivalent - see its doc comment
+// and upnp.go's RunUPnPProbe. Same reasoning throughout: cfg.Concurrency,
+// a nil result (the common case - most hosts don't run a UPnP responder)
+// completes the sub-task without adding a port, a non-nil result is
+// appended to the host's Ports like any other discovered port.
+func startUPnPWorkers(ctx context.Context, cfg Config, jobs <-chan upnpJob, tracker *hostTracker, onProgress ProgressFunc, wg *sync.WaitGroup) {
+	for i := 0; i < cfg.Concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				onProgress("upnp", fmt.Sprintf("probing %s (udp/1900)", j.ip))
+				port, err := RunUPnPProbe(ctx, cfg.NmapPath, j.ip)
+				if err != nil {
+					onProgress("upnp", fmt.Sprintf("failed for %s: %v", j.ip, err))
 					tracker.complete(j.ip, nil)
 					continue
 				}
