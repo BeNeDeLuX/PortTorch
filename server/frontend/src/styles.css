@@ -1322,6 +1322,19 @@ th {
   margin-top: 0.1rem;
 }
 
+/* Dashboard's "fleet health needs attention" banner - a .callout-danger/
+   .callout-warning that's also a Link to /health, so it needs the link's
+   own default blue/underline reset (same "text-decoration:none;
+   color:inherit" treatment .health-card already gives its own Link). */
+.callout-link {
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.callout-link:hover {
+  opacity: 0.85;
+}
+
 .health-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

@@ -13,7 +13,7 @@ import {
   ScannerAgent,
 } from "../api";
 import ExportModal from "../components/ExportModal";
-import { IconBookmark, IconDownload, IconInfo, IconPlus, IconRefresh, IconSearch, IconStop, IconX } from "../components/icons";
+import { IconBookmark, IconDownload, IconInfo, IconPlus, IconRefresh, IconSearch, IconStop, IconWarning, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import RescanModal from "../components/RescanModal";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
@@ -21,6 +21,7 @@ import ScanProgressModal from "../components/ScanProgressModal";
 import { elapsedLabel } from "../lib/elapsed";
 import { formatDateTime } from "../lib/formatDate";
 import { cveSeverityClass } from "../lib/cveSeverity";
+import { STATUS_LABEL, useFleetHealth } from "../lib/useFleetHealth";
 
 const PAGE_SIZE = 50;
 
@@ -193,6 +194,7 @@ function RiskBadge({ host }: { host: HostSummary }) {
 
 export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const canEdit = me.role === "admin" || me.role === "operator";
+  const health = useFleetHealth(me);
   const navigate = useNavigate();
   // Filters live in the URL (not just component state) so that navigating
   // to a host and back restores them instead of resetting to defaults -
@@ -586,6 +588,15 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
   return (
     <div className="dashboard">
       <PageHeader me={me} onLogout={onLogout} />
+
+      {!health.loading && !health.error && health.overall !== "ok" && (
+        <Link
+          to="/health"
+          className={`callout-link ${health.overall === "critical" ? "callout-danger" : "callout-warning"}`}
+        >
+          <IconWarning /> Fleet health needs attention ({STATUS_LABEL[health.overall]}) - view details
+        </Link>
+      )}
 
       {me.preferences.showActiveScansBanner && activeScanJobs.length > 0 && (
         <div className="active-scans">
