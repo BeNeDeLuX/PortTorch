@@ -65,6 +65,11 @@ export interface AuditEntry {
   source_ip: string | null;
   details: Record<string, unknown> | null;
   created_at: string;
+  // Every id-shaped key in `details` (scanner_agent_id, host_id, ...)
+  // resolved to a human name, e.g. {scanner_agent_id: "scanner-office-1"}
+  // - "(deleted)" if that entity's row no longer exists. Empty object
+  // when details has nothing resolvable, never null.
+  resolvedNames: Record<string, string>;
 }
 
 export interface HostSummary {

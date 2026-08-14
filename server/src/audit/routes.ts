@@ -4,6 +4,7 @@ import { db } from "../db";
 import { requireAdmin } from "../auth/middleware";
 import { asyncHandler } from "../lib/asyncHandler";
 import { parseDateOnly } from "../lib/dateOnly";
+import { resolveAuditNames } from "./resolveNames";
 
 export const auditRouter = Router();
 auditRouter.use(requireAdmin);
@@ -51,5 +52,10 @@ auditRouter.get("/", asyncHandler(async (req, res) => {
 
   const entries = await query.orderBy("created_at", "desc").limit(limit).execute();
 
-  res.json(entries);
+  // Resolves every id-shaped field in each entry's details (scanner
+  // agent, host, user, webhook, ...) to a human name in one batch of
+  // lookups - see resolveNames.ts for why this happens here, at read
+  // time, rather than baking a name into details at write time.
+  const resolvedNames = await resolveAuditNames(entries);
+  res.json(entries.map((entry, i) => ({ ...entry, resolvedNames: resolvedNames[i] })));
 }));

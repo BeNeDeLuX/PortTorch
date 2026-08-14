@@ -4,6 +4,33 @@ import { IconSearch, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime } from "../lib/formatDate";
 
+function formatDetailValue(value: unknown): string {
+  if (Array.isArray(value)) return value.join(", ");
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+// Renders details as "key: value (resolved name)" pairs, one per key,
+// instead of a raw JSON.stringify dump - lets an id-shaped value (e.g.
+// scanner_agent_id) show its resolved name right next to it, per
+// AuditEntry.resolvedNames (see api.ts / server/src/audit/resolveNames.ts).
+function AuditDetails({ entry }: { entry: AuditEntry }) {
+  if (!entry.details) return <>-</>;
+  const pairs = Object.entries(entry.details);
+  if (pairs.length === 0) return <>-</>;
+  return (
+    <>
+      {pairs.map(([key, value], i) => (
+        <span key={key}>
+          {i > 0 && ", "}
+          {key}: {formatDetailValue(value)}
+          {entry.resolvedNames[key] && <strong> ({entry.resolvedNames[key]})</strong>}
+        </span>
+      ))}
+    </>
+  );
+}
+
 export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,7 +133,9 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
                 <td>{e.event}</td>
                 <td>{e.actor ?? "-"}</td>
                 <td>{e.source_ip ?? "-"}</td>
-                <td className="audit-details">{e.details ? JSON.stringify(e.details) : "-"}</td>
+                <td className="audit-details">
+                  <AuditDetails entry={e} />
+                </td>
               </tr>
             ))}
           </tbody>
