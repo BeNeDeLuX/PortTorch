@@ -36,6 +36,15 @@ export interface Me {
   role: string;
   version: string;
   preferences: UserPreferences;
+  // True when an admin account has no 2FA enabled while the Settings
+  // page's "require 2FA for all admins" toggle is on (see
+  // App.tsx's route gating and Account.tsx's banner) - always false for
+  // non-admin roles, since that toggle only ever governs admin accounts.
+  totpSetupRequired: boolean;
+}
+
+export interface AppSettings {
+  requireAdminTotp: boolean;
 }
 
 export interface DashboardUser {
@@ -775,6 +784,9 @@ export const api = {
     }
     return res.json() as Promise<TlsCertificateInfo>;
   },
+  appSettings: () => request<AppSettings>("/api/settings/app"),
+  updateAppSettings: (patch: Partial<AppSettings>) =>
+    request<AppSettings>("/api/settings/app", { method: "PATCH", body: JSON.stringify(patch) }),
 
   users: () => request<DashboardUser[]>("/api/users"),
   createUser: (input: { username: string; password: string; role: string; scannerAgentIds?: string[] }) =>

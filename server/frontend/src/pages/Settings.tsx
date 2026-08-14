@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, Me, TlsCertificateInfo } from "../api";
-import { IconUpload } from "../components/icons";
+import { api, AppSettings, Me, TlsCertificateInfo } from "../api";
+import { IconSave, IconUpload } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime } from "../lib/formatDate";
 import { certExpiryDaysLeft, certExpiryLabel, certExpiryStatus } from "../lib/certExpiry";
@@ -21,8 +21,13 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
+  const [savingAppSettings, setSavingAppSettings] = useState(false);
+  const [appSettingsError, setAppSettingsError] = useState<string | null>(null);
+
   useEffect(() => {
     load();
+    api.appSettings().then(setAppSettings).catch(() => setAppSettings(null));
   }, []);
 
   async function load() {
@@ -31,6 +36,19 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       setInfo(await api.tlsCertificate());
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleToggleRequireAdminTotp() {
+    if (!appSettings) return;
+    setAppSettingsError(null);
+    setSavingAppSettings(true);
+    try {
+      setAppSettings(await api.updateAppSettings({ requireAdminTotp: !appSettings.requireAdminTotp }));
+    } catch (err) {
+      setAppSettingsError(err instanceof Error ? err.message : "Failed to update setting");
+    } finally {
+      setSavingAppSettings(false);
     }
   }
 
@@ -132,6 +150,25 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
           <IconUpload /> {uploading ? "Uploading..." : "Upload & apply"}
         </button>
       </form>
+
+      <h3>Security</h3>
+      <p className="host-meta">
+        Two-factor authentication is otherwise self-service and optional (see the Account page). Turning this on
+        redirects any admin account without 2FA enabled to the Account page until they set it up - it doesn't touch
+        operator or user accounts, and any admin can turn it back off again.
+      </p>
+
+      {appSettingsError && <p className="error">{appSettingsError}</p>}
+
+      {appSettings && (
+        <p>
+          Require 2FA for all admin accounts:{" "}
+          <strong>{appSettings.requireAdminTotp ? "on" : "off"}</strong>{" "}
+          <button className="btn-icon-label" onClick={handleToggleRequireAdminTotp} disabled={savingAppSettings}>
+            <IconSave /> {appSettings.requireAdminTotp ? "Turn off" : "Turn on"}
+          </button>
+        </p>
+      )}
     </div>
   );
 }

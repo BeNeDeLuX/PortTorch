@@ -12,6 +12,7 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { VERSION } from "../version";
+import { getAppSettings } from "../settings/appSettings";
 
 export const authRouter = Router();
 
@@ -65,7 +66,8 @@ const loginSchema = z.object({
 function finishLogin(
   req: Request,
   res: Response,
-  user: { id: number; username: string; role: string; scannerAgentIds: string[] } & PreferenceColumns
+  user: { id: number; username: string; role: string; totp_enabled: boolean; scannerAgentIds: string[] } & PreferenceColumns,
+  requireAdminTotp: boolean
 ) {
   req.session.regenerate(async (err) => {
     if (err) {
@@ -89,8 +91,23 @@ function finishLogin(
     } catch (updateErr) {
       logger.warn({ event: "auth.last_login_update_failed", username: user.username, err: updateErr instanceof Error ? updateErr.message : String(updateErr) });
     }
-    res.json({ username: user.username, role: user.role, version: VERSION, preferences: toPreferences(user) });
+    res.json({
+      username: user.username,
+      role: user.role,
+      version: VERSION,
+      preferences: toPreferences(user),
+      totpSetupRequired: computeTotpSetupRequired(user.role, user.totp_enabled, requireAdminTotp),
+    });
   });
+}
+
+// An admin account without 2FA enabled, while an admin (any admin - there's
+// no separate "super admin" tier) has turned on the Settings page's
+// "require 2FA for all admins" toggle - see settings/appSettings.ts. Only
+// ever true for role "admin": the toggle deliberately only ever governs
+// admin accounts (the highest-privilege role), not operator/user.
+function computeTotpSetupRequired(role: string, totpEnabled: boolean, requireAdminTotp: boolean): boolean {
+  return role === "admin" && requireAdminTotp && !totpEnabled;
 }
 
 authRouter.post("/login", asyncHandler(async (req, res) => {
@@ -162,7 +179,8 @@ authRouter.post("/login", asyncHandler(async (req, res) => {
     return;
   }
 
-  finishLogin(req, res, { ...user, scannerAgentIds });
+  const { requireAdminTotp } = await getAppSettings();
+  finishLogin(req, res, { ...user, scannerAgentIds }, requireAdminTotp);
 }));
 
 const verifyTotpSchema = z.object({ code: z.string().min(1) });
@@ -258,7 +276,8 @@ authRouter.post("/login/verify-totp", asyncHandler(async (req, res) => {
           (r) => r.scanner_agent_id
         );
 
-  finishLogin(req, res, { ...user, scannerAgentIds });
+  const { requireAdminTotp } = await getAppSettings();
+  finishLogin(req, res, { ...user, scannerAgentIds }, requireAdminTotp);
 }));
 
 authRouter.post("/logout", (req, res) => {
@@ -275,6 +294,7 @@ authRouter.get("/me", requireAuth, asyncHandler(async (req, res) => {
   const user = await db
     .selectFrom("users")
     .select([
+      "totp_enabled",
       "pref_theme",
       "pref_hosts_page_size",
       "pref_show_active_scans_banner",
@@ -285,11 +305,13 @@ authRouter.get("/me", requireAuth, asyncHandler(async (req, res) => {
     ])
     .where("id", "=", req.session.userId!)
     .executeTakeFirstOrThrow();
+  const { requireAdminTotp } = await getAppSettings();
   res.json({
     username: req.session.username,
     role: req.session.role,
     version: VERSION,
     preferences: toPreferences(user),
+    totpSetupRequired: computeTotpSetupRequired(req.session.role!, user.totp_enabled, requireAdminTotp),
   });
 }));
 

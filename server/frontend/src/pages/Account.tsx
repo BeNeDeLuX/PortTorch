@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, Me, ScannerAgent, TwoFactorSetup } from "../api";
-import { IconCheck, IconRefresh, IconSave, IconX } from "../components/icons";
+import { IconCheck, IconRefresh, IconSave, IconWarning, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { applyTheme } from "../lib/theme";
 import { applyAccent } from "../lib/accent";
@@ -21,7 +21,23 @@ const TIMEZONES: string[] = (() => {
   }
 })();
 
-export default function Account({ me, onLogout }: { me: Me; onLogout: () => void }) {
+export default function Account({
+  me,
+  onLogout,
+  onMeRefresh,
+}: {
+  me: Me;
+  onLogout: () => void;
+  // Re-fetches /auth/me into App.tsx's own `me` state - needed here
+  // specifically because completing 2FA setup can flip
+  // me.totpSetupRequired from true to false, which App.tsx's route
+  // gating (routeElement) reads on every navigation; without this, the
+  // in-memory `me` object would stay stale until the next full page
+  // load/login (the existing behavior for every other preference on this
+  // page), leaving someone who just complied stuck being redirected back
+  // to this same page.
+  onMeRefresh: () => void;
+}) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [setup, setSetup] = useState<TwoFactorSetup | null>(null);
   const [setupCode, setSetupCode] = useState("");
@@ -102,6 +118,7 @@ export default function Account({ me, onLogout }: { me: Me; onLogout: () => void
       setSetup(null);
       setSetupCode("");
       setEnabled(true);
+      onMeRefresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Invalid code");
     }
@@ -140,6 +157,13 @@ export default function Account({ me, onLogout }: { me: Me; onLogout: () => void
       <p className="empty">
         Signed in as <strong>{me.username}</strong> ({me.role}).
       </p>
+
+      {me.totpSetupRequired && (
+        <div className="callout-danger">
+          <IconWarning /> Your administrator requires 2FA on every admin account. Set it up below to continue using
+          the rest of PortTorch - until then, this page is the only one you can reach.
+        </div>
+      )}
 
       <h3>Preferences</h3>
       <p className="empty">

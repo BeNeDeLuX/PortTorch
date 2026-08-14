@@ -479,6 +479,13 @@ export interface WebhooksTable {
   created_at: ColumnType<Date, string | undefined, never>;
 }
 
+// Singleton row (id always 1) of global, admin-configurable toggles that
+// don't belong to any one user's account - see settings/appSettings.ts.
+export interface AppSettingsTable {
+  id: Generated<number>;
+  require_admin_totp: ColumnType<boolean, boolean | undefined, boolean>;
+}
+
 export interface AuditLogTable {
   id: Generated<string>;
   event: string;
@@ -521,4 +528,5 @@ export interface Database {
   scan_profiles: ScanProfilesTable;
   scanner_release_cache: ScannerReleaseCacheTable;
   webserver_tls_alert_state: WebserverTlsAlertStateTable;
+  app_settings: AppSettingsTable;
 }
