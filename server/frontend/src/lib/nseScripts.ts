@@ -262,3 +262,15 @@ export function groupActiveNseScripts(): NSEScriptGroup[] {
     { name: "Other Intrusive", scripts: OTHER_INTRUSIVE_NSE_SCRIPTS },
   ];
 }
+
+// Flat set of every Active Modules script, across all four subcategories
+// - used anywhere that just needs "is this script one of the risky
+// ones?" without caring which subcategory (the profiles table's warning
+// badge, ScanProfilePicker's own warning when a selected Custom profile
+// contains one).
+export const ACTIVE_SCRIPTS: Set<string> = new Set([
+  ...EXPLOIT_NSE_SCRIPTS,
+  ...BRUTE_NSE_SCRIPTS,
+  ...DOS_NSE_SCRIPTS,
+  ...OTHER_INTRUSIVE_NSE_SCRIPTS,
+]);

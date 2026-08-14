@@ -2,11 +2,16 @@ import { FormEvent, useEffect, useState } from "react";
 import { api, Me, ScanProfile } from "../api";
 import { IconEdit, IconPlus, IconSave, IconTrash, IconWarning, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
-import { DEFAULT_NSE_SCRIPTS, groupActiveNseScripts, groupAdditionalNseScripts, NSEScriptGroup } from "../lib/nseScripts";
+import {
+  ACTIVE_SCRIPTS,
+  DEFAULT_NSE_SCRIPTS,
+  groupActiveNseScripts,
+  groupAdditionalNseScripts,
+  NSEScriptGroup,
+} from "../lib/nseScripts";
 
 const ADDITIONAL_GROUPS = groupAdditionalNseScripts();
 const ACTIVE_GROUPS = groupActiveNseScripts();
-const ACTIVE_SCRIPTS = new Set(ACTIVE_GROUPS.flatMap((g) => g.scripts));
 
 function NseGroupList({
   groups,
