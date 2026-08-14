@@ -252,6 +252,25 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
     await load();
   }
 
+  // Same single-agent request-update endpoint, just looped - pure
+  // frontend reuse (Promise.allSettled) rather than a new bulk API
+  // surface, same pattern as the Dashboard's own bulk tag/rescan actions.
+  // Scoped to exactly the agents that would show their own per-agent
+  // "Update" button (updateActions below) - already-pending/failed ones
+  // are left alone, since re-requesting those needs the explicit
+  // re-trigger path, not a blanket retry.
+  async function handleBulkUpdate() {
+    if (
+      !window.confirm(
+        `Request that all ${updatableAgents.length} outdated scanner(s) update themselves to ${latestRelease?.latestVersion ?? "the latest version"}? Each downloads, verifies, and applies the new binary on its own next poll, then resumes serving automatically - no restart needed.`
+      )
+    ) {
+      return;
+    }
+    await Promise.allSettled(updatableAgents.map((a) => api.requestScannerUpdate(a.id)));
+    await load();
+  }
+
   async function handleDelete(a: ScannerAgent) {
     if (
       !window.confirm(
@@ -265,6 +284,14 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
   }
 
   const activeJobByAgent = new Map(activeScanJobs.map((j) => [j.scanner_agent_id, j]));
+
+  // Exactly the set of agents that would show their own per-agent
+  // "Update" button (see updateActions below) - kept as one definition so
+  // the bulk button's count/confirm text and the actual bulk action can
+  // never drift from what's individually offered.
+  const updatableAgents = agents.filter(
+    (a) => !a.revoked_at && isVersionBehind(a.version, latestRelease?.latestVersion ?? null) && looksLikeServeMode(a) && !a.update_requested_at
+  );
 
   const scanning = agents.filter((a) => !a.revoked_at && activeJobByAgent.has(a.id));
   const idle = agents.filter((a) => !a.revoked_at && !activeJobByAgent.has(a.id));
@@ -356,6 +383,14 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
             <IconPlus /> Create
           </button>
         </form>
+      )}
+
+      {isAdmin && updatableAgents.length > 0 && (
+        <p>
+          <button className="btn-icon-label" onClick={handleBulkUpdate}>
+            <IconRocket /> Update all outdated scanners ({updatableAgents.length})
+          </button>
+        </p>
       )}
 
       {loading ? (
