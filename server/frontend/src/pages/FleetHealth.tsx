@@ -3,7 +3,6 @@ import { Link } from "react-router";
 import {
   ActiveScanJob,
   api,
-  ExpiringCertificate,
   Me,
   QueuedScanRequest,
   ScannerAgent,
@@ -72,18 +71,21 @@ function HealthCard({
 }
 
 // A read-only dashboard aggregating signals that otherwise only show up
-// scattered across the Scanner Agents, Certificates, and Settings pages -
-// scanner staleness/version drift, the scan_requests queue backlog,
-// pending self-update outcomes, and TLS certificate expiry (both fleet-
-// wide and the webserver's own). No new backend endpoints - every card
-// is computed client-side from data these other pages already fetch.
+// scattered across the Scanner Agents and Settings pages - scanner
+// staleness/version drift, the scan_requests queue backlog, pending
+// self-update outcomes, and the webserver's own TLS certificate expiry.
+// Deliberately doesn't include the fleet-wide Certificates page (TLS
+// certs captured *from scanned hosts*) - those devices aren't part of
+// "our fleet" the way the scanners/webserver itself are, so their
+// certificate hygiene isn't this page's concern. No new backend
+// endpoints - every card is computed client-side from data these other
+// pages already fetch.
 export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [loading, setLoading] = useState(true);
   const [agents, setAgents] = useState<ScannerAgent[]>([]);
   const [latestRelease, setLatestRelease] = useState<ScannerReleaseInfo | null>(null);
   const [activeScanJobs, setActiveScanJobs] = useState<ActiveScanJob[]>([]);
   const [scanQueue, setScanQueue] = useState<QueuedScanRequest[]>([]);
-  const [certs, setCerts] = useState<ExpiringCertificate[]>([]);
   const [webserverCert, setWebserverCert] = useState<TlsCertificateInfo | null>(null);
   const [error, setError] = useState(false);
 
@@ -93,13 +95,11 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
     Promise.all([
       api.agents(),
       api.latestScannerRelease().catch(() => null),
-      api.expiringCertificates(),
       me.role === "admin" ? api.tlsCertificate().catch(() => null) : Promise.resolve(null),
     ])
-      .then(([a, release, c, ws]) => {
+      .then(([a, release, ws]) => {
         setAgents(a);
         setLatestRelease(release);
-        setCerts(c);
         setWebserverCert(ws);
       })
       .catch(() => setError(true))
@@ -171,21 +171,11 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
   const queueStatus: HealthStatus =
     scanQueue.length === 0 ? "ok" : oldestQueuedMs > STALE_QUEUE_THRESHOLD_MS ? "critical" : "warning";
 
-  const soonCerts = certs.filter((c) => certExpiryStatus(c.not_after) === "soon");
-  const expiredCerts = certs.filter((c) => certExpiryStatus(c.not_after) === "expired");
-  const certStatus: HealthStatus = expiredCerts.length > 0 ? "critical" : soonCerts.length > 0 ? "warning" : "ok";
-
   const webserverCertRawStatus = webserverCert ? certExpiryStatus(webserverCert.validTo) : "ok";
   const webserverCertStatus: HealthStatus =
     webserverCertRawStatus === "expired" ? "critical" : webserverCertRawStatus === "soon" ? "warning" : "ok";
 
-  const overall = worstOf(
-    scannerStatus,
-    updatesStatus,
-    queueStatus,
-    certStatus,
-    webserverCert ? webserverCertStatus : "ok"
-  );
+  const overall = worstOf(scannerStatus, updatesStatus, queueStatus, webserverCert ? webserverCertStatus : "ok");
 
   return (
     <div className="dashboard">
@@ -193,13 +183,13 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
 
       <h2>Fleet Health</h2>
       <p className="host-meta">
-        A single overview of scanner staleness, version drift, the scan queue backlog, and TLS certificate expiry -
-        each card links to the page with the full detail.
+        A single overview of scanner staleness, version drift, the scan queue backlog, and the webserver's own TLS
+        certificate expiry - each card links to the page with the full detail.
       </p>
 
       {overall === "ok" ? (
         <div className="callout">
-          <IconCheck /> All systems normal - no stale scans, no queue backlog, and no certificates expiring soon.
+          <IconCheck /> All systems normal - no stale scans, no queue backlog, and no certificate expiring soon.
         </div>
       ) : overall === "warning" ? (
         <div className="callout-warning">
@@ -236,15 +226,6 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
                 new Date(Date.now() - oldestQueuedMs).toISOString()
               )} ago${oldestQueuedMs > STALE_QUEUE_THRESHOLD_MS ? " - target scanner may have stopped polling" : ""}`
             : "Nothing waiting"}
-        </HealthCard>
-
-        <HealthCard to="/certificates" title="Fleet TLS Certificates" status={certStatus}>
-          {certs.length} certificate{certs.length === 1 ? "" : "s"} across all hosts
-          <br />
-          {expiredCerts.length > 0 && `${expiredCerts.length} expired`}
-          {expiredCerts.length > 0 && soonCerts.length > 0 && ", "}
-          {soonCerts.length > 0 && `${soonCerts.length} expiring soon`}
-          {expiredCerts.length === 0 && soonCerts.length === 0 && "None expiring soon"}
         </HealthCard>
 
         {me.role === "admin" && webserverCert && (
