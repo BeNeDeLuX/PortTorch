@@ -8,6 +8,13 @@ export function certExpiryStatus(notAfter: string | null): "expired" | "soon" | 
   return "ok";
 }
 
+// Whole days remaining until expiry - negative once already expired.
+// null when notAfter itself is null (nothing to count down to).
+export function certExpiryDaysLeft(notAfter: string | null): number | null {
+  if (!notAfter) return null;
+  return Math.floor((new Date(notAfter).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+}
+
 export function certExpiryLabel(notAfter: string | null): string {
   switch (certExpiryStatus(notAfter)) {
     case "expired":

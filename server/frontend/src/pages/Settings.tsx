@@ -3,6 +3,7 @@ import { api, Me, TlsCertificateInfo } from "../api";
 import { IconUpload } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime } from "../lib/formatDate";
+import { certExpiryDaysLeft, certExpiryLabel, certExpiryStatus } from "../lib/certExpiry";
 
 // Admin-only, like every other Admin-group page. Lets an admin replace
 // the webserver's own TLS listener certificate (the one every browser/
@@ -76,7 +77,6 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
                 <td>
                   {info.subjectCN ?? "-"}
                   {info.selfSigned && <span className="chip-inline">self-signed</span>}
-                  {info.expired && <span className="update-failed-badge">expired</span>}
                 </td>
               </tr>
               <tr>
@@ -89,7 +89,17 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
               </tr>
               <tr>
                 <th>Valid to</th>
-                <td>{formatDateTime(info.validTo, me.preferences)}</td>
+                <td>
+                  {formatDateTime(info.validTo, me.preferences)}{" "}
+                  <span className={`expiry-label expiry-${certExpiryStatus(info.validTo)}`}>
+                    {certExpiryLabel(info.validTo)}
+                    {(() => {
+                      const days = certExpiryDaysLeft(info.validTo);
+                      if (days === null) return null;
+                      return days >= 0 ? ` (${days}d left)` : ` (${-days}d ago)`;
+                    })()}
+                  </span>
+                </td>
               </tr>
               <tr>
                 <th>Fingerprint (SHA-256)</th>
