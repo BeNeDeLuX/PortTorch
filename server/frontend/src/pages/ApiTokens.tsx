@@ -7,6 +7,21 @@ import { formatDateTime } from "../lib/formatDate";
 type SortKey = "name" | "last_used_at" | "created_at" | "status";
 type SortDirection = "asc" | "desc";
 
+// "Never" (0) needs no date math; the rest are converted to a concrete
+// ISO date at creation time (client-side, same "preset -> concrete value"
+// approach as Trends' day-range chips) - the backend only ever stores a
+// plain expiresAt timestamp or null, it has no concept of "in 30 days".
+const EXPIRY_PRESETS: Array<{ label: string; days: number }> = [
+  { label: "Never", days: 0 },
+  { label: "30 days", days: 30 },
+  { label: "90 days", days: 90 },
+  { label: "1 year", days: 365 },
+];
+
+function tokenIsExpired(t: ApiToken): boolean {
+  return t.expires_at !== null && new Date(t.expires_at).getTime() < Date.now();
+}
+
 function compareTokens(a: ApiToken, b: ApiToken, key: SortKey, direction: SortDirection): number {
   const sign = direction === "asc" ? 1 : -1;
   switch (key) {
@@ -32,6 +47,7 @@ function compareTokens(a: ApiToken, b: ApiToken, key: SortKey, direction: SortDi
 export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [name, setName] = useState("");
+  const [expiryDays, setExpiryDays] = useState(0);
   const [newToken, setNewToken] = useState<{ name: string; token: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>("created_at");
@@ -67,9 +83,11 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
-    const created = await api.createApiToken(name.trim());
+    const expiresAt = expiryDays > 0 ? new Date(Date.now() + expiryDays * 24 * 60 * 60_000).toISOString() : null;
+    const created = await api.createApiToken(name.trim(), expiresAt);
     setNewToken({ name: created.name, token: created.token });
     setName("");
+    setExpiryDays(0);
     await load();
   }
 
@@ -104,6 +122,13 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
 
       <form className="inline-form" onSubmit={handleCreate}>
         <input placeholder="Token name, e.g. soar-enrichment" value={name} onChange={(e) => setName(e.target.value)} />
+        <select value={expiryDays} onChange={(e) => setExpiryDays(Number(e.target.value))}>
+          {EXPIRY_PRESETS.map((p) => (
+            <option key={p.days} value={p.days}>
+              Expires: {p.label}
+            </option>
+          ))}
+        </select>
         <button type="submit" className="btn-icon-label">
           <IconPlus /> Create
         </button>
@@ -120,6 +145,7 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
               <th onClick={() => setSort("name")}>Name{sortIndicator("name")}</th>
               <th onClick={() => setSort("last_used_at")}>Last used{sortIndicator("last_used_at")}</th>
               <th onClick={() => setSort("created_at")}>Created{sortIndicator("created_at")}</th>
+              <th>Expires</th>
               <th onClick={() => setSort("status")}>Status{sortIndicator("status")}</th>
               <th></th>
             </tr>
@@ -130,6 +156,16 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
                 <td>{t.name}</td>
                 <td>{t.last_used_at ? formatDateTime(t.last_used_at, me.preferences) : "never"}</td>
                 <td>{formatDateTime(t.created_at, me.preferences)}</td>
+                <td>
+                  {t.expires_at ? (
+                    <>
+                      {formatDateTime(t.expires_at, me.preferences)}
+                      {tokenIsExpired(t) && !t.revoked_at && <span className="expiry-label expiry-expired"> expired</span>}
+                    </>
+                  ) : (
+                    "never"
+                  )}
+                </td>
                 <td>{t.revoked_at ? `revoked ${formatDateTime(t.revoked_at, me.preferences)}` : "active"}</td>
                 <td>
                   {!t.revoked_at && (

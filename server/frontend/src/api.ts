@@ -495,6 +495,7 @@ export interface ApiToken {
   last_used_at: string | null;
   created_at: string;
   revoked_at: string | null;
+  expires_at: string | null;
 }
 
 export interface ApiTokenWithSecret extends ApiToken {
@@ -737,8 +738,8 @@ export const api = {
   deleteAgent: (id: string) => request<void>(`/api/agents/${id}`, { method: "DELETE" }),
 
   apiTokens: () => request<ApiToken[]>("/api/api-tokens"),
-  createApiToken: (name: string) =>
-    request<ApiTokenWithSecret>("/api/api-tokens", { method: "POST", body: JSON.stringify({ name }) }),
+  createApiToken: (name: string, expiresAt: string | null = null) =>
+    request<ApiTokenWithSecret>("/api/api-tokens", { method: "POST", body: JSON.stringify({ name, expiresAt }) }),
   revokeApiToken: (id: string) => request<void>(`/api/api-tokens/${id}/revoke`, { method: "POST" }),
 
   schedules: () => request<Schedule[]>("/api/schedules"),

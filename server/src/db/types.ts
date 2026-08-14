@@ -91,6 +91,10 @@ export interface ApiTokensTable {
   last_used_at: Date | null;
   created_at: ColumnType<Date, string | undefined, never>;
   revoked_at: Date | null;
+  // Optional, set once at creation and never edited afterward - null
+  // means "never expires" (the behavior for every token created before
+  // this column existed). See apiTokens/tokenAuth.ts for enforcement.
+  expires_at: Date | null;
 }
 
 export interface ScanJobsTable {

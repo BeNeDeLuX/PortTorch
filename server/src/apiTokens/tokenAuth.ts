@@ -34,6 +34,9 @@ export async function tokenAuth(req: Request, res: Response, next: NextFunction)
     .select(["id", "name"])
     .where("token_hash", "=", providedHash)
     .where("revoked_at", "is", null)
+    // null expires_at means "never expires" - same "absence means
+    // default-allow" idiom as scan_excludes.scanner_agent_id IS NULL.
+    .where((eb) => eb.or([eb("expires_at", "is", null), eb("expires_at", ">", new Date())]))
     .executeTakeFirst();
 
   if (!token) {
