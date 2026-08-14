@@ -1302,6 +1302,89 @@ th {
   font-weight: 600;
 }
 
+/* Fleet Health overview's "one or more areas need attention soon" banner
+   - same box shape as .callout-danger, --warning instead of --danger for
+   a softer heads-up rather than an active problem. */
+.callout-warning {
+  background: var(--panel);
+  border: 1px solid var(--warning);
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  color: var(--warning);
+}
+
+.callout-warning svg {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0 2rem;
+}
+
+.health-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 6px;
+  padding: 0.9rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  text-decoration: none;
+  color: inherit;
+}
+
+.health-card:hover {
+  border-color: var(--accent);
+}
+
+.health-card.health-ok {
+  border-left-color: var(--accent);
+}
+
+.health-card.health-warning {
+  border-left-color: var(--warning);
+}
+
+.health-card.health-critical {
+  border-left-color: var(--danger);
+}
+
+.health-card-title {
+  font-weight: 600;
+}
+
+.health-card-status {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.health-card-status.health-ok {
+  color: var(--accent);
+}
+
+.health-card-status.health-warning {
+  color: var(--warning);
+}
+
+.health-card-status.health-critical {
+  color: var(--danger);
+}
+
+.health-card-detail {
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .key-reveal {
   background: var(--bg);
   border: 1px solid var(--border);

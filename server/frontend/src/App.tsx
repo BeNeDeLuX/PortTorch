@@ -21,6 +21,7 @@ import Excludes from "./pages/Excludes";
 import ApiTokens from "./pages/ApiTokens";
 import ScanProfiles from "./pages/ScanProfiles";
 import Settings from "./pages/Settings";
+import FleetHealth from "./pages/FleetHealth";
 
 export default function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -134,6 +135,10 @@ export default function App() {
         element={
           me && me.role === "admin" ? <ScanProfiles me={me} onLogout={() => setMe(null)} /> : <Navigate to="/" replace />
         }
+      />
+      <Route
+        path="/health"
+        element={me ? <FleetHealth me={me} onLogout={() => setMe(null)} /> : <Navigate to="/login" replace />}
       />
       <Route
         path="/settings"
