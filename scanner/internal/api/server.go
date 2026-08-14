@@ -16,36 +16,50 @@ import (
 	"porttorch/scanner/internal/client"
 	"porttorch/scanner/internal/pipeline"
 	"porttorch/scanner/internal/progress"
+	"porttorch/scanner/internal/submitqueue"
 )
 
 // Server is the scanner's REST API, through which scans can be triggered
 // remotely. Uses the same orchestrator as the TUI and the "scan" CLI
 // subcommand.
 type Server struct {
-	echo   *echo.Echo
-	client *client.Client
-	pcfg   pipeline.Config
-	token  string
-	logger *slog.Logger
+	echo     *echo.Echo
+	client   *client.Client
+	pcfg     pipeline.Config
+	queueDir string
+	token    string
+	logger   *slog.Logger
+	started  time.Time
 
 	mu      sync.RWMutex
 	scans   map[string]*scanState
 	cancels map[string]context.CancelFunc
+
+	metricsMu    sync.Mutex
+	scansTotal   map[string]int // keyed by terminal status: completed/failed/cancelled
+	pollsFailed  int
+	lastPollOK   time.Time
+	lastPollFail time.Time
 }
 
 // NewServer builds the Echo app including routes. If token is non-empty,
 // all requests must send an "Authorization: Bearer <token>" header. logger
 // should be a JSON logger (see internal/logging) so that all stdout output
-// of "serve" mode remains consistently machine-readable.
-func NewServer(c *client.Client, pcfg pipeline.Config, token string, logger *slog.Logger) *Server {
+// of "serve" mode remains consistently machine-readable. queueDir is
+// where a failed submission is durably queued for retry - see
+// internal/submitqueue.
+func NewServer(c *client.Client, pcfg pipeline.Config, queueDir, token string, logger *slog.Logger) *Server {
 	s := &Server{
-		echo:    echo.New(),
-		client:  c,
-		pcfg:    pcfg,
-		token:   token,
-		logger:  logger,
-		scans:   make(map[string]*scanState),
-		cancels: make(map[string]context.CancelFunc),
+		echo:       echo.New(),
+		client:     c,
+		pcfg:       pcfg,
+		queueDir:   queueDir,
+		token:      token,
+		logger:     logger,
+		started:    time.Now(),
+		scans:      make(map[string]*scanState),
+		cancels:    make(map[string]context.CancelFunc),
+		scansTotal: make(map[string]int),
 	}
 	s.echo.HideBanner = true
 	s.echo.HidePort = true
@@ -56,6 +70,7 @@ func NewServer(c *client.Client, pcfg pipeline.Config, token string, logger *slo
 	}
 
 	s.echo.GET("/healthz", s.handleHealth)
+	s.echo.GET("/metrics", s.handleMetrics)
 	s.echo.POST("/scans", s.handleCreateScan)
 	s.echo.GET("/scans/:id", s.handleGetScan)
 
@@ -207,6 +222,38 @@ func (s *Server) IsScanning() bool {
 	return len(s.cancels) > 0
 }
 
+// StartRetryWatcher periodically drains the submit queue (see
+// internal/submitqueue) in the background - the "serve" process is the
+// only entry point long-running enough for this to matter; "scan"/"menu"
+// only ever drain once, at the very start of their single run. Blocks
+// until ctx is done - typically started alongside s.Start()/StartPolling()/
+// StartCancelWatcher().
+func (s *Server) StartRetryWatcher(ctx context.Context, interval time.Duration) {
+	submitqueue.StartRetryWatcher(ctx, s.queueDir, s.client, interval, func(result submitqueue.DrainResult) {
+		if result.Empty() {
+			return
+		}
+		s.logger.Info("submit queue drained", "event", "submitqueue.drained", "succeeded", result.Succeeded, "gave_up", result.GaveUp, "pending", result.Pending, "dropped", result.Dropped)
+	})
+}
+
+func (s *Server) recordPollResult(ok bool) {
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	if ok {
+		s.lastPollOK = time.Now()
+	} else {
+		s.pollsFailed++
+		s.lastPollFail = time.Now()
+	}
+}
+
+func (s *Server) recordScanResult(status string) {
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	s.scansTotal[status]++
+}
+
 func (s *Server) checkCancellations(ctx context.Context) {
 	s.mu.RLock()
 	jobIDs := make([]string, 0, len(s.cancels))
@@ -240,9 +287,11 @@ func (s *Server) pollOnce(ctx context.Context) {
 	scanReq, err := s.client.PollNextScanRequest(pollCtx)
 	cancel()
 	if err != nil {
+		s.recordPollResult(false)
 		s.logger.Error("polling scan requests failed", "event", "poll.failed", "error", err.Error())
 		return
 	}
+	s.recordPollResult(true)
 	if scanReq == nil {
 		return
 	}
@@ -310,6 +359,7 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, state
 	excludes, err := s.client.GetExcludes(context.Background())
 	if err != nil {
 		state.setFailed(err)
+		s.recordScanResult("failed")
 		_ = s.client.CompleteScanJob(context.Background(), jobID, "failed")
 		s.logger.Error("fetching excludes failed", "event", "scan.failed", "scan_job_id", jobID, "error", err.Error())
 		return
@@ -318,6 +368,7 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, state
 	probeHostnames, err := s.client.GetProbeHostnames(context.Background())
 	if err != nil {
 		state.setFailed(err)
+		s.recordScanResult("failed")
 		_ = s.client.CompleteScanJob(context.Background(), jobID, "failed")
 		s.logger.Error("fetching probe hostnames failed", "event", "scan.failed", "scan_job_id", jobID, "error", err.Error())
 		return
@@ -368,9 +419,12 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, state
 				tracker.Progress(kind, fmt.Sprintf("submission for %s failed: %v", host.IP, err))
 			})
 			if err != nil {
-				state.appendLog("host submission for " + host.IP + " failed")
-				s.logger.Warn("host submission failed, skipping", "event", "scan.host_submit_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", err.Error())
-				tracker.Progress("submit", fmt.Sprintf("host submission for %s failed: %v", host.IP, err))
+				state.appendLog("host submission for " + host.IP + " failed, queued for retry")
+				s.logger.Warn("host submission failed, queuing for retry", "event", "scan.host_submit_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", err.Error())
+				tracker.Progress("submit", fmt.Sprintf("host submission for %s failed, queued for retry: %v", host.IP, err))
+				if queueErr := submitqueue.Enqueue(s.queueDir, jobID, host); queueErr != nil {
+					s.logger.Error("queuing failed host submission for retry also failed, result lost", "event", "submitqueue.enqueue_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", queueErr.Error())
+				}
 				return
 			}
 
@@ -400,12 +454,14 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, state
 	// regardless of how the underlying exec errors happened to surface.
 	if scanCtx.Err() != nil {
 		state.setCancelled()
+		s.recordScanResult("cancelled")
 		s.logger.Info("scan cancelled", "event", "scan.cancelled", "scan_job_id", jobID, "hosts_submitted", hostsSubmitted, "duration_ms", time.Since(start).Milliseconds())
 		_ = s.client.CompleteScanJob(context.Background(), jobID, "cancelled")
 		return
 	}
 	if err != nil {
 		state.setFailed(err)
+		s.recordScanResult("failed")
 		s.logger.Error("scan failed", "event", "scan.failed", "scan_job_id", jobID, "error", err.Error(), "duration_ms", time.Since(start).Milliseconds())
 		_ = s.client.CompleteScanJob(context.Background(), jobID, "failed")
 		return
@@ -413,10 +469,12 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, state
 
 	if err := s.client.CompleteScanJob(context.Background(), jobID, "completed"); err != nil {
 		state.setFailed(err)
+		s.recordScanResult("failed")
 		s.logger.Error("reporting scan job completion failed", "event", "scan.complete_report_failed", "scan_job_id", jobID, "error", err.Error())
 		return
 	}
 	state.setCompleted(result)
+	s.recordScanResult("completed")
 
 	s.logger.Info("scan completed",
 		"event", "scan.completed",

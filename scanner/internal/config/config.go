@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 
@@ -76,6 +77,19 @@ type Config struct {
 	// PollIntervalSeconds controls how often "scanner serve" asks the
 	// webserver for pending scan requests (rescan button/schedules).
 	PollIntervalSeconds int `yaml:"pollIntervalSeconds"`
+
+	// SubmitQueueDir holds host results that failed to submit to the
+	// webserver (see internal/submitqueue) until they can be retried -
+	// defaults to a "submit-queue" directory next to the config file
+	// itself if left unset, so a normal install needs no extra
+	// configuration for this to work.
+	SubmitQueueDir string `yaml:"submitQueueDir,omitempty"`
+	// RetryIntervalSeconds controls how often "scanner serve" retries
+	// queued submissions in the background, independent of the scan-
+	// request poll interval - "scan"/"menu" only ever drain the queue
+	// once, at startup, since they have no ongoing loop to periodically
+	// retry from.
+	RetryIntervalSeconds int `yaml:"retryIntervalSeconds"`
 }
 
 func defaults() Config {
@@ -105,6 +119,8 @@ func defaults() Config {
 
 		ListenAddr:          ":9090",
 		PollIntervalSeconds: 15,
+
+		RetryIntervalSeconds: 60,
 	}
 }
 
@@ -126,6 +142,14 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.APIKey == "" {
 		return nil, fmt.Errorf("config %s: apiKey is required", path)
+	}
+
+	if cfg.SubmitQueueDir == "" {
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			absPath = path
+		}
+		cfg.SubmitQueueDir = filepath.Join(filepath.Dir(absPath), "submit-queue")
 	}
 
 	return &cfg, nil

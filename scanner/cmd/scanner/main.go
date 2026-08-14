@@ -18,6 +18,7 @@ import (
 	"porttorch/scanner/internal/logging"
 	"porttorch/scanner/internal/pipeline"
 	"porttorch/scanner/internal/progress"
+	"porttorch/scanner/internal/submitqueue"
 	"porttorch/scanner/internal/tui"
 	"porttorch/scanner/internal/updater"
 	"porttorch/scanner/internal/version"
@@ -89,7 +90,7 @@ func newMenuCmd(configPath *string) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("building api client: %w", err)
 			}
-			return tui.Run(c, cfg.Pipeline())
+			return tui.Run(c, cfg.Pipeline(), cfg.SubmitQueueDir)
 		},
 	}
 }
@@ -120,7 +121,16 @@ func newServeCmd(configPath *string) *cobra.Command {
 				log.Warn("controlApiToken is not set, the scanner API is reachable without authentication", "event", "serve.no_auth_token")
 			}
 
-			server := api.NewServer(c, cfg.Pipeline(), cfg.ControlAPIToken, log)
+			server := api.NewServer(c, cfg.Pipeline(), cfg.SubmitQueueDir, cfg.ControlAPIToken, log)
+
+			// Flushes any backlog left behind by a prior run before this
+			// process starts serving - the periodic StartRetryWatcher
+			// below only fires after its own first interval elapses, so
+			// this synchronous drain avoids a startup gap where a backlog
+			// would otherwise just sit there until then.
+			if drained := submitqueue.Drain(context.Background(), cfg.SubmitQueueDir, c); !drained.Empty() {
+				log.Info("submit queue drained", "event", "submitqueue.drained", "succeeded", drained.Succeeded, "gave_up", drained.GaveUp, "pending", drained.Pending, "dropped", drained.Dropped)
+			}
 
 			pollInterval := time.Duration(cfg.PollIntervalSeconds) * time.Second
 			go server.StartPolling(context.Background(), pollInterval)
@@ -137,6 +147,10 @@ func newServeCmd(configPath *string) *cobra.Command {
 			// never to the one-shot "scan"/"menu" processes.
 			go updater.StartUpdateWatcher(context.Background(), c, server, pollInterval, log)
 			log.Info("scanner update watcher started", "event", "serve.update_watcher_started", "poll_interval", pollInterval.String())
+
+			retryInterval := time.Duration(cfg.RetryIntervalSeconds) * time.Second
+			go server.StartRetryWatcher(context.Background(), retryInterval)
+			log.Info("submit retry watcher started", "event", "serve.retry_watcher_started", "retry_interval", retryInterval.String())
 
 			log.Info("scanner api started", "event", "serve.started", "listen_addr", listenAddr)
 			return server.Start(listenAddr)
@@ -161,6 +175,15 @@ func runScan(configPath, target, ports string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Opportunistically flushes any backlog left behind by a prior run's
+	// submission failures (e.g. the webserver was briefly unreachable)
+	// before this run's own scan even starts - see internal/submitqueue's
+	// doc comment. A one-shot process like this has no ongoing loop to
+	// retry from later, so "once, at startup" is the only chance it gets.
+	if drained := submitqueue.Drain(ctx, cfg.SubmitQueueDir, c); !drained.Empty() {
+		log.Info("submit queue drained", "event", "submitqueue.drained", "succeeded", drained.Succeeded, "gave_up", drained.GaveUp, "pending", drained.Pending, "dropped", drained.Dropped)
+	}
 
 	// Fetched fresh (not cached) so the webserver's most current exclude
 	// list is always honored; fetch failure aborts the scan rather than
@@ -222,8 +245,11 @@ func runScan(configPath, target, ports string) error {
 				tracker.Progress(kind, fmt.Sprintf("submission for %s failed: %v", host.IP, err))
 			})
 			if err != nil {
-				log.Warn("host submission failed, skipping", "event", "scan.host_submit_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", err.Error())
-				tracker.Progress("submit", fmt.Sprintf("host submission for %s failed: %v", host.IP, err))
+				log.Warn("host submission failed, queuing for retry", "event", "scan.host_submit_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", err.Error())
+				tracker.Progress("submit", fmt.Sprintf("host submission for %s failed, queued for retry: %v", host.IP, err))
+				if queueErr := submitqueue.Enqueue(cfg.SubmitQueueDir, jobID, host); queueErr != nil {
+					log.Error("queuing failed host submission for retry also failed, result lost", "event", "submitqueue.enqueue_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", queueErr.Error())
+				}
 				return
 			}
 

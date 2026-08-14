@@ -37,8 +37,9 @@ var (
 )
 
 type model struct {
-	client *client.Client
-	pcfg   pipeline.Config
+	client   *client.Client
+	pcfg     pipeline.Config
+	queueDir string
 
 	state viewState
 
@@ -59,7 +60,7 @@ type model struct {
 }
 
 // New builds the initial Bubbletea model for the interactive scan menu.
-func New(c *client.Client, pcfg pipeline.Config) model {
+func New(c *client.Client, pcfg pipeline.Config, queueDir string) model {
 	ti := textinput.New()
 	ti.Placeholder = "192.168.1.0/24 or 192.168.1.10"
 	ti.Focus()
@@ -78,6 +79,7 @@ func New(c *client.Client, pcfg pipeline.Config) model {
 	return model{
 		client:      c,
 		pcfg:        pcfg,
+		queueDir:    queueDir,
 		state:       viewTargetInput,
 		targetInput: ti,
 		portsInput:  pi,
@@ -118,7 +120,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.log = []string{fmt.Sprintf("Scan job %s started", msg.jobID)}
 		return m, tea.Batch(
 			m.spinner.Tick,
-			runScanCmd(m.client, m.pcfg, m.jobID, m.target, m.ports, m.progressCh),
+			runScanCmd(m.client, m.pcfg, m.queueDir, m.jobID, m.target, m.ports, m.progressCh),
 			waitForProgress(m.progressCh),
 		)
 
@@ -209,7 +211,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) reset() model {
-	fresh := New(m.client, m.pcfg)
+	fresh := New(m.client, m.pcfg, m.queueDir)
 	return fresh
 }
 

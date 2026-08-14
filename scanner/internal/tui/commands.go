@@ -14,6 +14,7 @@ import (
 	// its own bubbletea message type (progressMsg/progressCh/waitForProgress),
 	// unrelated to this package.
 	scanprogress "porttorch/scanner/internal/progress"
+	"porttorch/scanner/internal/submitqueue"
 )
 
 func createScanJobCmd(c *client.Client, target, ports string) tea.Cmd {
@@ -42,8 +43,17 @@ func waitForProgress(ch <-chan progressMsg) tea.Cmd {
 // reports the final scan_job status itself (completed/failed) before
 // returning, since there's no separate "finalize" step anymore once
 // submission is interleaved with scanning.
-func runScanCmd(c *client.Client, pcfg pipeline.Config, jobID, target, ports string, progressCh chan<- progressMsg) tea.Cmd {
+func runScanCmd(c *client.Client, pcfg pipeline.Config, queueDir, jobID, target, ports string, progressCh chan<- progressMsg) tea.Cmd {
 	return func() tea.Msg {
+		// Opportunistically flushes any backlog left behind by a prior
+		// run's submission failures before this run's own scan starts -
+		// see internal/submitqueue's doc comment. The menu TUI has no
+		// ongoing background loop to retry from later (unlike "serve"),
+		// so "once, at the start of each scan" is its only chance.
+		if drained := submitqueue.Drain(context.Background(), queueDir, c); !drained.Empty() {
+			progressCh <- progressMsg{stage: "submitqueue", message: fmt.Sprintf("retry queue: %d succeeded, %d gave up, %d dropped (corrupt), %d still pending", drained.Succeeded, drained.GaveUp, drained.Dropped, drained.Pending)}
+		}
+
 		// Fetched fresh rather than cached, so the webserver's most
 		// current exclude list always takes effect; fetch failure aborts
 		// the scan rather than proceeding unfiltered.
@@ -86,7 +96,13 @@ func runScanCmd(c *client.Client, pcfg pipeline.Config, jobID, target, ports str
 					tracker.Progress(kind, msg)
 				})
 				if err != nil {
-					msg := fmt.Sprintf("host submission for %s failed: %v", host.IP, err)
+					if queueErr := submitqueue.Enqueue(queueDir, jobID, host); queueErr != nil {
+						msg := fmt.Sprintf("host submission for %s failed and could not be queued for retry, result lost: %v", host.IP, queueErr)
+						progressCh <- progressMsg{stage: "submit", message: msg}
+						tracker.Progress("submit", msg)
+						return
+					}
+					msg := fmt.Sprintf("host submission for %s failed, queued for retry: %v", host.IP, err)
 					progressCh <- progressMsg{stage: "submit", message: msg}
 					tracker.Progress("submit", msg)
 					return

@@ -19,7 +19,7 @@ func typeAndEnter(t *testing.T, m model, text string) model {
 }
 
 func TestKeyboardNavigation(t *testing.T) {
-	m := New(nil, pipeline.Config{})
+	m := New(nil, pipeline.Config{}, "")
 	if m.state != viewTargetInput {
 		t.Fatalf("expected initial state viewTargetInput, got %v", m.state)
 	}
@@ -52,7 +52,7 @@ func TestKeyboardNavigation(t *testing.T) {
 func TestCtrlCQuitsFromAnyState(t *testing.T) {
 	states := []viewState{viewTargetInput, viewPortsInput, viewConfirm, viewRunning, viewDone, viewError}
 	for _, st := range states {
-		m := New(nil, pipeline.Config{})
+		m := New(nil, pipeline.Config{}, "")
 		m.state = st
 		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 		if cmd == nil {
@@ -66,7 +66,7 @@ func TestCtrlCQuitsFromAnyState(t *testing.T) {
 }
 
 func TestAsyncFlowTransitions(t *testing.T) {
-	m := New(nil, pipeline.Config{})
+	m := New(nil, pipeline.Config{}, "")
 	m.state = viewCreatingJob
 	m.target = "10.0.0.5"
 	m.ports = "80,443"
