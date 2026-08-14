@@ -430,11 +430,12 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
                               </button>
                             )}
                             {isAdmin && updateActions(a)}
-                            {isAdmin && (
-                              <button className="btn-icon-label" onClick={() => handleRevoke(a)}>
-                                <IconBan /> Revoke
-                              </button>
-                            )}
+                            {/* No Revoke here, deliberately - a scanning
+                                agent's scan has to be stopped first (see
+                                the Stop button above); revoking mid-scan
+                                would just leave it authenticated but
+                                unable to report the running job's
+                                outcome. Idle agents get Revoke below. */}
                           </div>
                         </td>
                       )}
