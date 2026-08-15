@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -58,7 +59,7 @@ func main() {
 }
 
 func newScanCmd(configPath *string) *cobra.Command {
-	var target, ports string
+	var target, ports, targetsFile string
 	var dryRun bool
 
 	cmd := &cobra.Command{
@@ -70,8 +71,18 @@ func newScanCmd(configPath *string) *cobra.Command {
 		// doctor's own SilenceUsage.
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if target != "" && targetsFile != "" {
+				return fmt.Errorf("--target and --targets-file are mutually exclusive")
+			}
+			if targetsFile != "" {
+				combined, err := parseTargetsFile(targetsFile)
+				if err != nil {
+					return err
+				}
+				target = combined
+			}
 			if target == "" {
-				return fmt.Errorf("--target is required (IPv4 single IP/CIDR/range, or a single IPv6 address / comma-separated list of them)")
+				return fmt.Errorf("--target or --targets-file is required (IPv4 single IP/CIDR/range, or a single IPv6 address / comma-separated list of them)")
 			}
 			if ports == "" {
 				return fmt.Errorf("--ports is required (e.g. 1-1000 or 22,80,443)")
@@ -84,8 +95,39 @@ func newScanCmd(configPath *string) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&target, "target", "", "Target: IPv4 single IP/CIDR/range (e.g. 192.168.1.0/24) or a single IPv6 address / comma-separated list (e.g. 2001:db8::1)")
 	cmd.Flags().StringVar(&ports, "ports", "", "Port spec, e.g. 1-1000 or 22,80,443")
+	cmd.Flags().StringVar(&targetsFile, "targets-file", "", "Path to a file with one target spec per line (IPv4 IP/CIDR/range, or a single IPv6 address - never mixed) - combined into one scan, exactly as if joined with commas and passed to --target. Blank lines and lines starting with # are ignored. Mutually exclusive with --target.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would actually be scanned (effective targets/ports after excludes) without running masscan/nmap or creating a scan job")
 	return cmd
+}
+
+// parseTargetsFile reads target-spec fragments from path, one per line -
+// blank lines and lines starting with "#" are skipped, a plain comment
+// convention matching this project's own config.yaml style. Joins them
+// with "," into exactly the same combined-target-list string --target
+// would already accept directly: masscan's own target-spec grammar
+// natively accepts a single positional argument that's itself a
+// comma-separated list of IPs/CIDRs/ranges (confirmed against a real
+// masscan run), and parseIPv6TargetList already accepts a comma-separated
+// list of bare addresses (see its own doc comment) - so this needs no
+// changes anywhere in the pipeline package, it just builds the exact
+// string a user would otherwise have typed by hand.
+func parseTargetsFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading targets file %s: %w", path, err)
+	}
+	var targets []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		targets = append(targets, line)
+	}
+	if len(targets) == 0 {
+		return "", fmt.Errorf("targets file %s contains no targets (blank lines and lines starting with # are ignored)", path)
+	}
+	return strings.Join(targets, ","), nil
 }
 
 func newMenuCmd(configPath *string) *cobra.Command {
@@ -162,7 +204,7 @@ func newServeCmd(configPath *string) *cobra.Command {
 			// this synchronous drain avoids a startup gap where a backlog
 			// would otherwise just sit there until then.
 			if drained := submitqueue.Drain(context.Background(), cfg.SubmitQueueDir, c); !drained.Empty() {
-				log.Info("submit queue drained", "event", "submitqueue.drained", "succeeded", drained.Succeeded, "gave_up", drained.GaveUp, "pending", drained.Pending, "dropped", drained.Dropped)
+				log.Info("submit queue drained", "event", "submitqueue.drained", "succeeded", drained.Succeeded, "gave_up", drained.GaveUp, "pending", drained.Pending, "dropped", drained.Dropped, "rejected", drained.Rejected)
 			}
 
 			pollInterval := time.Duration(cfg.PollIntervalSeconds) * time.Second
@@ -215,7 +257,7 @@ func runScan(configPath, target, ports string) error {
 	// doc comment. A one-shot process like this has no ongoing loop to
 	// retry from later, so "once, at startup" is the only chance it gets.
 	if drained := submitqueue.Drain(ctx, cfg.SubmitQueueDir, c); !drained.Empty() {
-		log.Info("submit queue drained", "event", "submitqueue.drained", "succeeded", drained.Succeeded, "gave_up", drained.GaveUp, "pending", drained.Pending, "dropped", drained.Dropped)
+		log.Info("submit queue drained", "event", "submitqueue.drained", "succeeded", drained.Succeeded, "gave_up", drained.GaveUp, "pending", drained.Pending, "dropped", drained.Dropped, "rejected", drained.Rejected)
 	}
 
 	// A permanent local record of every host found, independent of the
@@ -288,10 +330,18 @@ func runScan(configPath, target, ports string) error {
 				tracker.Progress(kind, fmt.Sprintf("submission for %s failed: %v", host.IP, err))
 			})
 			if err != nil {
-				log.Warn("host submission failed, queuing for retry", "event", "scan.host_submit_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", err.Error())
-				tracker.Progress("submit", fmt.Sprintf("host submission for %s failed, queued for retry: %v", host.IP, err))
-				if queueErr := submitqueue.Enqueue(cfg.SubmitQueueDir, jobID, host); queueErr != nil {
-					log.Error("queuing failed host submission for retry also failed, result lost", "event", "submitqueue.enqueue_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", queueErr.Error())
+				if submitqueue.IsPermanentFailure(err) {
+					// The webserver definitively rejected this exact
+					// payload (a 4xx) - retrying it unchanged would never
+					// succeed, so it's not worth queuing at all.
+					log.Error("host submission rejected by webserver, not queuing for retry", "event", "scan.host_submit_rejected", "scan_job_id", jobID, "target_ip", host.IP, "error", err.Error())
+					tracker.Progress("submit", fmt.Sprintf("host submission for %s was rejected (not retried): %v", host.IP, err))
+				} else {
+					log.Warn("host submission failed, queuing for retry", "event", "scan.host_submit_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", err.Error())
+					tracker.Progress("submit", fmt.Sprintf("host submission for %s failed, queued for retry: %v", host.IP, err))
+					if queueErr := submitqueue.Enqueue(cfg.SubmitQueueDir, jobID, host); queueErr != nil {
+						log.Error("queuing failed host submission for retry also failed, result lost", "event", "submitqueue.enqueue_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", queueErr.Error())
+					}
 				}
 				if writeErr := auditLog.Write(auditlog.EntryFromHost(jobID, host, false)); writeErr != nil {
 					log.Warn("writing scan audit log entry failed", "event", "auditlog.write_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", writeErr.Error())

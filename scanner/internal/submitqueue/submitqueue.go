@@ -21,6 +21,7 @@ package submitqueue
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,6 +43,22 @@ const maxAttempts = 10
 // count - a host result this stale has limited value even if eventually
 // resubmitted successfully.
 const maxAge = 7 * 24 * time.Hour
+
+// IsPermanentFailure reports whether err indicates the webserver
+// definitively rejected the submission (a 4xx status - the payload
+// itself is invalid or disallowed) rather than being transiently
+// unreachable (a network error, timeout, or 5xx - worth retrying). A 4xx
+// will fail identically no matter how many times the exact same payload
+// is resubmitted, so Enqueue/Drain both use this to avoid wasting a
+// retry attempt (or a disk write in Enqueue's case) on something that
+// can never succeed.
+func IsPermanentFailure(err error) bool {
+	var httpErr *client.HTTPStatusError
+	if errors.As(err, &httpErr) {
+		return httpErr.StatusCode >= 400 && httpErr.StatusCode < 500
+	}
+	return false
+}
 
 type queuedItem struct {
 	JobID    string              `json:"jobId"`
@@ -137,17 +154,27 @@ type DrainResult struct {
 	// differently: it points at a bug in Enqueue or the filesystem
 	// itself, not an unreachable/rejecting webserver.
 	Dropped int
+	// Rejected counts entries removed after a single attempt because the
+	// webserver responded with a 4xx (see IsPermanentFailure) - distinct
+	// from GaveUp (which exhausted maxAttempts/maxAge retrying a
+	// transient-looking failure), since a 4xx means the exact same
+	// payload will never succeed no matter how many more times it's
+	// retried, worth telling apart from "we tried and it kept timing out".
+	Rejected int
 }
 
 func (r DrainResult) Empty() bool {
-	return r.Succeeded == 0 && r.GaveUp == 0 && r.Pending == 0 && r.Dropped == 0
+	return r.Succeeded == 0 && r.GaveUp == 0 && r.Pending == 0 && r.Dropped == 0 && r.Rejected == 0
 }
 
 // Drain attempts to resubmit every currently-queued host result via c,
-// deleting each entry that either succeeds or has exceeded maxAttempts/
-// maxAge (see the "gave up" case). An entry that's still failing but
-// hasn't hit either limit yet has its attempt count incremented and is
-// left in place for a future Drain call.
+// deleting each entry that either succeeds, has exceeded maxAttempts/
+// maxAge (see the "gave up" case), or gets a definitive 4xx rejection
+// (see IsPermanentFailure - retrying that unchanged would never succeed,
+// so it's removed on the very first attempt rather than consuming
+// maxAttempts worth of pointless retries). An entry that's still failing
+// transiently but hasn't hit either limit yet has its attempt count
+// incremented and is left in place for a future Drain call.
 //
 // Safe to call against an empty or nonexistent queueDir (the common case
 // - most scans never fail a submission at all): ReadDir's error is
@@ -205,6 +232,11 @@ func drainEntry(ctx context.Context, entryDir string, c *client.Client, result *
 	if submitErr == nil {
 		os.RemoveAll(entryDir)
 		result.Succeeded++
+		return
+	}
+	if IsPermanentFailure(submitErr) {
+		os.RemoveAll(entryDir)
+		result.Rejected++
 		return
 	}
 

@@ -241,7 +241,7 @@ func (s *Server) StartRetryWatcher(ctx context.Context, interval time.Duration) 
 		if result.Empty() {
 			return
 		}
-		s.logger.Info("submit queue drained", "event", "submitqueue.drained", "succeeded", result.Succeeded, "gave_up", result.GaveUp, "pending", result.Pending, "dropped", result.Dropped)
+		s.logger.Info("submit queue drained", "event", "submitqueue.drained", "succeeded", result.Succeeded, "gave_up", result.GaveUp, "pending", result.Pending, "dropped", result.Dropped, "rejected", result.Rejected)
 	})
 }
 
@@ -427,11 +427,20 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, state
 				tracker.Progress(kind, fmt.Sprintf("submission for %s failed: %v", host.IP, err))
 			})
 			if err != nil {
-				state.appendLog("host submission for " + host.IP + " failed, queued for retry")
-				s.logger.Warn("host submission failed, queuing for retry", "event", "scan.host_submit_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", err.Error())
-				tracker.Progress("submit", fmt.Sprintf("host submission for %s failed, queued for retry: %v", host.IP, err))
-				if queueErr := submitqueue.Enqueue(s.queueDir, jobID, host); queueErr != nil {
-					s.logger.Error("queuing failed host submission for retry also failed, result lost", "event", "submitqueue.enqueue_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", queueErr.Error())
+				if submitqueue.IsPermanentFailure(err) {
+					// The webserver definitively rejected this exact
+					// payload (a 4xx) - retrying it unchanged would never
+					// succeed, so it's not worth queuing at all.
+					state.appendLog("host submission for " + host.IP + " was rejected (not retried)")
+					s.logger.Error("host submission rejected by webserver, not queuing for retry", "event", "scan.host_submit_rejected", "scan_job_id", jobID, "target_ip", host.IP, "error", err.Error())
+					tracker.Progress("submit", fmt.Sprintf("host submission for %s was rejected (not retried): %v", host.IP, err))
+				} else {
+					state.appendLog("host submission for " + host.IP + " failed, queued for retry")
+					s.logger.Warn("host submission failed, queuing for retry", "event", "scan.host_submit_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", err.Error())
+					tracker.Progress("submit", fmt.Sprintf("host submission for %s failed, queued for retry: %v", host.IP, err))
+					if queueErr := submitqueue.Enqueue(s.queueDir, jobID, host); queueErr != nil {
+						s.logger.Error("queuing failed host submission for retry also failed, result lost", "event", "submitqueue.enqueue_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", queueErr.Error())
+					}
 				}
 				if writeErr := s.auditLog.Write(auditlog.EntryFromHost(jobID, host, false)); writeErr != nil {
 					s.logger.Warn("writing scan audit log entry failed", "event", "auditlog.write_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", writeErr.Error())

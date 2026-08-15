@@ -2,6 +2,8 @@ package submitqueue
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -137,5 +139,84 @@ func TestDrainEmptyOrMissingQueueDir(t *testing.T) {
 	result := Drain(context.Background(), filepath.Join(t.TempDir(), "does-not-exist"), c)
 	if !result.Empty() {
 		t.Errorf("expected an empty result, got %+v", result)
+	}
+}
+
+func TestIsPermanentFailure(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil error", nil, false},
+		{"plain non-HTTP error", errors.New("dial tcp: connection refused"), false},
+		{"400 Bad Request", &client.HTTPStatusError{StatusCode: 400}, true},
+		{"404 Not Found", &client.HTTPStatusError{StatusCode: 404}, true},
+		{"499", &client.HTTPStatusError{StatusCode: 499}, true},
+		{"500 Internal Server Error", &client.HTTPStatusError{StatusCode: 500}, false},
+		{"503 Service Unavailable", &client.HTTPStatusError{StatusCode: 503}, false},
+		// Wrapped, same as how doJSON/uploadImage actually produce it
+		// (fmt.Errorf("%s %s: %w", method, path, &HTTPStatusError{...})) -
+		// errors.As must still find it through the wrapping.
+		{"wrapped 400", fmt.Errorf("POST /api/ingest/hosts: %w", &client.HTTPStatusError{StatusCode: 400}), true},
+		{"wrapped 500", fmt.Errorf("POST /api/ingest/hosts: %w", &client.HTTPStatusError{StatusCode: 500}), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := IsPermanentFailure(c.err); got != c.want {
+				t.Errorf("IsPermanentFailure(%v) = %v, want %v", c.err, got, c.want)
+			}
+		})
+	}
+}
+
+// A 4xx must be rejected on the very first Drain attempt, not treated
+// like a transient failure that gets retried up to maxAttempts times -
+// the exact same payload will fail identically every time, so retrying
+// it would just waste attempts and keep a permanently-doomed entry on
+// disk for no benefit.
+func TestDrainRejectsPermanentFailureImmediately(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":"invalid host data"}`))
+	})
+
+	queueDir := t.TempDir()
+	if err := Enqueue(queueDir, "job-1", testHost(t, false)); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	result := Drain(context.Background(), queueDir, c)
+	if result.Rejected != 1 {
+		t.Errorf("expected Rejected=1 on the first attempt, got %+v", result)
+	}
+	if result.GaveUp != 0 || result.Pending != 0 {
+		t.Errorf("a 4xx must not be treated as a transient failure, got %+v", result)
+	}
+
+	remaining, _ := os.ReadDir(queueDir)
+	if len(remaining) != 0 {
+		t.Errorf("expected the rejected entry to be removed immediately, got %v", remaining)
+	}
+}
+
+// A 5xx (or a plain network error) must still go through the normal
+// transient-failure retry path, not be treated as permanently rejected.
+func TestDrainRetriesServerErrorNormally(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	queueDir := t.TempDir()
+	if err := Enqueue(queueDir, "job-1", testHost(t, false)); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	result := Drain(context.Background(), queueDir, c)
+	if result.Pending != 1 {
+		t.Errorf("expected a 5xx to be treated as transient (Pending=1), got %+v", result)
+	}
+	if result.Rejected != 0 {
+		t.Errorf("a 5xx must not be treated as permanently rejected, got %+v", result)
 	}
 }

@@ -52,7 +52,7 @@ func runScanCmd(c *client.Client, pcfg pipeline.Config, queueDir string, auditLo
 		// ongoing background loop to retry from later (unlike "serve"),
 		// so "once, at the start of each scan" is its only chance.
 		if drained := submitqueue.Drain(context.Background(), queueDir, c); !drained.Empty() {
-			progressCh <- progressMsg{stage: "submitqueue", message: fmt.Sprintf("retry queue: %d succeeded, %d gave up, %d dropped (corrupt), %d still pending", drained.Succeeded, drained.GaveUp, drained.Dropped, drained.Pending)}
+			progressCh <- progressMsg{stage: "submitqueue", message: fmt.Sprintf("retry queue: %d succeeded, %d gave up, %d rejected, %d dropped (corrupt), %d still pending", drained.Succeeded, drained.GaveUp, drained.Rejected, drained.Dropped, drained.Pending)}
 		}
 
 		// Fetched fresh rather than cached, so the webserver's most
@@ -98,6 +98,15 @@ func runScanCmd(c *client.Client, pcfg pipeline.Config, queueDir string, auditLo
 				})
 				if err != nil {
 					_ = auditLog.Write(auditlog.EntryFromHost(jobID, host, false))
+					if submitqueue.IsPermanentFailure(err) {
+						// The webserver definitively rejected this exact
+						// payload (a 4xx) - retrying it unchanged would
+						// never succeed, so it's not worth queuing at all.
+						msg := fmt.Sprintf("host submission for %s was rejected (not retried): %v", host.IP, err)
+						progressCh <- progressMsg{stage: "submit", message: msg}
+						tracker.Progress("submit", msg)
+						return
+					}
 					if queueErr := submitqueue.Enqueue(queueDir, jobID, host); queueErr != nil {
 						msg := fmt.Sprintf("host submission for %s failed and could not be queued for retry, result lost: %v", host.IP, queueErr)
 						progressCh <- progressMsg{stage: "submit", message: msg}

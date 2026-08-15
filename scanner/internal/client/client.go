@@ -21,6 +21,25 @@ import (
 	"porttorch/scanner/internal/version"
 )
 
+// HTTPStatusError wraps a non-2xx response from the webserver's ingest
+// API, carrying the actual numeric status code so a caller (see
+// internal/submitqueue's IsPermanentFailure) can tell a permanent client
+// error (4xx - the payload itself is invalid or rejected, retrying it
+// unchanged will never succeed) apart from a transient one (a 5xx, or no
+// response at all - worth retrying). Unlike gowitness/xfreerdp elsewhere
+// in this codebase, which only ever report their own failures as opaque
+// text, the status code here is already a real field on the response
+// this scanner's own HTTP client received, so there's no need to fall
+// back to string-matching to recover it.
+type HTTPStatusError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("unexpected status %d: %s", e.StatusCode, e.Body)
+}
+
 // setAuthHeaders sets the API key and this scanner's version on every
 // request - the webserver records the version alongside last_seen_at/
 // last_seen_ip (see apiKeyAuth.ts) so the dashboard's Scanner Agents page
@@ -436,7 +455,7 @@ func (c *Client) uploadImage(ctx context.Context, path, imagePath string, fields
 
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("uploading image to %s: unexpected status %d: %s", path, resp.StatusCode, string(respBody))
+		return fmt.Errorf("uploading image to %s: %w", path, &HTTPStatusError{StatusCode: resp.StatusCode, Body: string(respBody)})
 	}
 	return nil
 }
@@ -639,7 +658,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body any, out 
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("%s %s: unexpected status %d: %s", method, path, resp.StatusCode, string(respBody))
+		return fmt.Errorf("%s %s: %w", method, path, &HTTPStatusError{StatusCode: resp.StatusCode, Body: string(respBody)})
 	}
 
 	if out != nil && len(respBody) > 0 {
