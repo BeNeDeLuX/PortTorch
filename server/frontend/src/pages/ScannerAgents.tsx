@@ -328,6 +328,14 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
           {behind && (
             <span className="host-meta"> → {latestRelease!.latestVersion} available</span>
           )}
+          {!!a.submit_queue_pending && (
+            <span
+              className="stale-badge"
+              title={`${a.submit_queue_pending} host submission(s) failed and are waiting to be retried (internal/submitqueue) - usually resolves itself once this scanner can reach the webserver again`}
+            >
+              {a.submit_queue_pending} queued for retry
+            </span>
+          )}
         </td>
       </>
     );

@@ -13,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"porttorch/scanner/internal/config"
@@ -40,13 +41,17 @@ func (e *HTTPStatusError) Error() string {
 	return fmt.Sprintf("unexpected status %d: %s", e.StatusCode, e.Body)
 }
 
-// setAuthHeaders sets the API key and this scanner's version on every
-// request - the webserver records the version alongside last_seen_at/
-// last_seen_ip (see apiKeyAuth.ts) so the dashboard's Scanner Agents page
-// can show which version each agent is actually running.
-func setAuthHeaders(req *http.Request, apiKey string) {
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+// setAuthHeaders sets the API key, this scanner's version, and its
+// current submit-queue backlog size on every request - the webserver
+// records all three alongside last_seen_at/last_seen_ip (see
+// apiKeyAuth.ts) so the Scanner Agents/Fleet Health pages can show which
+// version each agent is actually running, and whether it has host
+// submissions stuck in its local retry queue, without either needing a
+// dedicated endpoint.
+func (c *Client) setAuthHeaders(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("X-Scanner-Version", version.Version)
+	req.Header.Set("X-Scanner-Submit-Queue-Pending", strconv.Itoa(int(atomic.LoadInt32(&c.submitQueuePending))))
 }
 
 // Client talks to the webserver's authenticated ingest API.
@@ -54,6 +59,21 @@ type Client struct {
 	baseURL string
 	apiKey  string
 	http    *http.Client
+	// submitQueuePending mirrors internal/submitqueue's current backlog
+	// size for this process (see SetSubmitQueuePending) - read from
+	// setAuthHeaders on every request, and written both by the
+	// serve-mode retry watcher's periodic Drain and immediately after
+	// any Enqueue call, from whichever goroutine is running the scan at
+	// the time, hence the atomic access rather than a plain int.
+	submitQueuePending int32
+}
+
+// SetSubmitQueuePending records the scanner's current internal/submitqueue
+// backlog size, reported on every subsequent request via the
+// X-Scanner-Submit-Queue-Pending header (see setAuthHeaders). Safe to
+// call concurrently.
+func (c *Client) SetSubmitQueuePending(n int) {
+	atomic.StoreInt32(&c.submitQueuePending, int32(n))
 }
 
 // New builds a Client based on the scanner configuration. If
@@ -444,7 +464,7 @@ func (c *Client) uploadImage(ctx context.Context, path, imagePath string, fields
 	if err != nil {
 		return fmt.Errorf("building request: %w", err)
 	}
-	setAuthHeaders(req, c.apiKey)
+	c.setAuthHeaders(req)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := c.http.Do(req)
@@ -485,7 +505,7 @@ func (c *Client) PollNextScanRequest(ctx context.Context) (*ScanRequest, error) 
 	if err != nil {
 		return nil, fmt.Errorf("building request: %w", err)
 	}
-	setAuthHeaders(req, c.apiKey)
+	c.setAuthHeaders(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -645,7 +665,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body any, out 
 	if err != nil {
 		return fmt.Errorf("building request: %w", err)
 	}
-	setAuthHeaders(req, c.apiKey)
+	c.setAuthHeaders(req)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

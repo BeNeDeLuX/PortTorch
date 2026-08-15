@@ -56,6 +56,14 @@ export interface ScannerAgentsTable {
   // clears, since a queue backlog is a recurring condition, not a
   // one-time event like a certificate approaching expiry.
   queue_backlog_alert_sent_at: Date | null;
+  // Reported by the scanner on every ingest request
+  // (X-Scanner-Submit-Queue-Pending header, alongside version above) -
+  // the current size of that scanner's local internal/submitqueue retry
+  // backlog. Null until a scanner build with this support has made at
+  // least one request - same "absence means unknown, not zero" reasoning
+  // as version itself, so a never-reported scanner isn't shown as having
+  // an empty queue.
+  submit_queue_pending: number | null;
 }
 
 // Singleton (id always 1) cache of the latest published scanner-vX.Y.Z

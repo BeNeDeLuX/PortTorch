@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -54,5 +55,58 @@ func TestSubmitTLSCertificateNilSANs(t *testing.T) {
 	}
 	if arr, ok := sanList.([]any); !ok || len(arr) != 0 {
 		t.Errorf("sanList = %#v, want an empty array", sanList)
+	}
+}
+
+func testClient(t *testing.T, handler http.HandlerFunc) *Client {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	c, err := New(&config.Config{WebserverURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("building test client: %v", err)
+	}
+	return c
+}
+
+// The scanner has no way to push its retry-queue backlog size to the
+// webserver directly (all communication is scanner-initiated, and there's
+// no dedicated endpoint for this) - it piggybacks on the same
+// X-Scanner-Submit-Queue-Pending header sent on every request, same as
+// X-Scanner-Version already does. Confirms SetSubmitQueuePending actually
+// reaches the wire, not just that it's plumbed through unused.
+func TestSetSubmitQueuePendingReflectedInHeader(t *testing.T) {
+	var gotHeader string
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("X-Scanner-Submit-Queue-Pending")
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	c.SetSubmitQueuePending(7)
+	if err := c.CompleteScanJob(context.Background(), "job-1", "completed"); err != nil {
+		t.Fatalf("CompleteScanJob: %v", err)
+	}
+	if gotHeader != "7" {
+		t.Errorf("X-Scanner-Submit-Queue-Pending = %q, want %q", gotHeader, "7")
+	}
+}
+
+// A Client that's never had SetSubmitQueuePending called (the common case
+// - most scans never fail a submission at all) should report 0, not an
+// empty/missing header - the webserver's apiKeyAuth.ts needs a value it
+// can parse on every request, not just once a backlog has ever existed.
+func TestSubmitQueuePendingDefaultsToZero(t *testing.T) {
+	var gotHeader string
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("X-Scanner-Submit-Queue-Pending")
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	if err := c.CompleteScanJob(context.Background(), "job-1", "completed"); err != nil {
+		t.Fatalf("CompleteScanJob: %v", err)
+	}
+	if gotHeader != "0" {
+		t.Errorf("X-Scanner-Submit-Queue-Pending = %q, want %q", gotHeader, "0")
 	}
 }

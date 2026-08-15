@@ -72,7 +72,8 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
 
       {health.overall === "ok" ? (
         <div className="callout">
-          <IconCheck /> All systems normal - no stale scans, no queue backlog, and no certificate expiring soon.
+          <IconCheck /> All systems normal - no stale scans, no scan queue backlog, no submission retry backlog, and
+          no certificate expiring soon.
         </div>
       ) : health.overall === "warning" ? (
         <div className="callout-warning">
@@ -112,6 +113,15 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
                 new Date(Date.now() - health.oldestQueuedMs).toISOString()
               )} ago${health.oldestQueuedMs > STALE_QUEUE_THRESHOLD_MS ? " - target scanner may have stopped polling" : ""}`
             : "Nothing waiting"}
+        </HealthCard>
+
+        <HealthCard to="/agents" title="Submission Retry Backlog" status={health.retryQueueStatus}>
+          {health.totalRetryQueuePending} host submission{health.totalRetryQueuePending === 1 ? "" : "s"} waiting to
+          be retried
+          <br />
+          {health.agentsWithRetryBacklog.length > 0
+            ? `${health.agentsWithRetryBacklog.length} scanner${health.agentsWithRetryBacklog.length === 1 ? "" : "s"} affected`
+            : "Nothing queued for retry"}
         </HealthCard>
 
         {me.role === "admin" && health.webserverCert && (

@@ -50,6 +50,7 @@ export interface FleetHealthData {
   scannerStatus: HealthStatus;
   updatesStatus: HealthStatus;
   queueStatus: HealthStatus;
+  retryQueueStatus: HealthStatus;
   webserverCertStatus: HealthStatus;
   liveAgents: ScannerAgent[];
   staleJobs: ActiveScanJob[];
@@ -60,6 +61,8 @@ export interface FleetHealthData {
   latestRelease: ScannerReleaseInfo | null;
   scanQueue: QueuedScanRequest[];
   oldestQueuedMs: number;
+  agentsWithRetryBacklog: ScannerAgent[];
+  totalRetryQueuePending: number;
   webserverCert: TlsCertificateInfo | null;
 }
 
@@ -140,7 +143,26 @@ export function useFleetHealth(me: Me): FleetHealthData {
   const webserverCertStatus: HealthStatus =
     webserverCertRawStatus === "expired" ? "critical" : webserverCertRawStatus === "soon" ? "warning" : "ok";
 
-  const overall = worstOf(scannerStatus, updatesStatus, queueStatus, webserverCert ? webserverCertStatus : "ok");
+  // The scanner's own internal/submitqueue backlog (host submissions
+  // still waiting to be retried after a transient failure) - distinct
+  // from the "Scan Queue" card above, which tracks scan_requests rows
+  // waiting to be *claimed*, not results waiting to be *resubmitted*.
+  // Reported per agent via the same piggyback header as version (see
+  // apiKeyAuth.ts) - null (never reported) is treated the same as 0
+  // here, since an agent that's never sent the header can't be flagged
+  // for a backlog we have no evidence of.
+  const agentsWithRetryBacklog = liveAgents.filter((a) => (a.submit_queue_pending ?? 0) > 0);
+  const totalRetryQueuePending = agentsWithRetryBacklog.reduce((sum, a) => sum + (a.submit_queue_pending ?? 0), 0);
+  // 20 is a display-only heuristic, not a hard system limit (unlike
+  // internal/submitqueue's own maxAttempts=10 per-entry retry cap) - a
+  // handful of entries is normal during a brief webserver blip and
+  // resolves itself within a retry interval or two; a much larger
+  // fleet-wide total suggests something is actually stuck (e.g. a
+  // scanner that can't reach the webserver at all anymore).
+  const retryQueueStatus: HealthStatus =
+    totalRetryQueuePending === 0 ? "ok" : totalRetryQueuePending >= 20 ? "critical" : "warning";
+
+  const overall = worstOf(scannerStatus, updatesStatus, queueStatus, retryQueueStatus, webserverCert ? webserverCertStatus : "ok");
 
   return {
     loading,
@@ -149,6 +171,7 @@ export function useFleetHealth(me: Me): FleetHealthData {
     scannerStatus,
     updatesStatus,
     queueStatus,
+    retryQueueStatus,
     webserverCertStatus,
     liveAgents,
     staleJobs,
@@ -159,6 +182,8 @@ export function useFleetHealth(me: Me): FleetHealthData {
     latestRelease,
     scanQueue,
     oldestQueuedMs,
+    agentsWithRetryBacklog,
+    totalRetryQueuePending,
     webserverCert,
   };
 }

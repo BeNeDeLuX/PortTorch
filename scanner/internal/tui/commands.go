@@ -51,7 +51,9 @@ func runScanCmd(c *client.Client, pcfg pipeline.Config, queueDir string, auditLo
 		// see internal/submitqueue's doc comment. The menu TUI has no
 		// ongoing background loop to retry from later (unlike "serve"),
 		// so "once, at the start of each scan" is its only chance.
-		if drained := submitqueue.Drain(context.Background(), queueDir, c); !drained.Empty() {
+		drained := submitqueue.Drain(context.Background(), queueDir, c)
+		c.SetSubmitQueuePending(drained.Pending)
+		if !drained.Empty() {
 			progressCh <- progressMsg{stage: "submitqueue", message: fmt.Sprintf("retry queue: %d succeeded, %d gave up, %d rejected, %d dropped (corrupt), %d still pending", drained.Succeeded, drained.GaveUp, drained.Rejected, drained.Dropped, drained.Pending)}
 		}
 
@@ -113,6 +115,7 @@ func runScanCmd(c *client.Client, pcfg pipeline.Config, queueDir string, auditLo
 						tracker.Progress("submit", msg)
 						return
 					}
+					c.SetSubmitQueuePending(submitqueue.CountPending(queueDir))
 					msg := fmt.Sprintf("host submission for %s failed, queued for retry: %v", host.IP, err)
 					progressCh <- progressMsg{stage: "submit", message: msg}
 					tracker.Progress("submit", msg)

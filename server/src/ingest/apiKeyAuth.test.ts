@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { describe, expect, it } from "vitest";
-import { hashApiKey, parseBearerToken } from "./apiKeyAuth";
+import { hashApiKey, parseBearerToken, parseSubmitQueuePendingHeader } from "./apiKeyAuth";
 
 describe("hashApiKey", () => {
   it("is deterministic", () => {
@@ -68,5 +68,39 @@ describe("parseBearerToken", () => {
 
   it("preserves internal whitespace within the token itself", () => {
     expect(parseBearerToken("Bearer abc 123")).toBe("abc 123");
+  });
+});
+
+// A scanner reports its internal/submitqueue backlog size on every ingest
+// request (X-Scanner-Submit-Queue-Pending) - an un-upgraded build simply
+// never sends the header, which must read as "unknown", not "0" (a
+// genuinely empty queue and a scanner that's never reported are different
+// things - see the Fleet Health "Retry Queue Backlog" card).
+describe("parseSubmitQueuePendingHeader", () => {
+  it("parses a valid non-negative integer", () => {
+    expect(parseSubmitQueuePendingHeader("0")).toBe(0);
+    expect(parseSubmitQueuePendingHeader("7")).toBe(7);
+    expect(parseSubmitQueuePendingHeader("1234")).toBe(1234);
+  });
+
+  it("returns null for a missing header", () => {
+    expect(parseSubmitQueuePendingHeader(undefined)).toBeNull();
+  });
+
+  it("returns null for a non-numeric value", () => {
+    expect(parseSubmitQueuePendingHeader("not-a-number")).toBeNull();
+    expect(parseSubmitQueuePendingHeader("")).toBeNull();
+  });
+
+  it("returns null for a negative number", () => {
+    expect(parseSubmitQueuePendingHeader("-1")).toBeNull();
+  });
+
+  it("tolerates trailing garbage the way parseInt does (leading digits only)", () => {
+    // Documents parseInt's own leading-digits behavior rather than
+    // asserting stricter validation this function doesn't actually do -
+    // the value is display-only (a Fleet Health badge), not something
+    // security-sensitive enough to warrant rejecting it outright.
+    expect(parseSubmitQueuePendingHeader("12abc")).toBe(12);
   });
 });

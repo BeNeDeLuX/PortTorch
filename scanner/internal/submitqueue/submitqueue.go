@@ -201,6 +201,26 @@ func Drain(ctx context.Context, queueDir string, c *client.Client) DrainResult {
 	return result
 }
 
+// CountPending returns how many entries currently sit in queueDir waiting
+// for a future Drain call - a lightweight directory listing, not a Drain
+// itself. Used to keep client.Client's reported backlog size (see
+// SetSubmitQueuePending) accurate immediately after an Enqueue, rather
+// than only after the next periodic Drain runs. Safe against a missing/
+// empty queueDir, same "nothing to report" treatment as Drain itself.
+func CountPending(queueDir string) int {
+	entries, err := os.ReadDir(queueDir)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			count++
+		}
+	}
+	return count
+}
+
 func drainEntry(ctx context.Context, entryDir string, c *client.Client, result *DrainResult) {
 	itemPath := filepath.Join(entryDir, "item.json")
 	data, err := os.ReadFile(itemPath)

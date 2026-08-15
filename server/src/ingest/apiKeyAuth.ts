@@ -36,6 +36,18 @@ export function parseBearerToken(header: string): string | null {
   return token.length > 0 ? token : null;
 }
 
+// Parses the X-Scanner-Submit-Queue-Pending header (see client.go's
+// setAuthHeaders) into a non-negative integer, or null for "unknown" -
+// covers a missing header (an un-upgraded scanner build), a malformed
+// value, and a negative number (never legitimately sent, but a header is
+// still attacker-influenceable input from an authenticated-but-untrusted
+// source, so it's validated rather than stored as-is).
+export function parseSubmitQueuePendingHeader(header: string | undefined): number | null {
+  if (header === undefined) return null;
+  const n = parseInt(header, 10);
+  return Number.isNaN(n) || n < 0 ? null : n;
+}
+
 export async function apiKeyAuth(req: Request, res: Response, next: NextFunction) {
   const header = req.header("authorization") ?? "";
   const providedKey = parseBearerToken(header);
@@ -66,9 +78,18 @@ export async function apiKeyAuth(req: Request, res: Response, next: NextFunction
   // dashboard's Scanner Agents page can show which version is actually
   // running, not just when it was last seen.
   const reportedVersion = req.header("x-scanner-version");
+  // Same piggyback-on-every-request mechanism as the version header
+  // above, reporting internal/submitqueue's current backlog size for
+  // this scanner (see Fleet Health's "Retry Queue Backlog" card).
+  const reportedPending = parseSubmitQueuePendingHeader(req.header("x-scanner-submit-queue-pending"));
   await db
     .updateTable("scanner_agents")
-    .set({ last_seen_at: new Date(), last_seen_ip: req.ip ?? null, version: reportedVersion ?? null })
+    .set({
+      last_seen_at: new Date(),
+      last_seen_ip: req.ip ?? null,
+      version: reportedVersion ?? null,
+      submit_queue_pending: reportedPending,
+    })
     .where("id", "=", agent.id)
     .execute();
 

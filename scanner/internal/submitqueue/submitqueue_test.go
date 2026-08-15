@@ -142,6 +142,25 @@ func TestDrainEmptyOrMissingQueueDir(t *testing.T) {
 	}
 }
 
+func TestCountPendingMissingDir(t *testing.T) {
+	if got := CountPending(filepath.Join(t.TempDir(), "does-not-exist")); got != 0 {
+		t.Errorf("CountPending on a missing dir = %d, want 0", got)
+	}
+}
+
+func TestCountPendingCountsQueuedEntries(t *testing.T) {
+	queueDir := t.TempDir()
+	if err := Enqueue(queueDir, "job-1", testHost(t, false)); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if err := Enqueue(queueDir, "job-1", testHost(t, false)); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if got := CountPending(queueDir); got != 2 {
+		t.Errorf("CountPending() = %d, want 2", got)
+	}
+}
+
 func TestIsPermanentFailure(t *testing.T) {
 	cases := []struct {
 		name string

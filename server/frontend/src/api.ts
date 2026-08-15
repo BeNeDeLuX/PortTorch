@@ -423,6 +423,10 @@ export interface ScannerAgent {
   update_requested_at: string | null;
   update_request_status: "pending" | "failed" | null;
   update_failure_reason: string | null;
+  // internal/submitqueue's current backlog size on this scanner, reported
+  // on every request - null until a scanner build with this support has
+  // made at least one request (see apiKeyAuth.ts).
+  submit_queue_pending: number | null;
 }
 
 export interface ScannerReleaseInfo {

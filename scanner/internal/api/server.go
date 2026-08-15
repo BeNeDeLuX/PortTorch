@@ -238,6 +238,7 @@ func (s *Server) IsScanning() bool {
 // StartCancelWatcher().
 func (s *Server) StartRetryWatcher(ctx context.Context, interval time.Duration) {
 	submitqueue.StartRetryWatcher(ctx, s.queueDir, s.client, interval, func(result submitqueue.DrainResult) {
+		s.client.SetSubmitQueuePending(result.Pending)
 		if result.Empty() {
 			return
 		}
@@ -440,6 +441,8 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, state
 					tracker.Progress("submit", fmt.Sprintf("host submission for %s failed, queued for retry: %v", host.IP, err))
 					if queueErr := submitqueue.Enqueue(s.queueDir, jobID, host); queueErr != nil {
 						s.logger.Error("queuing failed host submission for retry also failed, result lost", "event", "submitqueue.enqueue_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", queueErr.Error())
+					} else {
+						s.client.SetSubmitQueuePending(submitqueue.CountPending(s.queueDir))
 					}
 				}
 				if writeErr := s.auditLog.Write(auditlog.EntryFromHost(jobID, host, false)); writeErr != nil {

@@ -203,7 +203,9 @@ func newServeCmd(configPath *string) *cobra.Command {
 			// below only fires after its own first interval elapses, so
 			// this synchronous drain avoids a startup gap where a backlog
 			// would otherwise just sit there until then.
-			if drained := submitqueue.Drain(context.Background(), cfg.SubmitQueueDir, c); !drained.Empty() {
+			drained := submitqueue.Drain(context.Background(), cfg.SubmitQueueDir, c)
+			c.SetSubmitQueuePending(drained.Pending)
+			if !drained.Empty() {
 				log.Info("submit queue drained", "event", "submitqueue.drained", "succeeded", drained.Succeeded, "gave_up", drained.GaveUp, "pending", drained.Pending, "dropped", drained.Dropped, "rejected", drained.Rejected)
 			}
 
@@ -256,7 +258,9 @@ func runScan(configPath, target, ports string) error {
 	// before this run's own scan even starts - see internal/submitqueue's
 	// doc comment. A one-shot process like this has no ongoing loop to
 	// retry from later, so "once, at startup" is the only chance it gets.
-	if drained := submitqueue.Drain(ctx, cfg.SubmitQueueDir, c); !drained.Empty() {
+	drained := submitqueue.Drain(ctx, cfg.SubmitQueueDir, c)
+	c.SetSubmitQueuePending(drained.Pending)
+	if !drained.Empty() {
 		log.Info("submit queue drained", "event", "submitqueue.drained", "succeeded", drained.Succeeded, "gave_up", drained.GaveUp, "pending", drained.Pending, "dropped", drained.Dropped, "rejected", drained.Rejected)
 	}
 
@@ -341,6 +345,8 @@ func runScan(configPath, target, ports string) error {
 					tracker.Progress("submit", fmt.Sprintf("host submission for %s failed, queued for retry: %v", host.IP, err))
 					if queueErr := submitqueue.Enqueue(cfg.SubmitQueueDir, jobID, host); queueErr != nil {
 						log.Error("queuing failed host submission for retry also failed, result lost", "event", "submitqueue.enqueue_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", queueErr.Error())
+					} else {
+						c.SetSubmitQueuePending(submitqueue.CountPending(cfg.SubmitQueueDir))
 					}
 				}
 				if writeErr := auditLog.Write(auditlog.EntryFromHost(jobID, host, false)); writeErr != nil {
