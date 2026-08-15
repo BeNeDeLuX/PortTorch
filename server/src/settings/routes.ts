@@ -8,7 +8,8 @@ import { recordAudit } from "../audit/log";
 import { config } from "../config";
 import { getCurrentCertInfo, saveCertKeyPair, validateCertKeyPair } from "../tls/certUpload";
 import { getActiveHttpsServer } from "../tls/activeServer";
-import { getAppSettings, setRequireAdminTotp } from "./appSettings";
+import { getAppSettings, setHostRetentionDays, setRequireAdminTotp } from "./appSettings";
+import { runRetentionSweep } from "../retention";
 
 // Everything here is admin-only, like scanner agents/schedules/webhooks/
 // excludes/user management (see CLAUDE.md's "Roles and permissions") -
@@ -89,8 +90,13 @@ settingsRouter.get("/app", asyncHandler(async (_req, res) => {
   res.json(await getAppSettings());
 }));
 
+// Both fields optional - a genuine partial update, same "distinguish
+// omitted from explicit" convention as PATCH /auth/preferences, since the
+// Settings page saves the 2FA-enforcement toggle and the retention-days
+// field independently rather than as one combined form.
 const appSettingsSchema = z.object({
-  requireAdminTotp: z.boolean(),
+  requireAdminTotp: z.boolean().optional(),
+  hostRetentionDays: z.number().int().min(0).optional(),
 });
 
 // The first admin to flip this on effectively binds every admin account
@@ -106,17 +112,49 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
     return;
   }
 
-  await setRequireAdminTotp(parsed.data.requireAdminTotp);
+  if ("requireAdminTotp" in req.body && parsed.data.requireAdminTotp !== undefined) {
+    await setRequireAdminTotp(parsed.data.requireAdminTotp);
+    logger.info({
+      event: "settings.require_admin_totp_updated",
+      require_admin_totp: parsed.data.requireAdminTotp,
+      updated_by: req.session.username,
+      source_ip: req.ip,
+    });
+    recordAudit("settings.require_admin_totp_updated", req.session.username, req.ip, {
+      require_admin_totp: parsed.data.requireAdminTotp,
+    });
+  }
 
-  logger.info({
-    event: "settings.require_admin_totp_updated",
-    require_admin_totp: parsed.data.requireAdminTotp,
-    updated_by: req.session.username,
-    source_ip: req.ip,
-  });
-  recordAudit("settings.require_admin_totp_updated", req.session.username, req.ip, {
-    require_admin_totp: parsed.data.requireAdminTotp,
-  });
+  if ("hostRetentionDays" in req.body && parsed.data.hostRetentionDays !== undefined) {
+    await setHostRetentionDays(parsed.data.hostRetentionDays);
+    logger.info({
+      event: "settings.host_retention_days_updated",
+      host_retention_days: parsed.data.hostRetentionDays,
+      updated_by: req.session.username,
+      source_ip: req.ip,
+    });
+    recordAudit("settings.host_retention_days_updated", req.session.username, req.ip, {
+      host_retention_days: parsed.data.hostRetentionDays,
+    });
+  }
 
   res.json(await getAppSettings());
+}));
+
+// Runs the exact same sweep the hourly ticker does (see retention.ts's
+// runRetentionSweep) - lets an admin apply a just-changed retention
+// window immediately, or clear out a known-stale backlog, without
+// waiting up to an hour for the next scheduled tick.
+settingsRouter.post("/retention/run-now", asyncHandler(async (req, res) => {
+  const result = await runRetentionSweep();
+
+  logger.info({
+    event: "settings.retention_run_now",
+    purged_count: result.purged,
+    triggered_by: req.session.username,
+    source_ip: req.ip,
+  });
+  recordAudit("settings.retention_run_now", req.session.username, req.ip, { purged_count: result.purged });
+
+  res.json(result);
 }));

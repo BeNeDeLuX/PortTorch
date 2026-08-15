@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, AppSettings, Me, TlsCertificateInfo } from "../api";
-import { IconSave, IconUpload } from "../components/icons";
+import { IconSave, IconTrash, IconUpload } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime } from "../lib/formatDate";
 import { certExpiryDaysLeft, certExpiryLabel, certExpiryStatus } from "../lib/certExpiry";
@@ -25,9 +25,21 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
   const [savingAppSettings, setSavingAppSettings] = useState(false);
   const [appSettingsError, setAppSettingsError] = useState<string | null>(null);
 
+  const [retentionDaysInput, setRetentionDaysInput] = useState("");
+  const [savingRetention, setSavingRetention] = useState(false);
+  const [retentionError, setRetentionError] = useState<string | null>(null);
+  const [runningCleanup, setRunningCleanup] = useState(false);
+  const [cleanupResult, setCleanupResult] = useState<string | null>(null);
+
   useEffect(() => {
     load();
-    api.appSettings().then(setAppSettings).catch(() => setAppSettings(null));
+    api
+      .appSettings()
+      .then((s) => {
+        setAppSettings(s);
+        setRetentionDaysInput(String(s.hostRetentionDays));
+      })
+      .catch(() => setAppSettings(null));
   }, []);
 
   async function load() {
@@ -49,6 +61,49 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       setAppSettingsError(err instanceof Error ? err.message : "Failed to update setting");
     } finally {
       setSavingAppSettings(false);
+    }
+  }
+
+  async function handleSaveRetentionDays(e: FormEvent) {
+    e.preventDefault();
+    const days = parseInt(retentionDaysInput, 10);
+    if (Number.isNaN(days) || days < 0) {
+      setRetentionError("Enter a whole number of days, 0 or greater (0 disables the sweep).");
+      return;
+    }
+    setRetentionError(null);
+    setSavingRetention(true);
+    try {
+      const updated = await api.updateAppSettings({ hostRetentionDays: days });
+      setAppSettings(updated);
+      setRetentionDaysInput(String(updated.hostRetentionDays));
+    } catch (err) {
+      setRetentionError(err instanceof Error ? err.message : "Failed to update setting");
+    } finally {
+      setSavingRetention(false);
+    }
+  }
+
+  async function handleCleanupNow() {
+    if (
+      !window.confirm(
+        `Permanently delete every host not seen in the last ${appSettings?.hostRetentionDays ?? "?"} day(s), along with all their ports/screenshots/tags/comments/certificates? This runs the same purge the hourly sweep does, right now, and can't be undone.`
+      )
+    ) {
+      return;
+    }
+    setRetentionError(null);
+    setCleanupResult(null);
+    setRunningCleanup(true);
+    try {
+      const result = await api.runRetentionSweepNow();
+      setCleanupResult(
+        result.purged === 0 ? "No hosts were old enough to purge." : `Purged ${result.purged} host(s).`
+      );
+    } catch (err) {
+      setRetentionError(err instanceof Error ? err.message : "Failed to run cleanup");
+    } finally {
+      setRunningCleanup(false);
     }
   }
 
@@ -168,6 +223,39 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
             <IconSave /> {appSettings.requireAdminTotp ? "Turn off" : "Turn on"}
           </button>
         </p>
+      )}
+
+      <h3>Host Retention</h3>
+      <p className="host-meta">
+        Hosts not seen (last seen) in this many days are purged automatically every hour, along with all their
+        history - ports, screenshots, tags, comments, certificates. Set to 0 to disable the sweep entirely.
+      </p>
+
+      {retentionError && <p className="error">{retentionError}</p>}
+      {cleanupResult && <p className="host-meta">{cleanupResult}</p>}
+
+      {appSettings && (
+        <>
+          <form className="inline-form" onSubmit={handleSaveRetentionDays}>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={retentionDaysInput}
+              onChange={(e) => setRetentionDaysInput(e.target.value)}
+              aria-label="Host retention days"
+            />
+            <span className="host-meta">days</span>
+            <button type="submit" className="btn-icon-label" disabled={savingRetention}>
+              <IconSave /> Save
+            </button>
+          </form>
+          <p>
+            <button className="btn-icon-label" onClick={handleCleanupNow} disabled={runningCleanup}>
+              <IconTrash /> {runningCleanup ? "Cleaning up..." : "Clean up now"}
+            </button>
+          </p>
+        </>
       )}
     </div>
   );

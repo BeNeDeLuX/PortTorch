@@ -510,6 +510,10 @@ export interface WebhookDeliveriesTable {
 export interface AppSettingsTable {
   id: Generated<number>;
   require_admin_totp: ColumnType<boolean, boolean | undefined, boolean>;
+  // Was config.ts's HOST_RETENTION_DAYS env var - moved here so it's
+  // live-editable from the Settings page (see retention.ts). 0 disables
+  // the sweep entirely, same semantics the env var always had.
+  host_retention_days: ColumnType<number, number | undefined, number>;
 }
 
 export interface AuditLogTable {

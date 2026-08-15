@@ -13,9 +13,6 @@ export const config = {
   certDir: process.env.CERT_DIR ?? "/data/certs",
   screenshotDir: process.env.SCREENSHOT_DIR ?? "/data/screenshots",
   isProduction: process.env.NODE_ENV === "production",
-  // Hosts not seen in this many days are purged (see src/retention.ts).
-  // 0 disables the sweep entirely.
-  hostRetentionDays: parseInt(process.env.HOST_RETENTION_DAYS ?? "180", 10),
   // A scan_job stuck in "running" or a scan_request stuck in "pending"/
   // "claimed" for longer than this is flagged stale in the dashboard
   // (see src/lib/staleness.ts) - typically means the scanner that owns it
