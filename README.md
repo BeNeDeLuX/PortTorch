@@ -778,8 +778,11 @@ above). It downloads and checksum-verifies the same release binary
 `install.sh` would have, replaces itself on disk, and resumes serving
 under the new version automatically. Existing deployments need `sudo
 ./install.sh --rebuild-only` run once first if they haven't already,
-since the scanner has to actually own its own binary file to be able to
-replace it.
+since the scanner needs write access to its own install directory to be
+able to replace itself - `install.sh` sets this up automatically
+(`getfacl /usr/local/bin` should show the `porttorch` user with `rwx`
+after running it), and a self-update attempt fails with a clear "binary
+or directory not writable" reason if that hasn't happened yet.
 
 ## External API (SOAR / enrichment integrations)
 

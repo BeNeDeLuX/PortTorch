@@ -182,10 +182,16 @@ func defaultBinaryPath() (string, error) {
 // checkWritable defensively confirms the binary and its containing
 // directory (os.Rename below needs to create/replace an entry in that
 // directory) are actually writable *before* spending time downloading
-// anything - a stock install.sh-managed deployment now chowns the binary
-// to the service user (see install.sh's fix), but a manually-managed one
-// might not have, and failing fast with a clear message beats a confusing
-// error partway through installing the new binary.
+// anything. A real, confirmed-in-production gap: chowning the binary
+// file to the service user is not enough on its own - /usr/local/bin
+// itself is root:root 0755 on a stock Debian install, so the directory
+// check here failed on every install.sh-managed deployment until
+// install.sh also started granting the service user a POSIX ACL on
+// $BIN_PATH's directory (setfacl, not a chown/chmod of the shared
+// directory itself - see install.sh's grant_bin_dir_access). A
+// manually-managed deployment still needs the equivalent done by hand.
+// Failing fast here with a clear message beats a confusing error
+// partway through installing the new binary either way.
 func checkWritable(binPath string) error {
 	const wOK = 2 // syscall.Access's W_OK - not exported as a named const on linux/amd64's syscall package
 	if err := syscall.Access(binPath, wOK); err != nil {

@@ -74,9 +74,12 @@ else
   fi
 
   # --- required packages ------------------------------------------------
-  log "Installing required packages (masscan, nmap, libcap2-bin)"
+  # acl (setfacl/getfacl) is what lets the unprivileged $SERVICE_USER
+  # write into $BIN_PATH's own directory for self-update - see the ACL
+  # grant further below for why this can't just be a chown.
+  log "Installing required packages (masscan, nmap, libcap2-bin, acl)"
   apt-get update -qq
-  apt-get install -y masscan nmap libcap2-bin curl ca-certificates openssl
+  apt-get install -y masscan nmap libcap2-bin curl ca-certificates openssl acl
 
   # --- optional packages (screenshots/OCR are best-effort scanner features) --
   install_optional() {
@@ -200,18 +203,48 @@ fi
 
 # The systemd service runs as the unprivileged $SERVICE_USER (setcap on
 # masscan/nmap - not the porttorch binary's own uid - is what grants raw-
-# socket access), but a root-owned 0755 binary can't be overwritten by
-# that user - which self-update (scanner/internal/updater) needs to do at
-# runtime. Covers both the from-source-build and downloaded-release paths
-# above in one line. On a fresh full install $SERVICE_USER doesn't exist
-# yet at this point (created further below), so this is a no-op there and
-# the equivalent chown after user creation below covers it instead; on
-# --rebuild-only (which requires the user to already exist, checked up
-# front) this is the only chown that runs, which is exactly what makes
-# --rebuild-only alone sufficient to fix ownership on an existing
+# socket access), but self-update (scanner/internal/updater) needs that
+# user to be able to replace $BIN_PATH at runtime. Chowning the binary
+# file alone is NOT sufficient for this - a real, confirmed-in-production
+# gap: self-update's atomic replacement stages a temp file and
+# os.Renames it into place, which needs write access to $BIN_PATH's
+# *containing directory*, not just ownership of the file itself.
+# /usr/local/bin is root:root 0755 on every stock Debian install, so
+# $SERVICE_USER could never create anything there no matter how the
+# binary file itself was chowned - every self-update attempt failed with
+# "binary or directory not writable" until this was added, on every
+# installation, not just ones that predate some earlier fix.
+#
+# grant_bin_dir_access uses a POSIX ACL rather than chowning/chmodding
+# $BIN_DIR itself: /usr/local/bin is a shared system directory other
+# packages/admins also install into, and broadly opening it up (group-
+# write, or reassigning its owner) would let this one low-privilege
+# service account overwrite unrelated binaries placed there by anyone
+# else. setfacl grants exactly $SERVICE_USER, and nothing else, write+
+# execute on this one directory - inspect with `getfacl "$BIN_DIR"`.
+BIN_DIR="$(dirname "$BIN_PATH")"
+grant_bin_dir_access() {
+  if ! command -v setfacl >/dev/null 2>&1; then
+    # Only reachable via --rebuild-only against a pre-ACL-fix install,
+    # where the required-packages apt-get pass above (which now includes
+    # acl) never ran. A single small package here is cheap enough not to
+    # need its own --rebuild-only opt-out.
+    apt-get install -y acl || { warn "couldn't install 'acl' - self-update won't be able to write to $BIN_DIR ('sudo setfacl -m u:$SERVICE_USER:rwx $BIN_DIR' manually, or it'll keep failing)"; return 0; }
+  fi
+  setfacl -m "u:$SERVICE_USER:rwx" "$BIN_DIR"
+}
+
+# Covers both the from-source-build and downloaded-release paths above in
+# one place. On a fresh full install $SERVICE_USER doesn't exist yet at
+# this point (created further below), so this whole block is a no-op
+# here and the equivalent block after user creation below covers it
+# instead; on --rebuild-only (which requires the user to already exist,
+# checked up front) this is the only place that runs, which is exactly
+# what makes --rebuild-only alone sufficient to fix an existing
 # deployment that predates this fix.
 if id "$SERVICE_USER" >/dev/null 2>&1; then
   chown "$SERVICE_USER:$SERVICE_USER" "$BIN_PATH"
+  grant_bin_dir_access
 fi
 
 if $REBUILD_ONLY; then
@@ -235,11 +268,12 @@ else
   fi
   mkdir -p "$CONFIG_DIR"
 
-  # Fresh-install counterpart of the chown right after the build step
-  # above: $SERVICE_USER didn't exist yet at that point on a truly fresh
-  # install, so this is what actually applies it in that case (a no-op,
-  # already-owned re-chown on every other path that reaches here).
+  # Fresh-install counterpart of the chown+ACL block right after the
+  # build step above: $SERVICE_USER didn't exist yet at that point on a
+  # truly fresh install, so this is what actually applies both there (a
+  # no-op re-application on every other path that reaches here).
   chown "$SERVICE_USER:$SERVICE_USER" "$BIN_PATH"
+  grant_bin_dir_access
 
   # --- config.yaml ----------------------------------------------------------
   # sed replacement values come from the operator running this installer as
