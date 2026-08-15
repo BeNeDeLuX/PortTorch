@@ -359,9 +359,10 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
           </span>
         )}
         {a.update_request_status === "failed" && (
-          <span className="update-failed-badge" title={a.update_failure_reason ?? "Update failed"}>
-            update failed
-          </span>
+          <>
+            <span className="update-failed-badge">update failed</span>
+            {a.update_failure_reason && <span className="update-failure-reason">{a.update_failure_reason}</span>}
+          </>
         )}
       </>
     );

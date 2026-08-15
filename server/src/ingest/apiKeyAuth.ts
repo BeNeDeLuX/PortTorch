@@ -48,6 +48,20 @@ export function parseSubmitQueuePendingHeader(header: string | undefined): numbe
   return Number.isNaN(n) || n < 0 ? null : n;
 }
 
+// Plain X.Y.Z numeric compare - same "no pre-release/build-metadata
+// suffix" assumption as its independent counterparts in
+// scannerUpdate/githubSync.ts, ScannerAgents.tsx, and the scanner's own
+// internal/updater - kept as its own tiny copy rather than a shared
+// import for the same reason those three already are.
+function compareSemver(a: string, b: string): number {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
+  }
+  return 0;
+}
+
 export async function apiKeyAuth(req: Request, res: Response, next: NextFunction) {
   const header = req.header("authorization") ?? "";
   const providedKey = parseBearerToken(header);
@@ -60,7 +74,7 @@ export async function apiKeyAuth(req: Request, res: Response, next: NextFunction
   const providedHash = hashApiKey(providedKey);
   const agent = await db
     .selectFrom("scanner_agents")
-    .select(["id", "name", "api_key_hash"])
+    .select(["id", "name", "api_key_hash", "update_request_status"])
     .where("api_key_hash", "=", providedHash)
     .where("revoked_at", "is", null)
     .executeTakeFirst();
@@ -82,6 +96,31 @@ export async function apiKeyAuth(req: Request, res: Response, next: NextFunction
   // above, reporting internal/submitqueue's current backlog size for
   // this scanner (see Fleet Health's "Retry Queue Backlog" card).
   const reportedPending = parseSubmitQueuePendingHeader(req.header("x-scanner-submit-queue-pending"));
+
+  // A scanner can end up already at (or past) the latest version while a
+  // stale 'pending'/'failed' self-update request is still sitting on its
+  // row - e.g. an admin fixed whatever made an update fail (a real case:
+  // install.sh not granting write access to the binary's directory) and
+  // rebuilt/reinstalled manually instead of re-triggering through the
+  // dashboard, so the scanner's own update watcher never got the chance
+  // to call PATCH /update-outcome and clear it. Left alone, "update
+  // failed" would sit on the dashboard indefinitely with no way to
+  // dismiss it even though the scanner is demonstrably already current -
+  // its own version header is that evidence. Only bothers with the extra
+  // lookup when this agent actually has update state to reconcile, since
+  // that's null for the overwhelming majority of ingest requests.
+  let clearStaleUpdateState = false;
+  if (reportedVersion && agent.update_request_status !== null) {
+    const release = await db
+      .selectFrom("scanner_release_cache")
+      .select("latest_version")
+      .where("id", "=", 1)
+      .executeTakeFirst();
+    if (release?.latest_version && compareSemver(release.latest_version, reportedVersion) <= 0) {
+      clearStaleUpdateState = true;
+    }
+  }
+
   await db
     .updateTable("scanner_agents")
     .set({
@@ -89,6 +128,9 @@ export async function apiKeyAuth(req: Request, res: Response, next: NextFunction
       last_seen_ip: req.ip ?? null,
       version: reportedVersion ?? null,
       submit_queue_pending: reportedPending,
+      ...(clearStaleUpdateState
+        ? { update_requested_at: null, update_request_status: null, update_failure_reason: null, update_attempt_count: 0 }
+        : {}),
     })
     .where("id", "=", agent.id)
     .execute();

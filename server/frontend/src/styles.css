@@ -1709,6 +1709,20 @@ th {
   white-space: nowrap;
 }
 
+/* The actual failure reason, directly visible under the badge rather
+   than only in a hover tooltip - a tooltip was too easy to miss
+   entirely, and the reason is exactly the thing an admin needs to act
+   on. flex-basis: 100% is the same "force onto its own line inside a
+   flex row" trick .form-fullwidth-section already uses elsewhere -
+   .actions-cell is a flex row, so a plain block-level span would
+   otherwise just sit inline next to the badge/buttons instead of
+   wrapping underneath them. */
+.update-failure-reason {
+  flex-basis: 100%;
+  color: var(--danger);
+  font-size: 0.8rem;
+}
+
 /* Scanner self-update failure (Scanner Agents page) - same shape as
    .stale-badge, --danger instead of --warning since exhausting its
    retries is a harder failure than "just hasn't checked in in a while". */
