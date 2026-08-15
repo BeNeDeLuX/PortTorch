@@ -117,6 +117,24 @@ controlApiToken: "REPLACE_ME"
 # (dashboard rescan button or recurring schedules).
 pollIntervalSeconds: 15
 
+# If a host's result fails to submit (e.g. the webserver is briefly
+# unreachable mid-scan), it's durably queued here instead of being lost -
+# retried automatically at the start of every scan, and periodically in
+# the background for "scanner serve" (see retryIntervalSeconds below).
+# Defaults to a "submit-queue" directory next to this config file if left
+# unset - only override if you want it somewhere else.
+# submitQueueDir: "/var/lib/porttorch/submit-queue"
+# How often "scanner serve" retries queued submissions in the background,
+# independent of pollIntervalSeconds above - "scan"/"menu" only ever
+# retry once, at startup, since they have no ongoing loop to retry from.
+retryIntervalSeconds: 60
+
+# A permanent, append-only local record of every host this scanner has
+# ever found (one JSON line per host, submitted or not) - independent of
+# the webserver's own reachability or retention. Defaults to a
+# "scan-audit.jsonl" file next to this config file if left unset.
+# scanAuditLogPath: "/var/lib/porttorch/scan-audit.jsonl"
+
 # Note: masscan needs raw socket access. Either run the scanner as root,
 # or grant the binaries the necessary capabilities:
 #   sudo setcap cap_net_raw,cap_net_admin+eip $(which masscan)

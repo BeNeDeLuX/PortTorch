@@ -19,7 +19,7 @@ func testServer(t *testing.T) *Server {
 		t.Fatalf("building test client: %v", err)
 	}
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
-	return NewServer(c, pipeline.Config{MasscanPath: "/definitely/not/a/real/binary", NmapPath: "/definitely/not/a/real/binary"}, t.TempDir(), "", logger)
+	return NewServer(c, pipeline.Config{MasscanPath: "/definitely/not/a/real/binary", NmapPath: "/definitely/not/a/real/binary"}, t.TempDir(), "", nil, logger)
 }
 
 type nopWriter struct{}

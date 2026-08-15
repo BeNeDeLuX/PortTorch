@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"porttorch/scanner/internal/api"
+	"porttorch/scanner/internal/auditlog"
 	"porttorch/scanner/internal/client"
 	"porttorch/scanner/internal/config"
 	"porttorch/scanner/internal/logging"
@@ -58,10 +59,16 @@ func main() {
 
 func newScanCmd(configPath *string) *cobra.Command {
 	var target, ports string
+	var dryRun bool
 
 	cmd := &cobra.Command{
 		Use:   "scan",
 		Short: "Runs a non-interactive scan and submits the result to the webserver",
+		// A dry-run's own findings (e.g. "every requested port is
+		// excluded") are a report, not a misused flag - showing the
+		// usage block for that would be noise, same reasoning as
+		// doctor's own SilenceUsage.
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if target == "" {
 				return fmt.Errorf("--target is required (IPv4 single IP/CIDR/range, or a single IPv6 address / comma-separated list of them)")
@@ -69,11 +76,15 @@ func newScanCmd(configPath *string) *cobra.Command {
 			if ports == "" {
 				return fmt.Errorf("--ports is required (e.g. 1-1000 or 22,80,443)")
 			}
+			if dryRun {
+				return runDryRun(*configPath, target, ports)
+			}
 			return runScan(*configPath, target, ports)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", "", "Target: IPv4 single IP/CIDR/range (e.g. 192.168.1.0/24) or a single IPv6 address / comma-separated list (e.g. 2001:db8::1)")
 	cmd.Flags().StringVar(&ports, "ports", "", "Port spec, e.g. 1-1000 or 22,80,443")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would actually be scanned (effective targets/ports after excludes) without running masscan/nmap or creating a scan job")
 	return cmd
 }
 
@@ -90,7 +101,19 @@ func newMenuCmd(configPath *string) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("building api client: %w", err)
 			}
-			return tui.Run(c, cfg.Pipeline(), cfg.SubmitQueueDir)
+			// Opened once for the whole interactive session (the menu can
+			// run several scans in a row without exiting) rather than
+			// per-scan - see internal/auditlog's doc comment. Printed
+			// here, before the TUI takes over the screen, since this
+			// package has no stdout logging of its own once running (see
+			// internal/logging's doc comment on why); a failure here is
+			// never fatal, auditLog just stays nil.
+			auditLog, err := auditlog.Open(cfg.ScanAuditLogPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not open scan audit log at %s, continuing without it: %v\n", cfg.ScanAuditLogPath, err)
+			}
+			defer auditLog.Close()
+			return tui.Run(c, cfg.Pipeline(), cfg.SubmitQueueDir, auditLog)
 		},
 	}
 }
@@ -121,7 +144,17 @@ func newServeCmd(configPath *string) *cobra.Command {
 				log.Warn("controlApiToken is not set, the scanner API is reachable without authentication", "event", "serve.no_auth_token")
 			}
 
-			server := api.NewServer(c, cfg.Pipeline(), cfg.SubmitQueueDir, cfg.ControlAPIToken, log)
+			// Shared across every scan this process ever runs (unlike
+			// "scan"/"menu", which each open their own for a single
+			// scan) - see internal/auditlog's doc comment. A failure to
+			// open it is logged but never fatal to serving; auditLog
+			// stays nil and Write/Close on it are safe no-ops.
+			auditLog, err := auditlog.Open(cfg.ScanAuditLogPath)
+			if err != nil {
+				log.Warn("could not open scan audit log, continuing without it", "event", "auditlog.open_failed", "path", cfg.ScanAuditLogPath, "error", err.Error())
+			}
+
+			server := api.NewServer(c, cfg.Pipeline(), cfg.SubmitQueueDir, cfg.ControlAPIToken, auditLog, log)
 
 			// Flushes any backlog left behind by a prior run before this
 			// process starts serving - the periodic StartRetryWatcher
@@ -184,6 +217,16 @@ func runScan(configPath, target, ports string) error {
 	if drained := submitqueue.Drain(ctx, cfg.SubmitQueueDir, c); !drained.Empty() {
 		log.Info("submit queue drained", "event", "submitqueue.drained", "succeeded", drained.Succeeded, "gave_up", drained.GaveUp, "pending", drained.Pending, "dropped", drained.Dropped)
 	}
+
+	// A permanent local record of every host found, independent of the
+	// webserver - see internal/auditlog's doc comment. A failure to open
+	// it is logged but never fatal to the scan itself (auditLog stays
+	// nil, and AuditLog.Write on a nil receiver is a safe no-op).
+	auditLog, err := auditlog.Open(cfg.ScanAuditLogPath)
+	if err != nil {
+		log.Warn("could not open scan audit log, continuing without it", "event", "auditlog.open_failed", "path", cfg.ScanAuditLogPath, "error", err.Error())
+	}
+	defer auditLog.Close()
 
 	// Fetched fresh (not cached) so the webserver's most current exclude
 	// list is always honored; fetch failure aborts the scan rather than
@@ -250,6 +293,9 @@ func runScan(configPath, target, ports string) error {
 				if queueErr := submitqueue.Enqueue(cfg.SubmitQueueDir, jobID, host); queueErr != nil {
 					log.Error("queuing failed host submission for retry also failed, result lost", "event", "submitqueue.enqueue_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", queueErr.Error())
 				}
+				if writeErr := auditLog.Write(auditlog.EntryFromHost(jobID, host, false)); writeErr != nil {
+					log.Warn("writing scan audit log entry failed", "event", "auditlog.write_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", writeErr.Error())
+				}
 				return
 			}
 
@@ -263,6 +309,9 @@ func runScan(configPath, target, ports string) error {
 
 			log.Info("host submitted", "event", "scan.host_submitted", "scan_job_id", jobID, "target_ip", host.IP, "open_ports", len(host.Ports))
 			tracker.Progress("submit", fmt.Sprintf("submitted %s (%d open port(s))", host.IP, len(host.Ports)))
+			if writeErr := auditLog.Write(auditlog.EntryFromHost(jobID, host, true)); writeErr != nil {
+				log.Warn("writing scan audit log entry failed", "event", "auditlog.write_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", writeErr.Error())
+			}
 		},
 	)
 
@@ -290,4 +339,86 @@ func runScan(configPath, target, ports string) error {
 		"duration_ms", time.Since(start).Milliseconds(),
 	)
 	return nil
+}
+
+// runDryRun fetches the same excludes a real scan would (the one
+// unavoidable webserver round trip - excludes are fetched fresh, not
+// cached, precisely because a stale copy could make a dry run lie about
+// what would actually be scanned) and prints pipeline.PreviewScan's
+// result as a human-readable report to stdout, same style as doctor's
+// own plain-text checklist - not the JSON slog lines the rest of "scan"
+// uses, since this is meant to be read directly by whoever typed the
+// command, not shipped to a log aggregator. Never creates a scan job or
+// touches masscan/nmap.
+func runDryRun(configPath, target, ports string) error {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+	c, err := client.New(cfg)
+	if err != nil {
+		return fmt.Errorf("building api client: %w", err)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	excludes, err := c.GetExcludes(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching excludes: %w", err)
+	}
+
+	preview, err := pipeline.PreviewScan(target, ports, excludes)
+	if err != nil {
+		return err
+	}
+	printPreview(preview)
+	return nil
+}
+
+func printPreview(p *pipeline.PreviewResult) {
+	fmt.Printf("Target: %s\n", p.TargetSpec)
+	fmt.Printf("Ports:  %s\n", p.PortSpec)
+	if p.EffectivePortSpec == p.PortSpec {
+		fmt.Println("Effective ports after excludes: unchanged (no port excludes apply)")
+	} else if p.EffectivePortSpec == "" {
+		fmt.Println("Effective ports after excludes: NONE - every requested port is excluded, this scan would find nothing")
+	} else {
+		fmt.Printf("Effective ports after excludes: %s\n", p.EffectivePortSpec)
+	}
+
+	if p.IsIPv6 {
+		fmt.Printf("\nIPv6 targets (%d):\n", len(p.IPv6Targets))
+		for _, t := range p.IPv6Targets {
+			if t.Excluded {
+				fmt.Printf("  [excluded] %s  (matches %s)\n", t.IP, t.Reason)
+			} else {
+				fmt.Printf("  [scanned]  %s\n", t.IP)
+			}
+		}
+	} else {
+		if p.SingleIPv4Target != nil {
+			fmt.Println()
+			if p.SingleIPv4Target.Excluded {
+				fmt.Printf("Target %s is EXCLUDED (matches %s) - this scan would find nothing\n", p.SingleIPv4Target.IP, p.SingleIPv4Target.Reason)
+			} else {
+				fmt.Printf("Target %s would be scanned\n", p.SingleIPv4Target.IP)
+			}
+		}
+		if len(p.AppliedIPExcludes) > 0 {
+			fmt.Println("\nIP/CIDR/range excludes masscan would apply (--excludefile):")
+			for _, ex := range p.AppliedIPExcludes {
+				fmt.Printf("  %s\n", ex)
+			}
+		} else if p.SingleIPv4Target == nil {
+			fmt.Println("\nNo IP/CIDR/range excludes apply.")
+		}
+	}
+
+	if len(p.IPPortExcludes) > 0 {
+		fmt.Println("\nip:port excludes (applied to results after discovery, can't be resolved to specific hosts yet):")
+		for _, ex := range p.IPPortExcludes {
+			fmt.Printf("  %s\n", ex)
+		}
+	}
 }

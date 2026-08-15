@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -46,5 +47,53 @@ func TestPipelineMapsConcurrencyFields(t *testing.T) {
 	if pcfg.Concurrency != 5 || pcfg.GowitnessConcurrency != 3 || pcfg.RDPConcurrency != 4 {
 		t.Errorf("Pipeline() concurrency fields = (%d, %d, %d), want (5, 3, 4)",
 			pcfg.Concurrency, pcfg.GowitnessConcurrency, pcfg.RDPConcurrency)
+	}
+}
+
+// TestLoadDefaultsSubmitQueueDirAndAuditLogPath confirms both paths
+// default to sibling files/directories next to the config file itself
+// (not the current working directory, which a naive relative default
+// would get wrong for a service started from an arbitrary directory).
+func TestLoadDefaultsSubmitQueueDirAndAuditLogPath(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("webserverUrl: https://example.invalid\napiKey: test\n"), 0o644); err != nil {
+		t.Fatalf("writing test config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	wantQueueDir := filepath.Join(dir, "submit-queue")
+	if cfg.SubmitQueueDir != wantQueueDir {
+		t.Errorf("SubmitQueueDir = %q, want %q", cfg.SubmitQueueDir, wantQueueDir)
+	}
+	wantAuditLog := filepath.Join(dir, "scan-audit.jsonl")
+	if cfg.ScanAuditLogPath != wantAuditLog {
+		t.Errorf("ScanAuditLogPath = %q, want %q", cfg.ScanAuditLogPath, wantAuditLog)
+	}
+}
+
+// An explicit value in the YAML must win over the computed default -
+// same override-ability every other configurable path in this file has.
+func TestLoadRespectsExplicitSubmitQueueDirAndAuditLogPath(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yaml := "webserverUrl: https://example.invalid\napiKey: test\nsubmitQueueDir: /custom/queue\nscanAuditLogPath: /custom/audit.jsonl\n"
+	if err := os.WriteFile(configPath, []byte(yaml), 0o644); err != nil {
+		t.Fatalf("writing test config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SubmitQueueDir != "/custom/queue" {
+		t.Errorf("SubmitQueueDir = %q, want /custom/queue", cfg.SubmitQueueDir)
+	}
+	if cfg.ScanAuditLogPath != "/custom/audit.jsonl" {
+		t.Errorf("ScanAuditLogPath = %q, want /custom/audit.jsonl", cfg.ScanAuditLogPath)
 	}
 }

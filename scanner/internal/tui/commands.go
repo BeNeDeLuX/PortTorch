@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"porttorch/scanner/internal/auditlog"
 	"porttorch/scanner/internal/client"
 	"porttorch/scanner/internal/pipeline"
 	// Aliased - this file already uses "progress" as the naming prefix for
@@ -43,7 +44,7 @@ func waitForProgress(ch <-chan progressMsg) tea.Cmd {
 // reports the final scan_job status itself (completed/failed) before
 // returning, since there's no separate "finalize" step anymore once
 // submission is interleaved with scanning.
-func runScanCmd(c *client.Client, pcfg pipeline.Config, queueDir, jobID, target, ports string, progressCh chan<- progressMsg) tea.Cmd {
+func runScanCmd(c *client.Client, pcfg pipeline.Config, queueDir string, auditLog *auditlog.AuditLog, jobID, target, ports string, progressCh chan<- progressMsg) tea.Cmd {
 	return func() tea.Msg {
 		// Opportunistically flushes any backlog left behind by a prior
 		// run's submission failures before this run's own scan starts -
@@ -96,6 +97,7 @@ func runScanCmd(c *client.Client, pcfg pipeline.Config, queueDir, jobID, target,
 					tracker.Progress(kind, msg)
 				})
 				if err != nil {
+					_ = auditLog.Write(auditlog.EntryFromHost(jobID, host, false))
 					if queueErr := submitqueue.Enqueue(queueDir, jobID, host); queueErr != nil {
 						msg := fmt.Sprintf("host submission for %s failed and could not be queued for retry, result lost: %v", host.IP, queueErr)
 						progressCh <- progressMsg{stage: "submit", message: msg}
@@ -107,6 +109,7 @@ func runScanCmd(c *client.Client, pcfg pipeline.Config, queueDir, jobID, target,
 					tracker.Progress("submit", msg)
 					return
 				}
+				_ = auditLog.Write(auditlog.EntryFromHost(jobID, host, true))
 				submittedMsg := fmt.Sprintf("submitted %s (%d open port(s))", host.IP, len(host.Ports))
 				progressCh <- progressMsg{stage: "submit", message: submittedMsg}
 				tracker.Progress("submit", submittedMsg)

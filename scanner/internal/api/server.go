@@ -13,6 +13,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 
+	"porttorch/scanner/internal/auditlog"
 	"porttorch/scanner/internal/client"
 	"porttorch/scanner/internal/pipeline"
 	"porttorch/scanner/internal/progress"
@@ -27,6 +28,11 @@ type Server struct {
 	client   *client.Client
 	pcfg     pipeline.Config
 	queueDir string
+	// auditLog is shared across every scan this process ever runs (unlike
+	// "scan"/"menu", which each open their own for a single scan) - see
+	// internal/auditlog's doc comment. May be nil (open failed at
+	// startup); Write/Close on a nil *AuditLog are safe no-ops.
+	auditLog *auditlog.AuditLog
 	token    string
 	logger   *slog.Logger
 	started  time.Time
@@ -47,13 +53,15 @@ type Server struct {
 // should be a JSON logger (see internal/logging) so that all stdout output
 // of "serve" mode remains consistently machine-readable. queueDir is
 // where a failed submission is durably queued for retry - see
-// internal/submitqueue.
-func NewServer(c *client.Client, pcfg pipeline.Config, queueDir, token string, logger *slog.Logger) *Server {
+// internal/submitqueue. auditLog may be nil (see the field's own doc
+// comment).
+func NewServer(c *client.Client, pcfg pipeline.Config, queueDir, token string, auditLog *auditlog.AuditLog, logger *slog.Logger) *Server {
 	s := &Server{
 		echo:       echo.New(),
 		client:     c,
 		pcfg:       pcfg,
 		queueDir:   queueDir,
+		auditLog:   auditLog,
 		token:      token,
 		logger:     logger,
 		started:    time.Now(),
@@ -425,6 +433,9 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, state
 				if queueErr := submitqueue.Enqueue(s.queueDir, jobID, host); queueErr != nil {
 					s.logger.Error("queuing failed host submission for retry also failed, result lost", "event", "submitqueue.enqueue_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", queueErr.Error())
 				}
+				if writeErr := s.auditLog.Write(auditlog.EntryFromHost(jobID, host, false)); writeErr != nil {
+					s.logger.Warn("writing scan audit log entry failed", "event", "auditlog.write_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", writeErr.Error())
+				}
 				return
 			}
 
@@ -438,6 +449,9 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, state
 			tracker.Progress("submit", fmt.Sprintf("submitted %s (%d open port(s))", host.IP, len(host.Ports)))
 
 			s.logger.Info("host submitted", "event", "scan.host_submitted", "scan_job_id", jobID, "target_ip", host.IP, "open_ports", len(host.Ports))
+			if writeErr := s.auditLog.Write(auditlog.EntryFromHost(jobID, host, true)); writeErr != nil {
+				s.logger.Warn("writing scan audit log entry failed", "event", "auditlog.write_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", writeErr.Error())
+			}
 		},
 	)
 	// Checked unconditionally, regardless of whether RunScan itself

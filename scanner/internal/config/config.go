@@ -90,6 +90,14 @@ type Config struct {
 	// once, at startup, since they have no ongoing loop to periodically
 	// retry from.
 	RetryIntervalSeconds int `yaml:"retryIntervalSeconds"`
+
+	// ScanAuditLogPath is a permanent, append-only, local record of
+	// every host this scanner has ever found (see internal/auditlog) -
+	// independent of the webserver's own reachability or retention.
+	// Defaults to a "scan-audit.jsonl" file next to the config file
+	// itself if left unset, so a normal install needs no extra
+	// configuration for this to work.
+	ScanAuditLogPath string `yaml:"scanAuditLogPath,omitempty"`
 }
 
 func defaults() Config {
@@ -144,12 +152,15 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config %s: apiKey is required", path)
 	}
 
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
 	if cfg.SubmitQueueDir == "" {
-		absPath, err := filepath.Abs(path)
-		if err != nil {
-			absPath = path
-		}
 		cfg.SubmitQueueDir = filepath.Join(filepath.Dir(absPath), "submit-queue")
+	}
+	if cfg.ScanAuditLogPath == "" {
+		cfg.ScanAuditLogPath = filepath.Join(filepath.Dir(absPath), "scan-audit.jsonl")
 	}
 
 	return &cfg, nil
