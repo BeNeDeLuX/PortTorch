@@ -306,127 +306,144 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 		go func() {
 			defer nmapWG.Done()
 			for j := range nmapJobs {
-				onProgress("nmap", fmt.Sprintf("probing %s (%d port(s))", j.ip, len(j.ports)))
-				host, err := RunNmap(ctx, cfg.NmapPath, j.ip, j.ports, nseScripts)
-				if err != nil {
-					onProgress("nmap", fmt.Sprintf("failed for %s: %v", j.ip, err))
+				// Deliberately doesn't call tracker.complete on panic,
+				// unlike every sub-task worker pool below - a panic here
+				// can happen before tracker.register (e.g. inside RunNmap
+				// itself), and calling complete for a host that was never
+				// registered dereferences a nil *HostResult (a second
+				// panic). The accepted tradeoff: a panic during this
+				// specific host's processing means that host's result is
+				// simply lost (or, if it panicked after registering but
+				// before every sub-task was dispatched, its remaining
+				// count never reaches zero and onHostComplete never fires
+				// for it) - never ideal, but strictly better than the
+				// panic taking down every other host and every other
+				// in-progress scan in the same "serve" process with it.
+				recoverJob(func(r any) {
+					onProgress("nmap", fmt.Sprintf("panic recovered probing %s: %v", j.ip, r))
+				}, func() {
+					onProgress("nmap", fmt.Sprintf("probing %s (%d port(s))", j.ip, len(j.ports)))
+					host, err := RunNmap(ctx, cfg.NmapPath, j.ip, j.ports, nseScripts)
+					if err != nil {
+						onProgress("nmap", fmt.Sprintf("failed for %s: %v", j.ip, err))
+						nmapCountMu.Lock()
+						nmapFailed++
+						nmapCountMu.Unlock()
+						return
+					}
 					nmapCountMu.Lock()
-					nmapFailed++
+					nmapOK++
 					nmapCountMu.Unlock()
-					continue
-				}
-				nmapCountMu.Lock()
-				nmapOK++
-				nmapCountMu.Unlock()
 
-				subTasks := 0
-				for _, p := range host.Ports {
-					if p.State != "open" {
-						continue
-					}
-					if isHTTP, _ := isHTTPPort(p); isHTTP {
-						subTasks++
-					}
-					if isRDPPort(p) {
-						subTasks++
-					}
-					if isTLSPort(p) {
-						subTasks++
-					}
-				}
-				// SNMP, IPMI, DNS recursion, and UPnP are all unconditional
-				// (every host, not gated on any already-discovered port -
-				// see snmp.go's doc comment for why; ipmi.go's
-				// RunIPMIProbe, dnsrecursion.go's RunDNSRecursionProbe, and
-				// upnp.go's RunUPnPProbe are the identical exception for
-				// UDP/623, UDP/53, and UDP/1900 respectively), except when
-				// an exclude specifically covers that port for this host -
-				// none of the TCP-only exclude mechanisms above would
-				// otherwise ever see any of these four ports.
-				probeSNMP := !isPortExcludedForHost(host.IP, 161, excludes)
-				if probeSNMP {
-					subTasks++
-				}
-				probeIPMI := !isPortExcludedForHost(host.IP, 623, excludes)
-				if probeIPMI {
-					subTasks++
-				}
-				probeDNSRecursion := !isPortExcludedForHost(host.IP, 53, excludes)
-				if probeDNSRecursion {
-					subTasks++
-				}
-				probeUPnP := !isPortExcludedForHost(host.IP, 1900, excludes)
-				if probeUPnP {
-					subTasks++
-				}
-				// Registered before any job is enqueued below, so the
-				// tracker always knows the full expected count before a
-				// worker could possibly report one sub-task done - see
-				// hostTracker's own comment for why this ordering matters.
-				tracker.register(host, subTasks)
-				sniHostname := probeHostnames[host.IP] // "" if no override
-
-				if probeSNMP {
-					select {
-					case snmpJobs <- snmpJob{ip: host.IP}:
-					case <-ctx.Done():
-						tracker.complete(host.IP, nil)
-					}
-				}
-				if probeIPMI {
-					select {
-					case ipmiJobs <- ipmiJob{ip: host.IP}:
-					case <-ctx.Done():
-						tracker.complete(host.IP, nil)
-					}
-				}
-				if probeDNSRecursion {
-					select {
-					case dnsRecursionJobs <- dnsRecursionJob{ip: host.IP}:
-					case <-ctx.Done():
-						tracker.complete(host.IP, nil)
-					}
-				}
-				if probeUPnP {
-					select {
-					case upnpJobs <- upnpJob{ip: host.IP}:
-					case <-ctx.Done():
-						tracker.complete(host.IP, nil)
-					}
-				}
-
-				for _, p := range host.Ports {
-					if p.State != "open" {
-						continue
-					}
-					if isHTTP, useTLS := isHTTPPort(p); isHTTP {
-						select {
-						case shotJobs <- shotJob{ip: host.IP, port: p, useTLS: useTLS, sniHostname: sniHostname}:
-						case <-ctx.Done():
-							// register above already counted this sub-task
-							// as expected - if it's never actually
-							// enqueued, it must still be marked complete
-							// (as a no-op) or this host's remaining count
-							// would never reach zero and it would never be
-							// reported at all.
-							tracker.complete(host.IP, nil)
+					subTasks := 0
+					for _, p := range host.Ports {
+						if p.State != "open" {
+							continue
+						}
+						if isHTTP, _ := isHTTPPort(p); isHTTP {
+							subTasks++
+						}
+						if isRDPPort(p) {
+							subTasks++
+						}
+						if isTLSPort(p) {
+							subTasks++
 						}
 					}
-					if isRDPPort(p) {
+					// SNMP, IPMI, DNS recursion, and UPnP are all unconditional
+					// (every host, not gated on any already-discovered port -
+					// see snmp.go's doc comment for why; ipmi.go's
+					// RunIPMIProbe, dnsrecursion.go's RunDNSRecursionProbe, and
+					// upnp.go's RunUPnPProbe are the identical exception for
+					// UDP/623, UDP/53, and UDP/1900 respectively), except when
+					// an exclude specifically covers that port for this host -
+					// none of the TCP-only exclude mechanisms above would
+					// otherwise ever see any of these four ports.
+					probeSNMP := !isPortExcludedForHost(host.IP, 161, excludes)
+					if probeSNMP {
+						subTasks++
+					}
+					probeIPMI := !isPortExcludedForHost(host.IP, 623, excludes)
+					if probeIPMI {
+						subTasks++
+					}
+					probeDNSRecursion := !isPortExcludedForHost(host.IP, 53, excludes)
+					if probeDNSRecursion {
+						subTasks++
+					}
+					probeUPnP := !isPortExcludedForHost(host.IP, 1900, excludes)
+					if probeUPnP {
+						subTasks++
+					}
+					// Registered before any job is enqueued below, so the
+					// tracker always knows the full expected count before a
+					// worker could possibly report one sub-task done - see
+					// hostTracker's own comment for why this ordering matters.
+					tracker.register(host, subTasks)
+					sniHostname := probeHostnames[host.IP] // "" if no override
+
+					if probeSNMP {
 						select {
-						case rdpJobs <- rdpJob{ip: host.IP, port: p.Port}:
+						case snmpJobs <- snmpJob{ip: host.IP}:
 						case <-ctx.Done():
 							tracker.complete(host.IP, nil)
 						}
 					}
-					if isTLSPort(p) {
+					if probeIPMI {
 						select {
-						case tlsJobs <- tlsJob{ip: host.IP, port: p.Port, sniHostname: sniHostname}:
+						case ipmiJobs <- ipmiJob{ip: host.IP}:
 						case <-ctx.Done():
 							tracker.complete(host.IP, nil)
 						}
 					}
-				}
+					if probeDNSRecursion {
+						select {
+						case dnsRecursionJobs <- dnsRecursionJob{ip: host.IP}:
+						case <-ctx.Done():
+							tracker.complete(host.IP, nil)
+						}
+					}
+					if probeUPnP {
+						select {
+						case upnpJobs <- upnpJob{ip: host.IP}:
+						case <-ctx.Done():
+							tracker.complete(host.IP, nil)
+						}
+					}
+
+					for _, p := range host.Ports {
+						if p.State != "open" {
+							continue
+						}
+						if isHTTP, useTLS := isHTTPPort(p); isHTTP {
+							select {
+							case shotJobs <- shotJob{ip: host.IP, port: p, useTLS: useTLS, sniHostname: sniHostname}:
+							case <-ctx.Done():
+								// register above already counted this sub-task
+								// as expected - if it's never actually
+								// enqueued, it must still be marked complete
+								// (as a no-op) or this host's remaining count
+								// would never reach zero and it would never be
+								// reported at all.
+								tracker.complete(host.IP, nil)
+							}
+						}
+						if isRDPPort(p) {
+							select {
+							case rdpJobs <- rdpJob{ip: host.IP, port: p.Port}:
+							case <-ctx.Done():
+								tracker.complete(host.IP, nil)
+							}
+						}
+						if isTLSPort(p) {
+							select {
+							case tlsJobs <- tlsJob{ip: host.IP, port: p.Port, sniHostname: sniHostname}:
+							case <-ctx.Done():
+								tracker.complete(host.IP, nil)
+							}
+						}
+					}
+				})
 			}
 		}()
 	}
@@ -506,6 +523,25 @@ func (t *hostTracker) complete(ip string, apply func(*HostResult)) {
 	}
 }
 
+// recoverJob runs fn for one job, recovering from any panic instead of
+// letting it crash the entire process - the pipeline processes a lot of
+// unpredictable external-tool output (nmap/masscan XML, gowitness JSON,
+// ...) across many concurrent goroutines, and in a long-running "serve"
+// process a single malformed response from one host must never take down
+// every other scan currently in progress (a plain, unrecovered panic in
+// any goroutine terminates the whole Go process, not just that
+// goroutine). onPanic is called with the recovered value so the caller
+// can report it and do whatever bookkeeping that worker pool's other
+// failure paths already do (see each start*Workers function).
+func recoverJob(onPanic func(recovered any), fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			onPanic(r)
+		}
+	}()
+	fn()
+}
+
 // retryDelay is a short pause before retrying a timed-out gowitness/RDP
 // capture, giving a transient resource-contention spike (see
 // GowitnessConcurrency's doc comment) a moment to subside rather than
@@ -553,41 +589,46 @@ func startGowitnessWorkers(ctx context.Context, cfg Config, jobs <-chan shotJob,
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
-				scheme := "http"
-				if j.useTLS {
-					scheme = "https"
-				}
-				urlHost := j.ip
-				if j.sniHostname != "" {
-					urlHost = j.sniHostname
-				}
-				// net.JoinHostPort brackets an IPv6 literal ([::1]:8080)
-				// and leaves an IPv4 one (or a plain hostname) alone - a
-				// plain fmt.Sprintf("%s:%d", ip, port) produces an invalid
-				// URL for IPv6 (e.g. "http://fe80::1:8080").
-				url := fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(urlHost, strconv.Itoa(j.port.Port)))
-
-				onProgress("gowitness", fmt.Sprintf("capturing %s", url))
-				shot, err := RunGowitness(ctx, cfg, url, j.port.Port)
-				if err != nil && isTimeoutLikeErr(err) {
-					onProgress("gowitness", fmt.Sprintf("retrying %s after timeout: %v", url, err))
-					select {
-					case <-time.After(retryDelay):
-					case <-ctx.Done():
-					}
-					shot, err = RunGowitness(ctx, cfg, url, j.port.Port)
-				}
-				if err != nil {
-					onProgress("gowitness", fmt.Sprintf("failed for %s: %v", url, err))
+				recoverJob(func(r any) {
+					onProgress("gowitness", fmt.Sprintf("panic recovered capturing %s: %v", j.ip, r))
 					tracker.complete(j.ip, nil)
-					continue
-				}
-				if text, err := RunOCR(ctx, cfg.TesseractPath, shot.ImagePath); err != nil {
-					onProgress("gowitness", fmt.Sprintf("ocr failed for %s: %v", url, err))
-				} else {
-					shot.OCRText = text
-				}
-				tracker.complete(j.ip, func(h *HostResult) { h.Screenshots = append(h.Screenshots, *shot) })
+				}, func() {
+					scheme := "http"
+					if j.useTLS {
+						scheme = "https"
+					}
+					urlHost := j.ip
+					if j.sniHostname != "" {
+						urlHost = j.sniHostname
+					}
+					// net.JoinHostPort brackets an IPv6 literal ([::1]:8080)
+					// and leaves an IPv4 one (or a plain hostname) alone - a
+					// plain fmt.Sprintf("%s:%d", ip, port) produces an invalid
+					// URL for IPv6 (e.g. "http://fe80::1:8080").
+					url := fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(urlHost, strconv.Itoa(j.port.Port)))
+
+					onProgress("gowitness", fmt.Sprintf("capturing %s", url))
+					shot, err := RunGowitness(ctx, cfg, url, j.port.Port)
+					if err != nil && isTimeoutLikeErr(err) {
+						onProgress("gowitness", fmt.Sprintf("retrying %s after timeout: %v", url, err))
+						select {
+						case <-time.After(retryDelay):
+						case <-ctx.Done():
+						}
+						shot, err = RunGowitness(ctx, cfg, url, j.port.Port)
+					}
+					if err != nil {
+						onProgress("gowitness", fmt.Sprintf("failed for %s: %v", url, err))
+						tracker.complete(j.ip, nil)
+						return
+					}
+					if text, err := RunOCR(ctx, cfg.TesseractPath, shot.ImagePath); err != nil {
+						onProgress("gowitness", fmt.Sprintf("ocr failed for %s: %v", url, err))
+					} else {
+						shot.OCRText = text
+					}
+					tracker.complete(j.ip, func(h *HostResult) { h.Screenshots = append(h.Screenshots, *shot) })
+				})
 			}
 		}()
 	}
@@ -606,29 +647,34 @@ func startRDPWorkers(ctx context.Context, cfg Config, jobs <-chan rdpJob, tracke
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
-				target := net.JoinHostPort(j.ip, strconv.Itoa(j.port))
-
-				onProgress("rdp", fmt.Sprintf("capturing %s", target))
-				shot, err := RunRDPScreenshot(ctx, cfg, j.ip, j.port)
-				if err != nil && isTimeoutLikeErr(err) {
-					onProgress("rdp", fmt.Sprintf("retrying %s after timeout: %v", target, err))
-					select {
-					case <-time.After(retryDelay):
-					case <-ctx.Done():
-					}
-					shot, err = RunRDPScreenshot(ctx, cfg, j.ip, j.port)
-				}
-				if err != nil {
-					onProgress("rdp", fmt.Sprintf("failed for %s: %v", target, err))
+				recoverJob(func(r any) {
+					onProgress("rdp", fmt.Sprintf("panic recovered capturing %s: %v", j.ip, r))
 					tracker.complete(j.ip, nil)
-					continue
-				}
-				if text, err := RunOCR(ctx, cfg.TesseractPath, shot.ImagePath); err != nil {
-					onProgress("rdp", fmt.Sprintf("ocr failed for %s: %v", target, err))
-				} else {
-					shot.OCRText = text
-				}
-				tracker.complete(j.ip, func(h *HostResult) { h.RDPScreenshots = append(h.RDPScreenshots, *shot) })
+				}, func() {
+					target := net.JoinHostPort(j.ip, strconv.Itoa(j.port))
+
+					onProgress("rdp", fmt.Sprintf("capturing %s", target))
+					shot, err := RunRDPScreenshot(ctx, cfg, j.ip, j.port)
+					if err != nil && isTimeoutLikeErr(err) {
+						onProgress("rdp", fmt.Sprintf("retrying %s after timeout: %v", target, err))
+						select {
+						case <-time.After(retryDelay):
+						case <-ctx.Done():
+						}
+						shot, err = RunRDPScreenshot(ctx, cfg, j.ip, j.port)
+					}
+					if err != nil {
+						onProgress("rdp", fmt.Sprintf("failed for %s: %v", target, err))
+						tracker.complete(j.ip, nil)
+						return
+					}
+					if text, err := RunOCR(ctx, cfg.TesseractPath, shot.ImagePath); err != nil {
+						onProgress("rdp", fmt.Sprintf("ocr failed for %s: %v", target, err))
+					} else {
+						shot.OCRText = text
+					}
+					tracker.complete(j.ip, func(h *HostResult) { h.RDPScreenshots = append(h.RDPScreenshots, *shot) })
+				})
 			}
 		}()
 	}
@@ -656,20 +702,25 @@ func startTLSWorkers(ctx context.Context, cfg Config, jobs <-chan tlsJob, tracke
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
-				target := net.JoinHostPort(j.ip, strconv.Itoa(j.port))
-				sni := j.ip
-				if j.sniHostname != "" {
-					sni = j.sniHostname
-				}
-
-				onProgress("tls", fmt.Sprintf("capturing %s", target))
-				cert, err := RunTLSCertProbe(ctx, cfg, j.ip, j.port, sni)
-				if err != nil {
-					onProgress("tls", fmt.Sprintf("failed for %s: %v", target, err))
+				recoverJob(func(r any) {
+					onProgress("tls", fmt.Sprintf("panic recovered capturing %s: %v", j.ip, r))
 					tracker.complete(j.ip, nil)
-					continue
-				}
-				tracker.complete(j.ip, func(h *HostResult) { h.TLSCertificates = append(h.TLSCertificates, *cert) })
+				}, func() {
+					target := net.JoinHostPort(j.ip, strconv.Itoa(j.port))
+					sni := j.ip
+					if j.sniHostname != "" {
+						sni = j.sniHostname
+					}
+
+					onProgress("tls", fmt.Sprintf("capturing %s", target))
+					cert, err := RunTLSCertProbe(ctx, cfg, j.ip, j.port, sni)
+					if err != nil {
+						onProgress("tls", fmt.Sprintf("failed for %s: %v", target, err))
+						tracker.complete(j.ip, nil)
+						return
+					}
+					tracker.complete(j.ip, func(h *HostResult) { h.TLSCertificates = append(h.TLSCertificates, *cert) })
+				})
 			}
 		}()
 	}
@@ -693,18 +744,23 @@ func startSNMPWorkers(ctx context.Context, cfg Config, jobs <-chan snmpJob, trac
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
-				onProgress("snmp", fmt.Sprintf("probing %s (udp/161)", j.ip))
-				port, err := RunSNMPProbe(ctx, cfg.NmapPath, j.ip)
-				if err != nil {
-					onProgress("snmp", fmt.Sprintf("failed for %s: %v", j.ip, err))
+				recoverJob(func(r any) {
+					onProgress("snmp", fmt.Sprintf("panic recovered probing %s: %v", j.ip, r))
 					tracker.complete(j.ip, nil)
-					continue
-				}
-				if port == nil {
-					tracker.complete(j.ip, nil)
-					continue
-				}
-				tracker.complete(j.ip, func(h *HostResult) { h.Ports = append(h.Ports, *port) })
+				}, func() {
+					onProgress("snmp", fmt.Sprintf("probing %s (udp/161)", j.ip))
+					port, err := RunSNMPProbe(ctx, cfg.NmapPath, j.ip)
+					if err != nil {
+						onProgress("snmp", fmt.Sprintf("failed for %s: %v", j.ip, err))
+						tracker.complete(j.ip, nil)
+						return
+					}
+					if port == nil {
+						tracker.complete(j.ip, nil)
+						return
+					}
+					tracker.complete(j.ip, func(h *HostResult) { h.Ports = append(h.Ports, *port) })
+				})
 			}
 		}()
 	}
@@ -726,18 +782,23 @@ func startIPMIWorkers(ctx context.Context, cfg Config, jobs <-chan ipmiJob, trac
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
-				onProgress("ipmi", fmt.Sprintf("probing %s (udp/623)", j.ip))
-				port, err := RunIPMIProbe(ctx, cfg.NmapPath, j.ip)
-				if err != nil {
-					onProgress("ipmi", fmt.Sprintf("failed for %s: %v", j.ip, err))
+				recoverJob(func(r any) {
+					onProgress("ipmi", fmt.Sprintf("panic recovered probing %s: %v", j.ip, r))
 					tracker.complete(j.ip, nil)
-					continue
-				}
-				if port == nil {
-					tracker.complete(j.ip, nil)
-					continue
-				}
-				tracker.complete(j.ip, func(h *HostResult) { h.Ports = append(h.Ports, *port) })
+				}, func() {
+					onProgress("ipmi", fmt.Sprintf("probing %s (udp/623)", j.ip))
+					port, err := RunIPMIProbe(ctx, cfg.NmapPath, j.ip)
+					if err != nil {
+						onProgress("ipmi", fmt.Sprintf("failed for %s: %v", j.ip, err))
+						tracker.complete(j.ip, nil)
+						return
+					}
+					if port == nil {
+						tracker.complete(j.ip, nil)
+						return
+					}
+					tracker.complete(j.ip, func(h *HostResult) { h.Ports = append(h.Ports, *port) })
+				})
 			}
 		}()
 	}
@@ -760,18 +821,23 @@ func startDNSRecursionWorkers(ctx context.Context, cfg Config, jobs <-chan dnsRe
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
-				onProgress("dnsrecursion", fmt.Sprintf("probing %s (udp/53)", j.ip))
-				port, err := RunDNSRecursionProbe(ctx, cfg.NmapPath, j.ip)
-				if err != nil {
-					onProgress("dnsrecursion", fmt.Sprintf("failed for %s: %v", j.ip, err))
+				recoverJob(func(r any) {
+					onProgress("dnsrecursion", fmt.Sprintf("panic recovered probing %s: %v", j.ip, r))
 					tracker.complete(j.ip, nil)
-					continue
-				}
-				if port == nil {
-					tracker.complete(j.ip, nil)
-					continue
-				}
-				tracker.complete(j.ip, func(h *HostResult) { h.Ports = append(h.Ports, *port) })
+				}, func() {
+					onProgress("dnsrecursion", fmt.Sprintf("probing %s (udp/53)", j.ip))
+					port, err := RunDNSRecursionProbe(ctx, cfg.NmapPath, j.ip)
+					if err != nil {
+						onProgress("dnsrecursion", fmt.Sprintf("failed for %s: %v", j.ip, err))
+						tracker.complete(j.ip, nil)
+						return
+					}
+					if port == nil {
+						tracker.complete(j.ip, nil)
+						return
+					}
+					tracker.complete(j.ip, func(h *HostResult) { h.Ports = append(h.Ports, *port) })
+				})
 			}
 		}()
 	}
@@ -793,18 +859,23 @@ func startUPnPWorkers(ctx context.Context, cfg Config, jobs <-chan upnpJob, trac
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
-				onProgress("upnp", fmt.Sprintf("probing %s (udp/1900)", j.ip))
-				port, err := RunUPnPProbe(ctx, cfg.NmapPath, j.ip)
-				if err != nil {
-					onProgress("upnp", fmt.Sprintf("failed for %s: %v", j.ip, err))
+				recoverJob(func(r any) {
+					onProgress("upnp", fmt.Sprintf("panic recovered probing %s: %v", j.ip, r))
 					tracker.complete(j.ip, nil)
-					continue
-				}
-				if port == nil {
-					tracker.complete(j.ip, nil)
-					continue
-				}
-				tracker.complete(j.ip, func(h *HostResult) { h.Ports = append(h.Ports, *port) })
+				}, func() {
+					onProgress("upnp", fmt.Sprintf("probing %s (udp/1900)", j.ip))
+					port, err := RunUPnPProbe(ctx, cfg.NmapPath, j.ip)
+					if err != nil {
+						onProgress("upnp", fmt.Sprintf("failed for %s: %v", j.ip, err))
+						tracker.complete(j.ip, nil)
+						return
+					}
+					if port == nil {
+						tracker.complete(j.ip, nil)
+						return
+					}
+					tracker.complete(j.ip, func(h *HostResult) { h.Ports = append(h.Ports, *port) })
+				})
 			}
 		}()
 	}
