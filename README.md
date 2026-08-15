@@ -118,7 +118,9 @@ The project has two independently deployed components:
   banners/CPEs/CVE ids), JSON (the full host record plus its ports), or a
   PDF snapshot of the page as shown, screenshots included.
 - :arrows_counterclockwise: **Rescan button** - triggers an on-demand rescan of a host's currently
-  known open ports, picked up by whichever scanner last scanned it.
+  known open ports, picked up by whichever scanner last scanned it. Opens a
+  confirmation popup offering a choice of NSE script profile (see **Scan
+  Profiles** below) rather than firing immediately.
 - :alarm_clock: **Schedule Scans** - schedule a target/port spec to be scanned on a plain
   interval ("every N minutes"), a fixed schedule (every day, specific days
   of the week, or the Nth/last weekday of the month, all at a given time -
@@ -126,7 +128,18 @@ The project has two independently deployed components:
   cron-expression field for anything else), or just once at a picked date
   and time. A one-time schedule auto-disables itself after it fires
   (kept, not deleted, for history) and can be re-armed to run again.
-  Uses the same underlying request queue as the rescan button.
+  Uses the same underlying request queue as the rescan button, including
+  the same NSE script profile choice.
+- :test_tube: **Scan Profiles** (admin only) - choose which NSE scripts a scan actually
+  runs, per rescan or schedule: **Default** (the standard script set below),
+  **All Safe Modules** (nmap's own much larger "safe" script category), or
+  a named **Custom** profile with its own hand-picked script list, managed
+  on its own admin page. A separate, opt-in-only **Active Modules** tier
+  (intrusive/exploit/brute-force/denial-of-service scripts) can be added to
+  a Custom profile's script list, clearly flagged wherever it's used -
+  these are never included in Default or All Safe Modules, and should only
+  ever be run against systems you're explicitly authorized to test that
+  way.
 - :scroll: **Scan History** - every finished scan job (completed, failed, or
   cancelled) across every scanner, searchable by target/ports/scanner
   and filterable by status, showing how long it took and what it found
@@ -158,12 +171,17 @@ The project has two independently deployed components:
   Slack/Discord incoming webhooks), a Microsoft Teams Adaptive Card (the
   current "Workflows" webhook, not the deprecated classic connector), or an
   email to one or more addresses when a new host appears, a port newly
-  opens, a certificate is about to expire, a saved search matches a new
-  host, a known CVE's EPSS (exploit prediction) score crosses a threshold
-  (`EPSS_ALERT_THRESHOLD` in `.env`, default 0.5), a known CVE is added to
-  CISA's Known Exploited Vulnerabilities catalog, or once a day for the
-  fleet-wide digest. Email requires `SMTP_HOST` (and friends) set in `.env`
-  - webhook/Teams channels need no extra configuration.
+  opens, a certificate (either a scanned host's, or the webserver's own) is
+  about to expire, a saved search matches a new host, a known CVE's EPSS
+  (exploit prediction) score crosses a threshold (`EPSS_ALERT_THRESHOLD` in
+  `.env`, default 0.5), a known CVE is added to CISA's Known Exploited
+  Vulnerabilities catalog, a running scan looks stalled, a scanner's
+  self-update fails, a scanner's request queue is backing up, or once a
+  day for the fleet-wide digest. Email requires `SMTP_HOST` (and friends)
+  set in `.env` - webhook/Teams channels need no extra configuration. Every
+  delivery attempt (success or failure) is recorded per webhook, viewable
+  via a "History" button - the most recent 50 attempts, so you can tell
+  whether a webhook is actually working without digging through logs.
 - :dna: **Vulnerability correlation** - a daily background job matches every
   CPE (service/version fingerprint) nmap has detected against the NVD
   vulnerability database and caches the result; the host detail page
@@ -189,7 +207,23 @@ The project has two independently deployed components:
   sections. Each agent reports its own version on every request, shown in
   the table - useful for spotting a fleet where some scanners haven't
   been upgraded. The table also shows each agent's current scan (target,
-  ports, elapsed time) or "idle", refreshed every 5 seconds.
+  ports, elapsed time) or "idle", refreshed every 5 seconds. A running
+  scanner also reports its local retry-queue backlog (host submissions
+  waiting to be resent after a transient failure), shown as a small badge
+  when nonzero.
+- :rocket: **Scanner self-update** (admin only) - when a scanner is behind the
+  latest published release, an "Update" button (single agent, or a bulk
+  "update all outdated") tells it to download, checksum-verify, and apply
+  the new binary on its own next poll, then resume serving automatically -
+  no SSH access or manual restart needed. Only works for scanners running
+  in `serve` mode; a failed attempt retries automatically a few times
+  before requiring an explicit re-trigger.
+- :vertical_traffic_light: **Fleet Health** - a single page aggregating scanner staleness, version
+  drift, pending/failed self-updates, the scan request queue backlog, the
+  submission retry backlog, and the webserver's own TLS certificate
+  expiry - each card links through to the page with the full detail. The
+  main dashboard also shows a small banner when anything here needs
+  attention.
 - :zap: **Active scans** - the same "what's running right now" information as
   a fleet-wide banner on the main dashboard (rather than per-agent),
   across every scanner and however the scan was triggered (manual
@@ -216,7 +250,10 @@ The project has two independently deployed components:
   not just scans started from the dashboard - so a change here takes
   effect on the very next scan.
 - :key: **API Tokens** (admin only) - manage tokens for external tools (see
-  "External API" below); separate from Scanner Agent keys.
+  "External API" below); separate from Scanner Agent keys. An optional
+  expiry (never / 30 / 90 / 365 days) can be set at creation time, after
+  which the token stops authenticating on its own - no separate revoke
+  step needed.
 - :busts_in_silhouette: **Multi-user accounts with roles**:
   - **admin** - everything, including user/agent/schedule/webhook/exclude
     management. Always sees every scanner's results, regardless of any
@@ -233,7 +270,12 @@ The project has two independently deployed components:
 - :memo: **Audit log** (admin only) - who did what and when, for every
   agent/schedule/tag/webhook/exclude/user/comment/rescan action plus login
   activity, separate from the structured stdout logs meant for SIEM
-  ingestion.
+  ingestion. Filterable by event type and by actor (both multi-select),
+  free-text search, and a date range; real pagination plus a CSV export
+  that always matches whatever's currently filtered. Any id referenced in
+  an entry's details (a scanner agent, webhook, scan profile, API token,
+  host, user, ...) is resolved to its actual name inline, not just shown
+  as a bare id - "deleted" if that entity's since been removed.
 - :wastebasket: **Host retention** - hosts not seen (`last_seen_at`) in 180 days are
   purged automatically (hourly check), along with all their history -
   ports, screenshots, tags, comments, certificates. Configurable via
@@ -246,7 +288,15 @@ The project has two independently deployed components:
   the username link in the header ("Account" page). Comes with one-time
   recovery codes for when the device isn't available, and an admin can turn
   a user's 2FA back off if they lose it (never turn it on for them - that
-  step is inherently self-service).
+  step is inherently self-service). An admin can also make 2FA mandatory
+  for every admin account fleet-wide (Settings page) - an admin without it
+  enabled is redirected straight to the setup page on their next login
+  until they complete it; any admin can turn the requirement back off.
+- :closed_lock_with_key: **Webserver TLS certificate management** (admin only) - upload a real
+  certificate/key pair to replace the self-signed one generated on first
+  boot, applied live with no restart. Shows an expiry countdown and fires
+  a webhook alert as it approaches expiry, the same as a scanned host's
+  certificate.
 - :gear: **Account preferences** - also on the Account page: default theme, accent
   color (orange by default, or green/blue), how many hosts to show per page on the
   main dashboard, whether to default to a specific scanner there instead of
@@ -459,6 +509,16 @@ Three modes, all sharing the exact same scan pipeline:
 # One-shot scan from the command line, no menu
 ./porttorch scan --target 192.168.1.0/24 --ports 1-1000
 
+# Same, but reading targets from a file instead (one target-spec fragment
+# per line - IPs, CIDRs, ranges, or IPv6 addresses; blank lines and lines
+# starting with # are skipped) - handy for a list of discontiguous ranges
+# that don't reduce to one clean CIDR/range. Mutually exclusive with --target.
+./porttorch scan --targets-file targets.txt --ports 1-1000
+
+# See exactly what a scan would target (after excludes are applied)
+# without actually running masscan/nmap or creating a scan job
+./porttorch scan --target 192.168.1.0/24 --ports 1-1000 --dry-run
+
 # Interactive terminal menu
 ./porttorch menu
 
@@ -471,9 +531,22 @@ Three modes, all sharing the exact same scan pipeline:
 Run `serve` as a long-lived process (e.g. a systemd service) if you want
 to use rescans or schedules from the dashboard. `scan` and `menu` are
 fine for ad-hoc, manual scanning - but only scans running under `serve`
-can be stopped from the dashboard (see "Active scans" below), since
-`serve` is the only mode with something running in the background to
-notice a stop request while a scan is in progress.
+can be stopped from the dashboard (see "Active scans" below), and only
+`serve` mode can pick up a self-update request from the Scanner Agents
+page (see "Dashboard features" above), since it's the only mode with
+anything running in the background to notice either kind of request
+while otherwise idle or mid-scan.
+
+If a host result ever fails to submit to the webserver (a brief network
+blip, the webserver restarting mid-scan, ...), the scanner queues it
+locally and retries automatically - once at the start of the next scan
+for `scan`/`menu`, and on a periodic background timer for `serve` - so a
+transient outage doesn't silently lose that host's data. A submission the
+webserver definitively rejects (invalid data) is not retried, since
+retrying it unchanged would never succeed. `serve` mode also exposes a
+Prometheus-compatible `/metrics` endpoint (uptime, scan counts, poll
+failures, this retry backlog size, and whether masscan/nmap are
+resolvable) for monitoring a scanner independently of the dashboard.
 
 If you used `install.sh`, `serve` is already running as
 `porttorch-scanner.service` - you don't need to start it yourself. For a
@@ -619,8 +692,22 @@ For every target, the pipeline runs:
     reflector). Flags an open recursive resolver reachable from
     anywhere, a real finding that puts third parties at risk, not just
     the resolver's own operator.
+11. **UPnP probe** (`upnp-info` against UDP/1900) - a fourth copy of the
+    same exception, asking any UPnP root device to describe itself (the
+    same read a router/NAS/smart-TV's own control point would make).
+    UPnP was never designed to be reachable past a single LAN, so a
+    responder answering from beyond its own local segment is a real,
+    common misconfiguration worth surfacing the same way an open
+    SNMP/IPMI service already is.
 
-Steps 2-5 (plus the SNMP/IPMI/DNS-recursion probes) run concurrently with each other rather
+By default, every scan runs the same fixed **Default** set of NSE scripts
+described above. **Scan Profiles** (see "Dashboard features" above) let an
+admin instead choose **All Safe Modules** (nmap's own much broader "safe"
+script category) or a named **Custom** profile - including, opt-in only, a
+separate "Active Modules" tier of intrusive/exploit/brute-force/DoS
+scripts - per rescan or schedule, from the dashboard.
+
+Steps 2-5 (plus the SNMP/IPMI/DNS-recursion/UPnP probes) run concurrently with each other rather
 than as sequential batches, and **each host is submitted to the webserver
 as soon as its own work finishes** - a host with no HTTP(S)/RDP/TLS-
 carrying ports streams in right after its nmap call, while a different,
@@ -683,6 +770,16 @@ branch tip: `git fetch --tags && git checkout scanner-vX.Y.Z` before
 running the installer - that's what makes `--rebuild-only` (or a full
 install) take the prebuilt-binary download path instead of building from
 source.
+
+**Alternatively**, a scanner running in `serve` mode can update itself
+without touching the host at all - trigger it from the dashboard's
+Scanner Agents page (see "Scanner self-update" under "Dashboard features"
+above). It downloads and checksum-verifies the same release binary
+`install.sh` would have, replaces itself on disk, and resumes serving
+under the new version automatically. Existing deployments need `sudo
+./install.sh --rebuild-only` run once first if they haven't already,
+since the scanner has to actually own its own binary file to be able to
+replace it.
 
 ## External API (SOAR / enrichment integrations)
 
@@ -821,7 +918,9 @@ to the webserver). The webserver never reaches back into a scanner's
 network - this is deliberate, since scanners may sit behind NAT/firewalls on
 arbitrary internal subnets the webserver can't route to. Every request
 authenticates with that scanner's own API key (`Scanner Agents → Create` in
-the dashboard) and carries an `X-Scanner-Version` header.
+the dashboard) and carries `X-Scanner-Version` and `X-Scanner-Submit-Queue-Pending`
+headers (the latter reporting how many host results, if any, are currently
+queued locally for retry after a failed submission).
 
 ```mermaid
 sequenceDiagram
@@ -843,7 +942,7 @@ sequenceDiagram
     end
     S->>W: PATCH /api/ingest/scan-jobs/:id (completed / failed / cancelled)
 
-    Note right of S: serve mode only - two polling loops running the whole time it's up
+    Note right of S: serve mode only - four polling loops running the whole time it's up
     loop poll
         S->>W: GET /api/ingest/scan-requests/next
         W-->>S: next queued rescan/schedule, or 204 if none
@@ -852,6 +951,13 @@ sequenceDiagram
     loop poll
         S->>W: GET /api/ingest/scan-jobs/:id/cancel-requested
         W-->>S: true if an operator hit Stop on this job
+    end
+    loop poll
+        S->>W: GET /api/ingest/update-requested
+        W-->>S: true if an admin requested a self-update
+    end
+    loop retry interval
+        S->>W: (re-attempts any host result still queued locally after a failed submission)
     end
 ```
 
