@@ -496,10 +496,7 @@ locally and retries automatically - once at the start of the next scan
 for `scan`/`menu`, and on a periodic background timer for `serve` - so a
 transient outage doesn't silently lose that host's data. A submission the
 webserver definitively rejects (invalid data) is not retried, since
-retrying it unchanged would never succeed. `serve` mode also exposes a
-Prometheus-compatible `/metrics` endpoint (uptime, scan counts, poll
-failures, this retry backlog size, and whether masscan/nmap are
-resolvable) for monitoring a scanner independently of the dashboard.
+retrying it unchanged would never succeed.
 
 If you used `install.sh`, `serve` is already running as
 `porttorch-scanner.service` - you don't need to start it yourself. For a
@@ -673,6 +670,38 @@ this means a scan that's killed, cancelled, or crashes partway through
 doesn't lose everything - whatever hosts had already streamed in stay in
 the database. A host whose submission fails is logged and skipped; the
 rest of the scan keeps running.
+
+### Monitoring a scanner with Prometheus
+
+`serve` mode exposes a `/metrics` endpoint (same host/port as `listenAddr`
+in `config.yaml`, default `:9090`) in standard Prometheus exposition
+format, for watching a scanner's health independently of the dashboard's
+own last-seen-based heuristics:
+
+```
+porttorch_scanner_uptime_seconds                          # seconds since this process started
+porttorch_scanner_scanning                                # 1 if a scan is currently in progress, else 0
+porttorch_scanner_scans_total{status="completed|failed|cancelled"}
+porttorch_scanner_poll_failures_total                     # failed polls to the webserver's scan-request queue
+porttorch_scanner_last_poll_success_timestamp_seconds
+porttorch_scanner_last_poll_failure_timestamp_seconds
+porttorch_scanner_submit_queue_pending                    # host submissions currently queued for retry
+porttorch_scanner_binary_available{binary="masscan|nmap"} # 1 if resolvable on PATH, else 0
+```
+
+It requires the same bearer token as the rest of `serve`'s local REST API
+(`controlApiToken` in `config.yaml`) - a scrape with no token, or the
+wrong one, gets a `401`. Point Prometheus at it with:
+
+```yaml
+scrape_configs:
+  - job_name: porttorch-scanner
+    scheme: http
+    static_configs:
+      - targets: ["<scanner-host>:9090"]
+    authorization:
+      credentials: "<the same controlApiToken from config.yaml>"
+```
 
 ## Updating
 
