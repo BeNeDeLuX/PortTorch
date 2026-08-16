@@ -312,17 +312,17 @@ The scanner runs natively on Linux (not in Docker) since it needs raw
 socket access for `masscan`/`nmap`, and may need to reach machines outside
 any container network.
 
-### Automated install (Debian/Ubuntu)
+### Automated install (Debian/Ubuntu, RHEL/Rocky/Alma/Fedora)
 
-`scanner/install.sh` automates everything below for Debian (and
-Debian-derivatives, **including Ubuntu** - it checks `ID`/`ID_LIKE` in
-`/etc/os-release`, and Ubuntu's `ID_LIKE=debian` passes that check without a
-warning): installs the required and optional packages, gets the
-`porttorch` binary, builds `gowitness`, grants `masscan`/`nmap` their
-capabilities, prompts for the webserver URL/API key to write
-`config.yaml`, and installs a systemd service (`porttorch-scanner.service`)
-running `porttorch serve` so rescans and recurring schedules work
-unattended.
+`scanner/install.sh` automates everything below on two distro families,
+auto-detected from `/etc/os-release` (falling back to whichever package
+manager is actually present if that's inconclusive): **Debian/Ubuntu**
+(`apt-get`) and **RHEL/Rocky/Alma/Fedora** (`dnf`). Either way it installs
+the required and optional packages, gets the `porttorch` binary, builds
+`gowitness`, grants `masscan`/`nmap` their capabilities, prompts for the
+webserver URL/API key to write `config.yaml`, and installs a systemd
+service (`porttorch-scanner.service`) running `porttorch serve` so
+rescans and recurring schedules work unattended.
 
 > [!NOTE]
 > On Ubuntu, the *required* packages (`masscan`, `nmap`, `libcap2-bin`) install
@@ -332,6 +332,20 @@ unattended.
 > a snap-based package instead of a native `.deb`, unlike Debian's. Run
 > `porttorch doctor` after installing to confirm which optional features
 > actually came up working.
+
+> [!NOTE]
+> On RHEL/Rocky/Alma (not Fedora, which doesn't need it), EPEL is enabled
+> automatically. Two real, confirmed-by-testing differences from Debian,
+> both handled automatically - see `scanner/CLAUDE.md`'s installer section
+> for the full detail: **`masscan` isn't packaged for RHEL9/Rocky9/Alma9**
+> (Fedora does have it) - the installer builds it from source there
+> instead. **SELinux**, Enforcing by default on RHEL/Fedora, is a second
+> access-control layer on top of the capabilities/ACLs this script
+> grants - the installer only warns if it detects Enforcing mode, it
+> doesn't write a policy. Chromium and FreeRDP screenshot support, by
+> contrast, were confirmed working fine on both Fedora and RHEL-family -
+> no gap there, just a different `xfreerdp` binary name, which the
+> installer also detects and configures automatically.
 
 If the checkout is exactly at a `scanner-vX.Y.Z` tag, the `porttorch`
 binary is downloaded (checksum-verified) from that tag's GitHub Release
@@ -347,9 +361,9 @@ sudo ./install.sh
 ```
 
 Create the scanner agent first (**Dashboard → Scanner Agents → Create**)
-so you have an API key ready when the script asks for it. Other distros
-still need the manual steps below. See [Updating](#updating) below for
-how to pick up a new version later.
+so you have an API key ready when the script asks for it. Distros outside
+these two families still need the manual steps below. See
+[Updating](#updating) below for how to pick up a new version later.
 
 ### Manual install (other distros, or running without systemd)
 
