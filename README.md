@@ -717,6 +717,55 @@ scrape_configs:
       credentials: "<the same controlApiToken from config.yaml>"
 ```
 
+## Firewall / proxy allowlist
+
+If either service sits behind an egress firewall or proxy, these are the
+external domains each component actually needs - split by which component
+needs it and when. A few of these are only reachable via a redirect from a
+more "obvious" domain, so allowlisting just that obvious domain silently
+breaks the feature; those are called out explicitly.
+
+### Webserver (runtime)
+
+| Domain | Needed for |
+| --- | --- |
+| `services.nvd.nist.gov` | NVD CVE sync |
+| `api.first.org` | EPSS score sync |
+| `www.cisa.gov` | CISA KEV catalog sync |
+| `api.github.com` | Scanner release check (powers the "update available" hint on the Scanner Agents page) |
+
+Only needed if the corresponding channel is actually configured: an SMTP
+relay for email digests/webhooks, or the target URL of any Slack/Discord/
+Teams/custom webhook - these are whatever you configure, not fixed
+PortTorch domains.
+
+### Scanner (runtime, only if self-update is used)
+
+| Domain | Needed for |
+| --- | --- |
+| `github.com` | Release metadata |
+| `release-assets.githubusercontent.com` | **Redirect target** of the actual binary/SHA256SUMS download - `github.com` alone is not enough, self-update breaks without this one too |
+
+### `install.sh` (install / rebuild time only)
+
+| Domain | Needed for |
+| --- | --- |
+| `github.com` + `release-assets.githubusercontent.com` | Downloading a prebuilt release binary (same redirect as above), or cloning masscan's source on RHEL-family hosts where it isn't packaged |
+| `go.dev` + `dl.google.com` | Go toolchain bootstrap, only when building from source - `go.dev` redirects to `dl.google.com` for the actual tarball |
+| `proxy.golang.org` | Go module proxy (`go install`/`go build`/`go mod download`, e.g. gowitness) |
+| `sum.golang.org` | Go checksum database, same context |
+| `deb.debian.org` + `security.debian.org` | apt package mirrors (Debian/Ubuntu) |
+| your distro's dnf/EPEL mirrors | equivalent package mirrors on the RHEL family - not a fixed domain, varies by mirror configuration |
+
+### Docker Compose quick start
+
+| Domain | Needed for |
+| --- | --- |
+| `registry-1.docker.io` | Docker Hub registry API |
+| `auth.docker.io` | Pull token issuance |
+| `production.cloudfront.docker.com` | Image layer CDN |
+| `download.docker.com` | Only if Docker Engine itself still needs installing via Docker's official apt repo |
+
 ## Updating
 
 Webserver and scanner are versioned and updated independently (see
