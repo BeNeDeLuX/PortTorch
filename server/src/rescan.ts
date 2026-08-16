@@ -2,7 +2,7 @@ import { db } from "./db";
 import { NSEProfileSelection, ScanProfileNotFoundError, resolveNSEProfile } from "./scanProfiles/resolve";
 
 export type RescanOutcome =
-  | { ok: true; request: { id: string; status: string; created_at: Date | string } }
+  | { ok: true; request: { id: string; status: string; created_at: Date | string; nse_profile_label: string | null } }
   | { ok: false; status: number; error: string };
 
 // Shared by the dashboard's rescan button (search/routes.ts) and the
@@ -78,7 +78,7 @@ export async function requestRescan(
       nse_scripts: resolvedProfile.nseScripts,
       nse_profile_label: resolvedProfile.nseProfileLabel,
     })
-    .returning(["id", "status", "created_at"])
+    .returning(["id", "status", "created_at", "nse_profile_label"])
     .executeTakeFirstOrThrow();
 
   return { ok: true, request };

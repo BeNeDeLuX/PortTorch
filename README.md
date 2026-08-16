@@ -786,9 +786,17 @@ curl -H "Authorization: Bearer <token>" \
 
 # Trigger a rescan of a known host's currently-open ports (same mechanism
 # as the dashboard's Rescan button/schedules - queues a scan_requests row
-# for whichever scanner agent last scanned it).
+# for whichever scanner agent last scanned it). Defaults to the Default
+# NSE profile if "profile" is omitted.
 curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
   -d '{"ip":"10.0.0.5"}' \
+  "https://porttorch.internal/api/v1/hosts/rescan"
+
+# Same, but with an explicit NSE profile - "default", "all_safe", or the
+# exact name of a Custom profile from the Scan Profiles page (no need to
+# know its internal id). Returns which profile was actually used.
+curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"ip":"10.0.0.5","profile":"all_safe"}' \
   "https://porttorch.internal/api/v1/hosts/rescan"
 
 # Stop whatever scan is currently running against a host (only ever one
@@ -801,8 +809,10 @@ curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/js
 
 All three endpoints return `404` for an unknown host; rescan returns
 `400` if the host has no currently-known open ports or no scan history to
-infer a scanner from (same constraints as the dashboard's Rescan button);
-cancel-scan returns `404` if nothing is currently running for that host.
+infer a scanner from (same constraints as the dashboard's Rescan button),
+or if `profile` doesn't match `"default"`, `"all_safe"`, or an existing
+Custom profile's name; cancel-scan returns `404` if nothing is currently
+running for that host.
 Every rescan/cancel trigger is logged and shows up in the audit log,
 attributed to the token's name (`api-token:<name>`).
 

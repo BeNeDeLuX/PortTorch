@@ -8,6 +8,7 @@ import { requestRescan } from "../rescan";
 import { requestScanCancel } from "../scanCancel";
 import { tokenAuth } from "../apiTokens/tokenAuth";
 import { zIp } from "../lib/zodIp";
+import type { NSEProfileSelection } from "../scanProfiles/resolve";
 
 // External, non-interactive API for SOAR/enrichment tools - token auth
 // (tokenAuth), not session auth or scanner API keys. Kept as its own
@@ -59,12 +60,49 @@ const rescanSchema = z.object({
   ip: zIp().optional(),
   hostname: z.string().min(1).optional(),
   scannerAgent: z.string().min(1).optional(),
+  // "default" / "all_safe" (case-insensitive), or the exact name of a
+  // Custom profile - a plain string rather than the dashboard's
+  // {kind, profileId} shape, since an external caller has no reason to
+  // know a Custom profile's internal uuid, only the name an admin gave
+  // it on the Scan Profiles page. Omitted entirely means Default, same
+  // as before this existed - this never breaks an existing caller that
+  // doesn't know the concept yet.
+  profile: z.string().min(1).optional(),
 });
+
+// Resolves the External API's flat, name-based `profile` string into the
+// {kind, profileId} shape requestRescan actually takes. Looked up (not
+// guessed) so an unrecognized name fails clearly with the exact
+// candidate profile names, rather than silently falling back to Default
+// or reaching requestRescan's own less specific ScanProfileNotFoundError.
+async function resolveProfileParam(profile: string | undefined): Promise<{ ok: true; selection: NSEProfileSelection } | { ok: false; error: string }> {
+  if (!profile) {
+    return { ok: true, selection: { kind: "default" } };
+  }
+  const normalized = profile.trim().toLowerCase();
+  if (normalized === "default") {
+    return { ok: true, selection: { kind: "default" } };
+  }
+  if (normalized === "all_safe" || normalized === "all safe modules") {
+    return { ok: true, selection: { kind: "all_safe" } };
+  }
+  const customProfile = await db.selectFrom("scan_profiles").select(["id"]).where("name", "=", profile).executeTakeFirst();
+  if (!customProfile) {
+    return { ok: false, error: `unknown scan profile "${profile}" - use "default", "all_safe", or the exact name of an existing Custom profile` };
+  }
+  return { ok: true, selection: { kind: "custom", profileId: customProfile.id } };
+}
 
 integrationsRouter.post("/hosts/rescan", asyncHandler(async (req, res) => {
   const parsed = rescanSchema.safeParse(req.body);
   if (!parsed.success || (!parsed.data.ip && !parsed.data.hostname)) {
     res.status(400).json({ error: "provide an ip or hostname in the request body" });
+    return;
+  }
+
+  const resolvedProfile = await resolveProfileParam(parsed.data.profile);
+  if (!resolvedProfile.ok) {
+    res.status(400).json({ error: resolvedProfile.error });
     return;
   }
 
@@ -83,7 +121,7 @@ integrationsRouter.post("/hosts/rescan", asyncHandler(async (req, res) => {
   const host = result.host;
 
   const requestedBy = `api-token:${req.apiTokenName}`;
-  const outcome = await requestRescan(host.id, requestedBy);
+  const outcome = await requestRescan(host.id, requestedBy, resolvedProfile.selection);
   if (!outcome.ok) {
     res.status(outcome.status).json({ error: outcome.error });
     return;
@@ -103,6 +141,7 @@ integrationsRouter.post("/hosts/rescan", asyncHandler(async (req, res) => {
     scanRequestId: outcome.request.id,
     status: outcome.request.status,
     createdAt: outcome.request.created_at,
+    profile: outcome.request.nse_profile_label,
   });
 }));
 
