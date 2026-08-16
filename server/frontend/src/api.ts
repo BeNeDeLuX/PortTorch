@@ -713,6 +713,7 @@ export const api = {
 
   agents: () => request<ScannerAgent[]>("/api/agents"),
   latestScannerRelease: () => request<ScannerReleaseInfo>("/api/agents/latest-release"),
+  refreshScannerRelease: () => request<ScannerReleaseInfo>("/api/agents/latest-release/refresh", { method: "POST" }),
   requestScannerUpdate: (id: string) => request<void>(`/api/agents/${id}/request-update`, { method: "POST" }),
   activeScanJobs: () => request<ActiveScanJob[]>("/api/scan-jobs/active"),
   scanJobProgress: (id: string) => request<ScanJobProgress>(`/api/scan-jobs/${id}/progress`),

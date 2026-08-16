@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { ActiveScanJob, api, Me, QueuedScanRequest, ScannerAgent, ScannerReleaseInfo } from "../api";
-import { IconBan, IconCheck, IconInfo, IconPlus, IconRocket, IconStop, IconTrash, IconX } from "../components/icons";
+import { IconBan, IconCheck, IconInfo, IconPlus, IconRefresh, IconRocket, IconStop, IconTrash, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanProgressModal from "../components/ScanProgressModal";
@@ -121,6 +121,8 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
   const [scanQueue, setScanQueue] = useState<QueuedScanRequest[]>([]);
   const [queueScannerFilterIds, setQueueScannerFilterIds] = useState<string[]>([]);
   const [latestRelease, setLatestRelease] = useState<ScannerReleaseInfo | null>(null);
+  const [checkingRelease, setCheckingRelease] = useState(false);
+  const [checkReleaseError, setCheckReleaseError] = useState<string | null>(null);
   // Forces a re-render every few seconds so elapsedLabel's "running for
   // Xm Ys" stays live between polls, not just when the job list changes.
   const [, setClockTick] = useState(0);
@@ -271,6 +273,22 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
     await load();
   }
 
+  // The cached latest release otherwise only refreshes on the webserver's
+  // own hourly tick (see scannerUpdate/githubSync.ts) - this lets an
+  // admin see a just-published release right away, e.g. immediately after
+  // tagging one, instead of waiting up to an hour for it to show up here.
+  async function handleCheckForUpdatesNow() {
+    setCheckingRelease(true);
+    setCheckReleaseError(null);
+    try {
+      setLatestRelease(await api.refreshScannerRelease());
+    } catch (err) {
+      setCheckReleaseError(err instanceof Error ? err.message : "Failed to check for updates");
+    } finally {
+      setCheckingRelease(false);
+    }
+  }
+
   async function handleDelete(a: ScannerAgent) {
     if (
       !window.confirm(
@@ -392,6 +410,17 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
             <IconPlus /> Create
           </button>
         </form>
+      )}
+
+      {isAdmin && (
+        <p>
+          Latest known scanner release:{" "}
+          <strong>{latestRelease?.latestVersion ? `v${latestRelease.latestVersion}` : "unknown"}</strong>{" "}
+          <button className="btn-icon-label" onClick={handleCheckForUpdatesNow} disabled={checkingRelease}>
+            <IconRefresh /> {checkingRelease ? "Checking..." : "Check for updates now"}
+          </button>
+          {checkReleaseError && <span className="error"> {checkReleaseError}</span>}
+        </p>
       )}
 
       {isAdmin && updatableAgents.length > 0 && (

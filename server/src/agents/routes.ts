@@ -9,6 +9,7 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { requestScannerUpdate } from "../scannerUpdate/requestUpdate";
+import { syncScannerRelease } from "../scannerUpdate/githubSync";
 
 export const agentsRouter = Router();
 agentsRouter.use(requireAuth);
@@ -18,6 +19,37 @@ agentsRouter.use(requireAuth);
 // list itself), so the Scanner Agents page can show every viewer which
 // version is current even though only an admin can trigger an update.
 agentsRouter.get("/latest-release", asyncHandler(async (req, res) => {
+  const release = await db
+    .selectFrom("scanner_release_cache")
+    .select(["latest_version", "latest_tag", "release_url"])
+    .where("id", "=", 1)
+    .executeTakeFirstOrThrow();
+  res.json({
+    latestVersion: release.latest_version,
+    latestTag: release.latest_tag,
+    releaseUrl: release.release_url,
+  });
+}));
+
+// Manual counterpart to the hourly startGithubSync tick (see
+// scannerUpdate/githubSync.ts's syncScannerRelease) - lets an admin see a
+// just-published release immediately (e.g. right after tagging one)
+// instead of waiting up to an hour. Admin-only, unlike the GET above:
+// this makes a real outbound request and a DB write, closer in kind to
+// the other admin-triggered actions on this page (request-update) than
+// to the read-only release info every viewer already sees.
+agentsRouter.post("/latest-release/refresh", requireAdmin, asyncHandler(async (req, res) => {
+  try {
+    await syncScannerRelease();
+  } catch (err) {
+    logger.warn({ event: "scanner_release_sync.manual_refresh_failed", err: err instanceof Error ? err.message : String(err) });
+    res.status(502).json({ error: err instanceof Error ? err.message : "failed to reach GitHub" });
+    return;
+  }
+
+  logger.info({ event: "scanner_release_sync.manual_refresh", triggered_by: req.session.username, source_ip: req.ip });
+  recordAudit("scanner_release_sync.manual_refresh", req.session.username, req.ip, {});
+
   const release = await db
     .selectFrom("scanner_release_cache")
     .select(["latest_version", "latest_tag", "release_url"])

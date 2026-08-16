@@ -31,13 +31,23 @@ function compareSemver(a: string, b: string): number {
 }
 
 export function startGithubSync(): void {
-  tick().catch((err) => logger.error({ event: "scanner_release_sync.tick_failed", err: err instanceof Error ? err.message : String(err) }));
-  setInterval(() => {
-    tick().catch((err) => logger.error({ event: "scanner_release_sync.tick_failed", err: err instanceof Error ? err.message : String(err) }));
-  }, SYNC_INTERVAL_MS);
+  const tick = () =>
+    syncScannerRelease().catch((err) =>
+      logger.error({ event: "scanner_release_sync.tick_failed", err: err instanceof Error ? err.message : String(err) })
+    );
+  tick();
+  setInterval(tick, SYNC_INTERVAL_MS);
 }
 
-async function tick(): Promise<void> {
+// Exported so a "Check for updates now" trigger (see agents/routes.ts's
+// POST /latest-release/refresh) can run the exact same fetch-and-cache
+// logic on demand, rather than waiting up to an hour for the next
+// scheduled tick - same "one shared implementation" reasoning as
+// retention.ts's runRetentionSweep. Throws on a GitHub API failure so the
+// manual-trigger route can surface a real error instead of a
+// silently-unchanged cache; the scheduled tick above is the one place
+// that catches and only logs it, since nothing is waiting on that path.
+export async function syncScannerRelease(): Promise<void> {
   const res = await fetch(`https://api.github.com/repos/${config.githubRepoSlug}/releases`, {
     headers: {
       // GitHub's API rejects requests with no User-Agent at all.
