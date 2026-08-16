@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api, DigestResult, Me } from "../api";
+import DigestExportModal from "../components/DigestExportModal";
 import PageHeader from "../components/PageHeader";
+import { IconDownload } from "../components/icons";
 import { formatDateTime } from "../lib/formatDate";
 
 type Category = "new" | "opened" | "closed";
@@ -35,6 +37,7 @@ export default function Digest({ me, onLogout }: { me: Me; onLogout: () => void 
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [categories, setCategories] = useState<Set<Category>>(new Set(["new", "opened", "closed"]));
+  const [showExportModal, setShowExportModal] = useState(false);
 
   useEffect(() => {
     load(fromInput, toInput);
@@ -91,6 +94,19 @@ export default function Digest({ me, onLogout }: { me: Me; onLogout: () => void 
       <PageHeader me={me} onLogout={onLogout} />
 
       <h2>Digest</h2>
+
+      <p className="digest-print-range">
+        {formatDateTime(new Date(fromInput).toISOString(), me.preferences)} –{" "}
+        {formatDateTime(new Date(toInput).toISOString(), me.preferences)}
+      </p>
+
+      {!isEmpty && (
+        <div className="csv-export-controls">
+          <button type="button" className="btn-icon-label" onClick={() => setShowExportModal(true)}>
+            <IconDownload /> Export data
+          </button>
+        </div>
+      )}
 
       <form className="search-bar" onSubmit={(e) => e.preventDefault()}>
         <input
@@ -184,6 +200,16 @@ export default function Digest({ me, onLogout }: { me: Me; onLogout: () => void 
             </section>
           )}
         </>
+      )}
+
+      {showExportModal && (
+        <DigestExportModal
+          from={fromInput}
+          to={toInput}
+          newHosts={newHosts}
+          changedHosts={changedHosts}
+          onClose={() => setShowExportModal(false)}
+        />
       )}
     </div>
   );

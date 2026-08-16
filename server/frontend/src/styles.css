@@ -2128,6 +2128,10 @@ th {
      Rescan, the Export trigger itself, the probe-hostname/add-tag/add-
      comment forms, comment delete links) - none of them make sense in a
      static, already-generated document. */
+.digest-print-range {
+  display: none;
+}
+
 @media print {
   :root,
   :root[data-theme="dark"],
@@ -2151,5 +2155,15 @@ th {
   .host-detail .comment-form,
   .host-detail .comment-delete {
     display: none !important;
+  }
+
+  .search-bar,
+  .list-controls,
+  .csv-export-controls {
+    display: none !important;
+  }
+
+  .digest-print-range {
+    display: block !important;
   }
 }
