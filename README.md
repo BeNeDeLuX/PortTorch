@@ -121,7 +121,7 @@ Each item below is a one-line summary - click **Details** to expand it.
   <details>
   <summary>Details</summary>
 
-  Choose whether (and how) a scan runs [nuclei](https://github.com/projectdiscovery/nuclei) template checks against its discovered HTTP(S) ports, per rescan or schedule - independent of, and alongside, the NSE Scan Profile above. **Off** (default - nuclei never runs), **Safe** (excludes nuclei's own `dos`/`fuzz`/`intrusive` tag conventions), or a named **Custom** profile (your own tags/severities/excluded tags, managed on its own admin page) - a Custom profile isn't tag-restricted the way Safe is, so only run one against systems you're explicitly authorized to test that way. Matches show up on the host's **Web Vulnerabilities** section and the fleet-wide **Nuclei Findings** page below.
+  Choose whether (and how) a scan runs [nuclei](https://github.com/projectdiscovery/nuclei) template checks against its discovered HTTP(S) ports, per rescan or schedule - independent of, and alongside, the NSE Scan Profile above. **Off** (default - nuclei never runs), **Safe** (excludes nuclei's own `dos`/`fuzz`/`intrusive` tag conventions), or a named **Custom** profile (your own tags/severities/excluded tags, managed on its own admin page) - a Custom profile isn't tag-restricted the way Safe is, so only run one against systems you're explicitly authorized to test that way. Matches show up on the host's own **Web Findings** section, and fleet-wide on the **Web Findings** page below.
   </details>
 
 - :scroll: **Scan History** - every finished scan job, searchable/filterable, with the same live-log detail view as a running scan.
@@ -145,11 +145,11 @@ Each item below is a one-line summary - click **Details** to expand it.
   Every known CVE match (see vulnerability correlation below) across the whole fleet in one sortable table - host, port, CVE, severity, description - instead of having to check each host's detail page individually.
   </details>
 
-- :spider_web: **Nuclei Findings** - every nuclei web-vulnerability match across the fleet in one sortable table.
+- :spider_web: **Web Findings** - every nuclei web-vulnerability match across the fleet in one sortable table.
   <details>
   <summary>Details</summary>
 
-  Every nuclei template match (see Nuclei Profiles above) across the whole fleet in one sortable table - host, port, template id, severity, matched URL, description - a separate table from Vulnerabilities overview since a template match's shape (template id/severity/tags) doesn't map onto CVE/CPE/CVSS/EPSS/KEV columns at all. Only ever populated for a scan that had a non-"Off" nuclei profile selected.
+  Every nuclei template match (see Nuclei Profiles above) across the whole fleet in one sortable table - host, port, template id, severity, matched URL, description - a separate table from Vulnerabilities overview since a template match's shape (template id/severity/tags) doesn't map onto CVE/CPE/CVSS/EPSS/KEV columns at all. Named "Web Findings" rather than "Nuclei Findings" - nuclei is the tool that generates them, already explained above, not something a user needs to know to understand what this page shows. Only ever populated for a scan that had a non-"Off" nuclei profile selected.
   </details>
 
 - :bar_chart: **Digest** - a fleet-wide "what changed" view over the last 24h/7d, also sendable daily by email/webhook.
@@ -633,8 +633,8 @@ For every target, the pipeline runs:
    ("Off" profile) unless a scan/schedule explicitly picked "Safe" or a
    named Custom profile - never runs at all otherwise. Each match is
    recorded as its own row (template id, severity, matched URL,
-   description, tags, curl repro command) on the host's **Web
-   Vulnerabilities** section and the fleet-wide **Nuclei Findings** page.
+   description, tags, curl repro command) on the host's own **Web
+   Findings** section, and fleet-wide on the **Web Findings** page.
 5. **RDP screenshots** - for ports classified as RDP, spins up a virtual
    display and captures the login screen (only works against servers that
    still allow legacy RDP security - modern Windows defaults to Network

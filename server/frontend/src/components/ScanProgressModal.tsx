@@ -16,18 +16,20 @@ function phaseFor(stage: string | null): 1 | 2 | null {
   return DISCOVERY_STAGES.has(stage) ? 1 : 2;
 }
 
-// Everything phase 1 isn't. These seven genuinely run concurrently once
-// nmap's worker pool starts (nmap enrichment, and the gowitness/RDP/TLS
-// screenshot/cert workers + host submissions that stream alongside it -
-// see "Scan pipeline"), so this is deliberately a checklist of "have we
-// seen any activity from this stage yet", not a numbered "phase 3/4/5..."
-// sequence - a strict linear phase list would misrepresent concurrent
-// work as sequential. A scan with no RDP-classified ports, for example,
-// will simply never mark "RDP capture" seen, which is accurate (there
+// Everything phase 1 isn't. These genuinely run concurrently once
+// nmap's worker pool starts (nmap enrichment, and the gowitness/nuclei/
+// RDP/TLS screenshot/cert/scan workers + host submissions that stream
+// alongside it - see "Scan pipeline"), so this is deliberately a
+// checklist of "have we seen any activity from this stage yet", not a
+// numbered "phase 3/4/5..." sequence - a strict linear phase list would
+// misrepresent concurrent work as sequential. A scan with no RDP-
+// classified ports, for example, will simply never mark "RDP capture"
+// seen, which is accurate (there
 // was nothing for that worker pool to do), not a stuck step.
 const CONCURRENT_STAGES: Array<{ key: string; label: string }> = [
   { key: "nmap", label: "Nmap (service/version enrichment)" },
   { key: "gowitness", label: "Screenshots (gowitness)" },
+  { key: "nuclei", label: "Web vulnerability scanning (nuclei)" },
   { key: "tls", label: "TLS certificates" },
   { key: "rdp", label: "RDP capture" },
   { key: "snmp", label: "SNMP probe" },

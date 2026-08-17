@@ -28,11 +28,13 @@ function compareFindings(a: FleetNucleiFinding, b: FleetNucleiFinding, key: Sort
   }
 }
 
-// Fleet-wide view of nuclei web-vulnerability-scanning findings - own page
-// rather than folded into /vulnerabilities, since a template match
-// (template-id/severity/tags) doesn't map onto that page's CVE/CPE/CVSS/
-// EPSS/KEV shape at all. See CLAUDE.md's nuclei section.
-export default function NucleiFindings({ me, onLogout }: { me: Me; onLogout: () => void }) {
+// Fleet-wide view of nuclei web-vulnerability-scanning findings - "Web
+// Findings" rather than "Nuclei Findings" as the user-facing name (nuclei
+// is an implementation detail, already explained in the description below)
+// - own page rather than folded into /vulnerabilities, since a template
+// match (template-id/severity/tags) doesn't map onto that page's CVE/CPE/
+// CVSS/EPSS/KEV shape at all. See CLAUDE.md's nuclei section.
+export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [findings, setFindings] = useState<FleetNucleiFinding[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>("severity");
@@ -84,7 +86,7 @@ export default function NucleiFindings({ me, onLogout }: { me: Me; onLogout: () 
     <div className="dashboard">
       <PageHeader me={me} onLogout={onLogout} />
 
-      <h2>Nuclei Findings</h2>
+      <h2>Web Findings</h2>
       <p className="host-meta">
         Web-application findings from nuclei template scans against discovered HTTP(S) ports across the whole
         fleet, most severe first - exposed panels/config, known CVEs, and misconfigurations, depending on which
@@ -121,7 +123,7 @@ export default function NucleiFindings({ me, onLogout }: { me: Me; onLogout: () 
       {loading ? (
         <p>Loading...</p>
       ) : findings.length === 0 ? (
-        <p className="empty">No nuclei findings yet.</p>
+        <p className="empty">No web findings yet.</p>
       ) : sorted.length === 0 ? (
         <p className="empty">No findings match the current search/filter.</p>
       ) : (

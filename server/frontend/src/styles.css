@@ -1668,7 +1668,7 @@ th {
 }
 
 /* nuclei's severity enum adds "info"/"unknown" beyond CVSS's own four
-   levels (see the Nuclei Findings page) - same muted treatment as
+   levels (see the Web Findings page) - same muted treatment as
    .cve-low rather than inventing a third visual tier for what's already
    the least severe end of the scale. */
 .cve-info,
@@ -2078,6 +2078,9 @@ th {
 
 .scan-phase-2 {
   margin: 0 0 1rem;
+  padding: 0.6rem 0.6rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
 }
 
 .scan-phase-2-label {

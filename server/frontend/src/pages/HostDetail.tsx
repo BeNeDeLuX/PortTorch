@@ -779,7 +779,7 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
 
       {data.nucleiFindings.length > 0 && (
         <section>
-          <h2>Web Vulnerabilities</h2>
+          <h2>Web Findings</h2>
           <div className="banner-list">
             {data.nucleiFindings.map((f) => (
               <div key={f.id} className="banner-card">

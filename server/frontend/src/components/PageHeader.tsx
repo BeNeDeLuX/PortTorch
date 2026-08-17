@@ -48,7 +48,7 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
         />
         <NavLink to="/certificates">Certificates</NavLink>
         <NavLink to="/vulnerabilities">Vulnerabilities</NavLink>
-        <NavLink to="/nuclei-findings">Nuclei Findings</NavLink>
+        <NavLink to="/web-findings">Web Findings</NavLink>
         <NavLink to="/digest">Digest</NavLink>
         <NavLink to="/trends">Trends</NavLink>
         <NavLink to="/health">Health</NavLink>
