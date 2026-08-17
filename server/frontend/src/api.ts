@@ -219,6 +219,7 @@ export interface HostDetail {
   }>;
   tlsCertificates: TLSCertificate[];
   sshHostKeys: SSHHostKey[];
+  nucleiFindings: NucleiFinding[];
   tags: string[];
   comments: HostComment[];
   lastScanRequest: ScanRequest | null;
@@ -536,6 +537,46 @@ export interface ScanProfile {
   updated_at: string;
 }
 
+// A nuclei-profile pick - which web-vulnerability-scanning templates a
+// scan actually runs against its discovered HTTP(S) ports. "off" (default)
+// means nuclei never runs; "safe" excludes nuclei's own dos/fuzz/intrusive
+// tag conventions rather than naming an allowlist (see CLAUDE.md's nuclei
+// section for why); "custom" points at a named, admin-managed
+// NucleiProfile. Independent of NSEProfileSelection above - a scan can mix
+// any NSE profile with any nuclei profile.
+export type NucleiProfileSelection = { kind: "off" } | { kind: "safe" } | { kind: "custom"; profileId: string };
+
+export interface NucleiProfile {
+  id: string;
+  name: string;
+  tags: string[];
+  severities: string[];
+  excluded_tags: string[];
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NucleiFinding {
+  id: string;
+  port: number;
+  template_id: string;
+  name: string;
+  severity: string;
+  matched_at: string;
+  description: string | null;
+  reference: string[] | null;
+  tags: string[] | null;
+  curl_command: string | null;
+  observed_at: string;
+}
+
+export interface FleetNucleiFinding extends NucleiFinding {
+  host_id: string;
+  host_ip: string;
+  host_hostname: string | null;
+}
+
 export interface Schedule {
   id: string;
   scanner_agent_id: string;
@@ -554,6 +595,9 @@ export interface Schedule {
   nse_profile: "default" | "all_safe" | "custom";
   nse_scripts: string[] | null;
   nse_profile_label: string | null;
+  nuclei_profile: "off" | "safe" | "custom";
+  nuclei_tags: string[] | null;
+  nuclei_profile_label: string | null;
 }
 
 export interface ScanHistoryEntry {
@@ -667,8 +711,11 @@ export const api = {
   facets: (filters: HostFilters = {}) => request<Facets>(`/api/hosts/facets${hostsQueryString(filters)}`),
   allPortFacets: (filters: HostFilters = {}) => request<Facets["ports"]>(`/api/hosts/facets/ports${hostsQueryString(filters)}`),
   host: (id: string) => request<HostDetail>(`/api/hosts/${id}`),
-  rescan: (id: string, profile: NSEProfileSelection = { kind: "default" }) =>
-    request<ScanRequest>(`/api/hosts/${id}/rescan`, { method: "POST", body: JSON.stringify({ profile }) }),
+  rescan: (
+    id: string,
+    profile: NSEProfileSelection = { kind: "default" },
+    nucleiProfile: NucleiProfileSelection = { kind: "off" }
+  ) => request<ScanRequest>(`/api/hosts/${id}/rescan`, { method: "POST", body: JSON.stringify({ profile, nucleiProfile }) }),
   dismissRescan: (id: string) => request<void>(`/api/hosts/${id}/rescan/dismiss`, { method: "POST" }),
   addHostTag: (id: string, tag: string) =>
     request<{ tag: string }>(`/api/hosts/${id}/tags`, { method: "POST", body: JSON.stringify({ tag }) }),
@@ -754,7 +801,7 @@ export const api = {
       | { scheduleType: "interval"; scannerAgentId: string; targetSpec: string; portSpec: string; intervalMinutes: number }
       | { scheduleType: "cron"; scannerAgentId: string; targetSpec: string; portSpec: string; cronExpression: string }
       | { scheduleType: "once"; scannerAgentId: string; targetSpec: string; portSpec: string; runAt: string }
-    ) & { profile?: NSEProfileSelection }
+    ) & { profile?: NSEProfileSelection; nucleiProfile?: NucleiProfileSelection }
   ) => request<{ id: string }>("/api/schedules", { method: "POST", body: JSON.stringify(input) }),
   setScheduleEnabled: (id: string, enabled: boolean) =>
     request<void>(`/api/schedules/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
@@ -768,6 +815,7 @@ export const api = {
       cronExpression?: string;
       runAt?: string;
       profile?: NSEProfileSelection;
+      nucleiProfile?: NucleiProfileSelection;
     }
   ) => request<void>(`/api/schedules/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteSchedule: (id: string) => request<void>(`/api/schedules/${id}`, { method: "DELETE" }),
@@ -778,6 +826,19 @@ export const api = {
   updateScanProfile: (id: string, patch: { name?: string; nseScripts?: string[] }) =>
     request<ScanProfile>(`/api/scan-profiles/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteScanProfile: (id: string) => request<void>(`/api/scan-profiles/${id}`, { method: "DELETE" }),
+
+  nucleiProfiles: () => request<NucleiProfile[]>("/api/nuclei-profiles"),
+  createNucleiProfile: (name: string, tags: string[], severities: string[], excludedTags: string[]) =>
+    request<NucleiProfile>("/api/nuclei-profiles", {
+      method: "POST",
+      body: JSON.stringify({ name, tags, severities, excludedTags }),
+    }),
+  updateNucleiProfile: (
+    id: string,
+    patch: { name?: string; tags?: string[]; severities?: string[]; excludedTags?: string[] }
+  ) => request<NucleiProfile>(`/api/nuclei-profiles/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteNucleiProfile: (id: string) => request<void>(`/api/nuclei-profiles/${id}`, { method: "DELETE" }),
+  nucleiFindings: () => request<FleetNucleiFinding[]>("/api/nuclei-findings"),
 
   tlsCertificate: () => request<TlsCertificateInfo>("/api/settings/tls-certificate"),
   // Bypasses request()'s JSON-only helper - a multipart body needs the

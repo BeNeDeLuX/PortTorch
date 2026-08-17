@@ -399,6 +399,18 @@ const portObservationSchema = z.object({
   extraScripts: z.array(z.object({ id: z.string().min(1), output: z.string() })).optional(),
 });
 
+const nucleiFindingSchema = z.object({
+  port: z.number().int().min(1).max(65535),
+  templateId: z.string().min(1),
+  name: z.string().min(1),
+  severity: z.string().min(1),
+  matchedAt: z.string().min(1),
+  description: z.string().optional(),
+  reference: z.array(z.string()).optional(),
+  tags: z.array(z.string()).optional(),
+  curlCommand: z.string().optional(),
+});
+
 const ingestHostsSchema = z.object({
   scanJobId: z.string().uuid(),
   hosts: z.array(
@@ -413,6 +425,7 @@ const ingestHostsSchema = z.object({
       macAddress: z.string().optional(),
       macVendor: z.string().optional(),
       ports: z.array(portObservationSchema),
+      nucleiFindings: z.array(nucleiFindingSchema).optional(),
     })
   ),
 });
@@ -442,6 +455,7 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
   // otherwise a brand-new host with 10 open ports would fire 11 webhooks).
   const hostNewEvents: Array<{ ip: string; hostname: string | null }> = [];
   const portOpenedEvents: Array<{ ip: string; hostname: string | null; port: number; serviceName: string | null }> = [];
+  const nucleiFindingEvents: Array<{ ip: string; hostname: string | null; templateId: string; name: string; severity: string }> = [];
 
   await db.transaction().execute(async (trx) => {
     for (const host of parsed.data.hosts) {
@@ -545,6 +559,45 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
         await trx.insertInto("ssh_host_keys").values(sshHostKeyRows).execute();
       }
 
+      if ((host.nucleiFindings ?? []).length > 0) {
+        // "New" here means "not seen on a prior scan of this exact host" -
+        // same host.new/port.opened idiom (only genuinely new matches fire
+        // a webhook, a finding that already fired last time stays quiet on
+        // a rescan) - keyed on (template_id, matched_at) since the same
+        // template can match multiple URLs/paths on the same host.
+        const existingFindings = await trx
+          .selectFrom("nuclei_findings")
+          .select(["template_id", "matched_at"])
+          .where("host_id", "=", upserted.id)
+          .execute();
+        const existingFindingKeys = new Set(existingFindings.map((f) => `${f.template_id} ${f.matched_at}`));
+
+        await trx
+          .insertInto("nuclei_findings")
+          .values(
+            (host.nucleiFindings ?? []).map((f) => ({
+              host_id: upserted.id,
+              scan_job_id: parsed.data.scanJobId,
+              port: f.port,
+              template_id: f.templateId,
+              name: f.name,
+              severity: f.severity,
+              matched_at: f.matchedAt,
+              description: f.description ?? null,
+              reference: f.reference ?? null,
+              tags: f.tags ?? null,
+              curl_command: f.curlCommand ?? null,
+            }))
+          )
+          .execute();
+
+        for (const f of host.nucleiFindings ?? []) {
+          if (!existingFindingKeys.has(`${f.templateId} ${f.matchedAt}`)) {
+            nucleiFindingEvents.push({ ip: host.ip, hostname: host.hostname ?? null, templateId: f.templateId, name: f.name, severity: f.severity });
+          }
+        }
+      }
+
       // Core event for SIEM traceability: which scanner saw which IP on
       // which ports, and when.
       logger.info({
@@ -561,6 +614,7 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
           service_name: p.serviceName ?? null,
           ssh_host_keys: p.sshHostKeys?.length ?? 0,
         })),
+        nuclei_findings: host.nucleiFindings?.length ?? 0,
         source_ip: req.ip,
       });
     }
@@ -574,6 +628,13 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
       "port.opened",
       `Port ${e.port}${e.serviceName ? `/${e.serviceName}` : ""} newly open on ${e.hostname || e.ip}`,
       { ip: e.ip, hostname: e.hostname, port: e.port, service_name: e.serviceName }
+    );
+  }
+  for (const e of nucleiFindingEvents) {
+    dispatchWebhook(
+      "nuclei.finding",
+      `${e.severity} nuclei finding "${e.name}" on ${e.hostname || e.ip}`,
+      { ip: e.ip, hostname: e.hostname, template_id: e.templateId, name: e.name, severity: e.severity }
     );
   }
 
@@ -772,6 +833,8 @@ ingestRouter.get("/scan-requests/next", asyncHandler(async (req, res) => {
     port_spec: string;
     nse_profile: string;
     nse_scripts: string[] | null;
+    nuclei_profile: string;
+    nuclei_tags: string[] | null;
   }>`
     UPDATE scan_requests
     SET status = 'claimed', claimed_at = now()
@@ -782,7 +845,7 @@ ingestRouter.get("/scan-requests/next", asyncHandler(async (req, res) => {
       FOR UPDATE SKIP LOCKED
       LIMIT 1
     )
-    RETURNING id, target_spec, port_spec, nse_profile, nse_scripts
+    RETURNING id, target_spec, port_spec, nse_profile, nse_scripts, nuclei_profile, nuclei_tags
   `.execute(db);
 
   const next = claimed.rows[0];
@@ -800,14 +863,16 @@ ingestRouter.get("/scan-requests/next", asyncHandler(async (req, res) => {
     port_spec: next.port_spec,
   });
 
-  // nse_profile_label is display-only and never needed by the scanner -
-  // not included here.
+  // nse_profile_label/nuclei_profile_label are display-only and never
+  // needed by the scanner - not included here.
   res.json({
     id: next.id,
     targetSpec: next.target_spec,
     portSpec: next.port_spec,
     nseProfile: next.nse_profile,
     nseScripts: next.nse_scripts,
+    nucleiProfile: next.nuclei_profile,
+    nucleiTags: next.nuclei_tags,
   });
 }));
 

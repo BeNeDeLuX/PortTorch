@@ -43,6 +43,9 @@ async function tick(): Promise<void> {
           nse_profile: schedule.nse_profile,
           nse_scripts: schedule.nse_scripts,
           nse_profile_label: schedule.nse_profile_label,
+          nuclei_profile: schedule.nuclei_profile,
+          nuclei_tags: schedule.nuclei_tags,
+          nuclei_profile_label: schedule.nuclei_profile_label,
         })
         .execute();
 

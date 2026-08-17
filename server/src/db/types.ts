@@ -295,6 +295,13 @@ export interface ScanSchedulesTable {
   nse_profile: ColumnType<"default" | "all_safe" | "custom", "default" | "all_safe" | "custom" | undefined, "default" | "all_safe" | "custom">;
   nse_scripts: string[] | null;
   nse_profile_label: string | null;
+  // Same resolved-snapshot shape as nse_profile above, for the
+  // independent nuclei web-vulnerability-scanning stage - see
+  // nucleiProfiles/resolve.ts's resolveNucleiProfile. nuclei_tags is only
+  // ever set for 'custom'.
+  nuclei_profile: ColumnType<"off" | "safe" | "custom", "off" | "safe" | "custom" | undefined, "off" | "safe" | "custom">;
+  nuclei_tags: string[] | null;
+  nuclei_profile_label: string | null;
 }
 
 export interface ScanRequestsTable {
@@ -316,6 +323,10 @@ export interface ScanRequestsTable {
   nse_profile: ColumnType<"default" | "all_safe" | "custom", "default" | "all_safe" | "custom" | undefined, "default" | "all_safe" | "custom">;
   nse_scripts: string[] | null;
   nse_profile_label: string | null;
+  // Same nuclei-profile snapshot shape as ScanSchedulesTable above.
+  nuclei_profile: ColumnType<"off" | "safe" | "custom", "off" | "safe" | "custom" | undefined, "off" | "safe" | "custom">;
+  nuclei_tags: string[] | null;
+  nuclei_profile_label: string | null;
 }
 
 export interface ScanProfilesTable {
@@ -325,6 +336,33 @@ export interface ScanProfilesTable {
   created_by: string | null;
   created_at: ColumnType<Date, string | undefined, never>;
   updated_at: ColumnType<Date, string | undefined, string>;
+}
+
+export interface NucleiProfilesTable {
+  id: Generated<string>;
+  name: string;
+  tags: string[];
+  severities: string[];
+  excluded_tags: string[];
+  created_by: string | null;
+  created_at: ColumnType<Date, string | undefined, never>;
+  updated_at: ColumnType<Date, string | undefined, string>;
+}
+
+export interface NucleiFindingsTable {
+  id: Generated<string>;
+  host_id: string;
+  scan_job_id: string;
+  port: number;
+  template_id: string;
+  name: string;
+  severity: string;
+  matched_at: string;
+  description: string | null;
+  reference: string[] | null;
+  tags: string[] | null;
+  curl_command: string | null;
+  observed_at: ColumnType<Date, string | undefined, never>;
 }
 
 export interface TlsCertificatesTable {
@@ -557,6 +595,8 @@ export interface Database {
   tls_certificates: TlsCertificatesTable;
   ssh_host_keys: SshHostKeysTable;
   scan_profiles: ScanProfilesTable;
+  nuclei_profiles: NucleiProfilesTable;
+  nuclei_findings: NucleiFindingsTable;
   scanner_release_cache: ScannerReleaseCacheTable;
   webserver_tls_alert_state: WebserverTlsAlertStateTable;
   app_settings: AppSettingsTable;

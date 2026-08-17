@@ -38,6 +38,7 @@ func TestRunScanIPv6LoopbackAgainstRealTarget(t *testing.T) {
 		Excludes{},
 		nil,
 		nil,
+		nil,
 		func(stage, msg string) { t.Logf("[%s] %s", stage, msg) },
 		func(h HostResult) { completed = append(completed, h) },
 	)

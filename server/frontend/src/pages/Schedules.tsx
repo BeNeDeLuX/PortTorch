@@ -1,9 +1,10 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
-import { api, Me, NSEProfileSelection, ScannerAgent, Schedule } from "../api";
+import { api, Me, NSEProfileSelection, NucleiProfileSelection, ScannerAgent, Schedule } from "../api";
 import { IconEdit, IconPause, IconPlay, IconPlus, IconSave, IconTrash, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScanProfilePicker from "../components/ScanProfilePicker";
+import NucleiProfilePicker from "../components/NucleiProfilePicker";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import { formatDateTime } from "../lib/formatDate";
 import {
@@ -174,6 +175,11 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
   const [profile, setProfile] = useState<NSEProfileSelection>({ kind: "default" });
   const [profileTouched, setProfileTouched] = useState(false);
   const [editingProfileLabel, setEditingProfileLabel] = useState<string | null>(null);
+  // Same touched/label discipline as the NSE profile above, independently -
+  // a schedule's stored nuclei profile is its own separate snapshot.
+  const [nucleiProfile, setNucleiProfile] = useState<NucleiProfileSelection>({ kind: "off" });
+  const [nucleiProfileTouched, setNucleiProfileTouched] = useState(false);
+  const [editingNucleiProfileLabel, setEditingNucleiProfileLabel] = useState<string | null>(null);
   const [scheduleType, setScheduleType] = useState<"interval" | "cron" | "once">("interval");
   const [intervalMinutes, setIntervalMinutes] = useState(60);
   const [runAt, setRunAt] = useState("");
@@ -256,6 +262,9 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     setProfile({ kind: "default" });
     setProfileTouched(false);
     setEditingProfileLabel(null);
+    setNucleiProfile({ kind: "off" });
+    setNucleiProfileTouched(false);
+    setEditingNucleiProfileLabel(null);
     setScheduleType("interval");
     setIntervalMinutes(60);
     setRepeatMode("daily");
@@ -284,6 +293,9 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     setProfile({ kind: s.nse_profile === "custom" ? "default" : s.nse_profile });
     setProfileTouched(false);
     setEditingProfileLabel(s.nse_profile_label);
+    setNucleiProfile({ kind: s.nuclei_profile === "custom" ? "off" : s.nuclei_profile });
+    setNucleiProfileTouched(false);
+    setEditingNucleiProfileLabel(s.nuclei_profile_label);
     setScheduleType(s.schedule_type);
 
     if (s.schedule_type === "interval") {
@@ -323,6 +335,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         portSpec: portSpec.trim(),
         scannerAgentId,
         ...(profileTouched ? { profile } : {}),
+        ...(nucleiProfileTouched ? { nucleiProfile } : {}),
       };
       if (scheduleType === "interval") {
         await api.updateSchedule(editingId, { ...base, intervalMinutes });
@@ -348,6 +361,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         portSpec: portSpec.trim(),
         intervalMinutes,
         profile,
+        nucleiProfile,
       });
     } else if (scheduleType === "once") {
       if (!runAt) return;
@@ -364,6 +378,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         portSpec: portSpec.trim(),
         runAt: zonedDateTimeToUtcIso(datePart, timePart, timezone),
         profile,
+        nucleiProfile,
       });
     } else {
       const cronExpression = advancedCron ? rawCronExpression.trim() : generatedCron;
@@ -375,6 +390,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         portSpec: portSpec.trim(),
         cronExpression,
         profile,
+        nucleiProfile,
       });
     }
     setTargetSpec("");
@@ -382,6 +398,8 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     setRunAt("");
     setProfile({ kind: "default" });
     setProfileTouched(false);
+    setNucleiProfile({ kind: "off" });
+    setNucleiProfileTouched(false);
     await load();
   }
 
@@ -513,6 +531,22 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
             <p className="empty">
               Currently: {editingProfileLabel}. Picking a profile above will change it - leave it alone to keep this
               schedule's existing profile untouched.
+            </p>
+          )}
+          <label>
+            Nuclei profile
+            <NucleiProfilePicker
+              value={nucleiProfile}
+              onChange={(p) => {
+                setNucleiProfile(p);
+                setNucleiProfileTouched(true);
+              }}
+            />
+          </label>
+          {editingId !== null && !nucleiProfileTouched && editingNucleiProfileLabel && (
+            <p className="empty">
+              Currently: {editingNucleiProfileLabel}. Picking a profile above will change it - leave it alone to keep
+              this schedule's existing nuclei profile untouched.
             </p>
           )}
           <label>

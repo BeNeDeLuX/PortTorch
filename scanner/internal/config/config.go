@@ -69,6 +69,19 @@ type Config struct {
 	// "sudo apt-get install -y tesseract-ocr".
 	TesseractPath string `yaml:"tesseractPath"`
 
+	// NucleiPath enables the web-vulnerability-scanning stage (best-effort
+	// like gowitness/xfreerdp/tesseract - only ever invoked when a scan
+	// request resolves a non-off nuclei profile, see
+	// resolveNucleiProfile; a missing binary then just means that host's
+	// nuclei sub-tasks fail individually, not a failed scan).
+	NucleiPath           string `yaml:"nucleiPath"`
+	NucleiTimeoutSeconds int    `yaml:"nucleiTimeoutSeconds"`
+	// NucleiConcurrency is separate from (and defaults much lower than)
+	// Concurrency, same reasoning as GowitnessConcurrency/RDPConcurrency -
+	// each nuclei invocation walks its whole selected template set
+	// against one target, far heavier than a single nmap process.
+	NucleiConcurrency int `yaml:"nucleiConcurrency"`
+
 	// ListenAddr and ControlAPIToken are only used by the "serve"
 	// subcommand, which accepts scans via REST API instead of the TUI.
 	ListenAddr      string `yaml:"listenAddr,omitempty"`
@@ -124,6 +137,10 @@ func defaults() Config {
 
 		TLSCertTimeoutSeconds: 8,
 		TesseractPath:         "tesseract",
+
+		NucleiPath:           "nuclei",
+		NucleiTimeoutSeconds: 10,
+		NucleiConcurrency:    2,
 
 		ListenAddr:          ":9090",
 		PollIntervalSeconds: 15,
@@ -192,5 +209,9 @@ func (c *Config) Pipeline() pipeline.Config {
 
 		TLSCertTimeoutSeconds: c.TLSCertTimeoutSeconds,
 		TesseractPath:         c.TesseractPath,
+
+		NucleiPath:           c.NucleiPath,
+		NucleiTimeoutSeconds: c.NucleiTimeoutSeconds,
+		NucleiConcurrency:    c.NucleiConcurrency,
 	}
 }

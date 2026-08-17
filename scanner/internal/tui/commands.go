@@ -78,9 +78,10 @@ func runScanCmd(c *client.Client, pcfg pipeline.Config, queueDir string, auditLo
 		tracker := scanprogress.NewTracker(c, jobID, scanprogress.DefaultPushInterval)
 		defer tracker.Close()
 
-		// nil nseScripts: the menu TUI has no scan-profile concept - always
-		// runs DefaultNSEScripts, same as before this feature existed.
-		result, scanErr := pipeline.RunScan(context.Background(), pcfg, target, ports, excludes, probeHostnames, nil,
+		// nil nseScripts/nucleiProfile: the menu TUI has no scan-profile
+		// concept - always runs DefaultNSEScripts and never runs nuclei,
+		// same as before nuclei existed.
+		result, scanErr := pipeline.RunScan(context.Background(), pcfg, target, ports, excludes, probeHostnames, nil, nil,
 			func(stage, message string) {
 				progressCh <- progressMsg{stage: stage, message: message}
 				tracker.Progress(stage, message)

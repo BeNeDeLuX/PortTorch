@@ -1,0 +1,51 @@
+import { Router } from "express";
+import { db } from "../db";
+import { requireAuth } from "../auth/middleware";
+import { getAllowedScannerAgentIds } from "../auth/scannerScope";
+import { asyncHandler } from "../lib/asyncHandler";
+
+export const nucleiFindingsRouter = Router();
+nucleiFindingsRouter.use(requireAuth);
+
+// Fleet-wide view across all hosts, own page rather than folded into
+// /api/vulnerabilities - nuclei's template-id/severity/tags shape doesn't
+// map onto that route's CVE/CPE/CVSS/EPSS/KEV columns at all (see
+// CLAUDE.md's nuclei section). Same "most recent per identity" dedup as
+// the per-host list in search/routes.ts - identity here is
+// (host_id, template_id, matched_at) since the same template can match
+// multiple URLs/paths on the same host, and a rescan re-observing the same
+// finding shouldn't show up twice.
+nucleiFindingsRouter.get("/", asyncHandler(async (req, res) => {
+  const allowed = getAllowedScannerAgentIds(req);
+  let query = db
+    .selectFrom("nuclei_findings")
+    .innerJoin("hosts", "hosts.id", "nuclei_findings.host_id")
+    .select([
+      "nuclei_findings.id as id",
+      "hosts.id as host_id",
+      "hosts.ip as host_ip",
+      "hosts.hostname as host_hostname",
+      "nuclei_findings.port as port",
+      "nuclei_findings.template_id as template_id",
+      "nuclei_findings.name as name",
+      "nuclei_findings.severity as severity",
+      "nuclei_findings.matched_at as matched_at",
+      "nuclei_findings.description as description",
+      "nuclei_findings.reference as reference",
+      "nuclei_findings.tags as tags",
+      "nuclei_findings.curl_command as curl_command",
+      "nuclei_findings.observed_at as observed_at",
+    ])
+    .distinctOn(["nuclei_findings.host_id", "nuclei_findings.template_id", "nuclei_findings.matched_at"])
+    .orderBy("nuclei_findings.host_id")
+    .orderBy("nuclei_findings.template_id")
+    .orderBy("nuclei_findings.matched_at")
+    .orderBy("nuclei_findings.observed_at", "desc");
+
+  if (allowed) {
+    query = query.where("hosts.scanner_agent_id", "in", allowed);
+  }
+
+  const rows = await query.execute();
+  res.json(rows);
+}));

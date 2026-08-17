@@ -8,6 +8,7 @@ import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { isValidCronExpression, nextCronRun } from "../lib/cron";
 import { ScanProfileNotFoundError, resolveNSEProfile } from "../scanProfiles/resolve";
+import { NucleiProfileNotFoundError, resolveNucleiProfile } from "../nucleiProfiles/resolve";
 
 export const schedulesRouter = Router();
 schedulesRouter.use(requireAuth);
@@ -34,6 +35,9 @@ schedulesRouter.get("/", asyncHandler(async (req, res) => {
       "scan_schedules.nse_profile as nse_profile",
       "scan_schedules.nse_scripts as nse_scripts",
       "scan_schedules.nse_profile_label as nse_profile_label",
+      "scan_schedules.nuclei_profile as nuclei_profile",
+      "scan_schedules.nuclei_tags as nuclei_tags",
+      "scan_schedules.nuclei_profile_label as nuclei_profile_label",
       "scanner_agents.name as scanner_agent_name",
     ]);
 
@@ -51,12 +55,20 @@ const nseProfileSelectionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("custom"), profileId: z.string().uuid() }),
 ]);
 
+const nucleiProfileSelectionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("off") }),
+  z.object({ kind: z.literal("safe") }),
+  z.object({ kind: z.literal("custom"), profileId: z.string().uuid() }),
+]);
+
 const baseScheduleFields = {
   scannerAgentId: z.string().uuid(),
   targetSpec: z.string().min(1),
   portSpec: z.string().min(1),
   // Omitted = Default, same as every scan-profile picker elsewhere.
   profile: nseProfileSelectionSchema.optional(),
+  // Omitted = Off, same discipline - independent of the NSE profile above.
+  nucleiProfile: nucleiProfileSelectionSchema.optional(),
 };
 
 const createScheduleSchema = z.discriminatedUnion("scheduleType", [
@@ -102,6 +114,17 @@ schedulesRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
     throw err;
   }
 
+  let resolvedNucleiProfile;
+  try {
+    resolvedNucleiProfile = await resolveNucleiProfile(parsed.data.nucleiProfile ?? { kind: "off" });
+  } catch (err) {
+    if (err instanceof NucleiProfileNotFoundError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    throw err;
+  }
+
   // The interval type's next_run_at can rely on the column default (now())
   // for an immediate first run, but a cron schedule's first run is whatever
   // the expression's own next occurrence actually is - "now" would be
@@ -125,6 +148,9 @@ schedulesRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
       nse_profile: resolvedProfile.nseProfile,
       nse_scripts: resolvedProfile.nseScripts,
       nse_profile_label: resolvedProfile.nseProfileLabel,
+      nuclei_profile: resolvedNucleiProfile.nucleiProfile,
+      nuclei_tags: resolvedNucleiProfile.nucleiTags,
+      nuclei_profile_label: resolvedNucleiProfile.nucleiProfileLabel,
       created_by: req.session.username ?? null,
     })
     .returning(["id"])
@@ -173,6 +199,7 @@ const updateScheduleSchema = z.object({
   // Omitted = leave unchanged, same discipline as every other optional
   // field here.
   profile: nseProfileSelectionSchema.optional(),
+  nucleiProfile: nucleiProfileSelectionSchema.optional(),
 });
 
 schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
@@ -193,7 +220,8 @@ schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
     parsed.data.portSpec === undefined &&
     parsed.data.scannerAgentId === undefined &&
     parsed.data.runAt === undefined &&
-    parsed.data.profile === undefined
+    parsed.data.profile === undefined &&
+    parsed.data.nucleiProfile === undefined
   ) {
     res.status(400).json({ error: "nothing to update" });
     return;
@@ -238,6 +266,19 @@ schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
       resolvedProfile = await resolveNSEProfile(parsed.data.profile);
     } catch (err) {
       if (err instanceof ScanProfileNotFoundError) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
+      throw err;
+    }
+  }
+
+  let resolvedNucleiProfile: Awaited<ReturnType<typeof resolveNucleiProfile>> | undefined;
+  if (parsed.data.nucleiProfile !== undefined) {
+    try {
+      resolvedNucleiProfile = await resolveNucleiProfile(parsed.data.nucleiProfile);
+    } catch (err) {
+      if (err instanceof NucleiProfileNotFoundError) {
         res.status(400).json({ error: err.message });
         return;
       }
@@ -322,6 +363,13 @@ schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
             nse_profile: resolvedProfile.nseProfile,
             nse_scripts: resolvedProfile.nseScripts,
             nse_profile_label: resolvedProfile.nseProfileLabel,
+          }
+        : {}),
+      ...(resolvedNucleiProfile !== undefined
+        ? {
+            nuclei_profile: resolvedNucleiProfile.nucleiProfile,
+            nuclei_tags: resolvedNucleiProfile.nucleiTags,
+            nuclei_profile_label: resolvedNucleiProfile.nucleiProfileLabel,
           }
         : {}),
     })

@@ -1,8 +1,18 @@
 import { db } from "./db";
 import { NSEProfileSelection, ScanProfileNotFoundError, resolveNSEProfile } from "./scanProfiles/resolve";
+import { NucleiProfileSelection, NucleiProfileNotFoundError, resolveNucleiProfile } from "./nucleiProfiles/resolve";
 
 export type RescanOutcome =
-  | { ok: true; request: { id: string; status: string; created_at: Date | string; nse_profile_label: string | null } }
+  | {
+      ok: true;
+      request: {
+        id: string;
+        status: string;
+        created_at: Date | string;
+        nse_profile_label: string | null;
+        nuclei_profile_label: string | null;
+      };
+    }
   | { ok: false; status: number; error: string };
 
 // Shared by the dashboard's rescan button (search/routes.ts) and the
@@ -11,13 +21,15 @@ export type RescanOutcome =
 // whichever scanner last scanned this host" logic, so it lives in one
 // place rather than risking the two callers drifting apart.
 //
-// profile defaults to Default so the External API's rescan endpoint
-// (which never sends one - a scan-profile picker was never asked for
-// there) keeps behaving exactly as before this feature existed.
+// Both profile params default to their "off"/unchanged state so the
+// External API's rescan endpoint (which never sends either - neither
+// picker was ever asked for there) keeps behaving exactly as before
+// either feature existed.
 export async function requestRescan(
   hostId: string,
   requestedBy: string | null,
-  profile: NSEProfileSelection = { kind: "default" }
+  profile: NSEProfileSelection = { kind: "default" },
+  nucleiProfile: NucleiProfileSelection = { kind: "off" }
 ): Promise<RescanOutcome> {
   const host = await db.selectFrom("hosts").select(["id", "ip"]).where("id", "=", hostId).executeTakeFirst();
   if (!host) {
@@ -66,6 +78,16 @@ export async function requestRescan(
     throw err;
   }
 
+  let resolvedNucleiProfile;
+  try {
+    resolvedNucleiProfile = await resolveNucleiProfile(nucleiProfile);
+  } catch (err) {
+    if (err instanceof NucleiProfileNotFoundError) {
+      return { ok: false, status: 400, error: err.message };
+    }
+    throw err;
+  }
+
   const request = await db
     .insertInto("scan_requests")
     .values({
@@ -77,8 +99,11 @@ export async function requestRescan(
       nse_profile: resolvedProfile.nseProfile,
       nse_scripts: resolvedProfile.nseScripts,
       nse_profile_label: resolvedProfile.nseProfileLabel,
+      nuclei_profile: resolvedNucleiProfile.nucleiProfile,
+      nuclei_tags: resolvedNucleiProfile.nucleiTags,
+      nuclei_profile_label: resolvedNucleiProfile.nucleiProfileLabel,
     })
-    .returning(["id", "status", "created_at", "nse_profile_label"])
+    .returning(["id", "status", "created_at", "nse_profile_label", "nuclei_profile_label"])
     .executeTakeFirstOrThrow();
 
   return { ok: true, request };

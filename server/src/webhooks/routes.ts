@@ -23,6 +23,7 @@ const EVENTS: WebhookEvent[] = [
   "scan.stale",
   "scanner.update_failed",
   "scan_queue.backlog",
+  "nuclei.finding",
 ];
 const uuidSchema = z.string().uuid();
 const WEBHOOK_COLUMNS = ["id", "name", "channel_type", "url", "email_to", "enabled", "events", "created_at"] as const;
@@ -88,6 +89,7 @@ const createWebhookSchema = z
           "scan.stale",
           "scanner.update_failed",
           "scan_queue.backlog",
+          "nuclei.finding",
         ])
       )
       .min(1),

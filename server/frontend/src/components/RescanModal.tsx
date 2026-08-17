@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { NSEProfileSelection } from "../api";
+import { NSEProfileSelection, NucleiProfileSelection } from "../api";
 import { IconRefresh, IconX } from "./icons";
 import Modal from "./Modal";
 import ScanProfilePicker from "./ScanProfilePicker";
+import NucleiProfilePicker from "./NucleiProfilePicker";
 
 const LAST_PROFILE_KEY = "porttorch.rescan.lastProfile";
+const LAST_NUCLEI_PROFILE_KEY = "porttorch.rescan.lastNucleiProfile";
 
 function loadLastProfile(): NSEProfileSelection {
   try {
@@ -20,6 +22,20 @@ function loadLastProfile(): NSEProfileSelection {
   return { kind: "default" };
 }
 
+function loadLastNucleiProfile(): NucleiProfileSelection {
+  try {
+    const raw = localStorage.getItem(LAST_NUCLEI_PROFILE_KEY);
+    if (!raw) return { kind: "off" };
+    const parsed = JSON.parse(raw);
+    if (parsed && (parsed.kind === "off" || parsed.kind === "safe" || parsed.kind === "custom")) {
+      return parsed as NucleiProfileSelection;
+    }
+  } catch {
+    // ignore malformed/foreign localStorage value, fall through to off
+  }
+  return { kind: "off" };
+}
+
 // Confirmation popup opened by every "Rescan" trigger (Dashboard single +
 // bulk, Host Detail single) instead of firing immediately - a rescan's
 // scope/intrusiveness can now vary a lot by profile, so this always shows
@@ -33,25 +49,30 @@ export default function RescanModal({
   onClose,
 }: {
   hostCount: number;
-  onConfirm: (profile: NSEProfileSelection) => void;
+  onConfirm: (profile: NSEProfileSelection, nucleiProfile: NucleiProfileSelection) => void;
   onClose: () => void;
 }) {
   const [profile, setProfile] = useState<NSEProfileSelection>(loadLastProfile);
+  const [nucleiProfile, setNucleiProfile] = useState<NucleiProfileSelection>(loadLastNucleiProfile);
 
   function handleConfirm() {
     localStorage.setItem(LAST_PROFILE_KEY, JSON.stringify(profile));
-    onConfirm(profile);
+    localStorage.setItem(LAST_NUCLEI_PROFILE_KEY, JSON.stringify(nucleiProfile));
+    onConfirm(profile, nucleiProfile);
   }
 
   return (
     <Modal title="Rescan" onClose={onClose}>
       <p className="host-meta">
-        {hostCount === 1 ? "Rescan this host" : `Rescan ${hostCount} selected hosts`} using which NSE script
-        profile?
+        {hostCount === 1 ? "Rescan this host" : `Rescan ${hostCount} selected hosts`} using which profiles?
       </p>
       <label>
         Scan profile
         <ScanProfilePicker value={profile} onChange={setProfile} />
+      </label>
+      <label>
+        Nuclei profile
+        <NucleiProfilePicker value={nucleiProfile} onChange={setNucleiProfile} />
       </label>
       <div className="inline-form" style={{ marginTop: "1rem" }}>
         <button type="button" className="btn-icon-label" onClick={handleConfirm}>

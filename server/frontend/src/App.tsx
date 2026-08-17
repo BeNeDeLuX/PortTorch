@@ -20,6 +20,8 @@ import Audit from "./pages/Audit";
 import Excludes from "./pages/Excludes";
 import ApiTokens from "./pages/ApiTokens";
 import ScanProfiles from "./pages/ScanProfiles";
+import NucleiProfiles from "./pages/NucleiProfiles";
+import NucleiFindings from "./pages/NucleiFindings";
 import Settings from "./pages/Settings";
 import FleetHealth from "./pages/FleetHealth";
 
@@ -141,6 +143,14 @@ export default function App() {
       <Route
         path="/scan-profiles"
         element={routeElement(true, (m) => <ScanProfiles me={m} onLogout={() => setMe(null)} />)}
+      />
+      <Route
+        path="/nuclei-profiles"
+        element={routeElement(true, (m) => <NucleiProfiles me={m} onLogout={() => setMe(null)} />)}
+      />
+      <Route
+        path="/nuclei-findings"
+        element={routeElement(false, (m) => <NucleiFindings me={m} onLogout={() => setMe(null)} />)}
       />
       <Route
         path="/health"

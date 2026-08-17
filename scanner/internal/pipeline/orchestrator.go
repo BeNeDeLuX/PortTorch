@@ -61,6 +61,15 @@ type Config struct {
 	// and RDP screenshots - best-effort like gowitness/RDP themselves, so
 	// a missing tesseract binary just means no OCR text, not a failed scan.
 	TesseractPath string
+
+	NucleiPath           string
+	NucleiTimeoutSeconds int
+	// NucleiConcurrency is deliberately separate from (and defaults much
+	// lower than) Concurrency, for the same reason as
+	// GowitnessConcurrency/RDPConcurrency - each nuclei invocation walks
+	// its whole selected template set against one target, far heavier
+	// than a single nmap process.
+	NucleiConcurrency int
 }
 
 func (c Config) tlsCertTimeout() time.Duration {
@@ -128,6 +137,15 @@ func (c Config) withDefaults() Config {
 	if c.TesseractPath == "" {
 		c.TesseractPath = "tesseract"
 	}
+	if c.NucleiPath == "" {
+		c.NucleiPath = "nuclei"
+	}
+	if c.NucleiTimeoutSeconds <= 0 {
+		c.NucleiTimeoutSeconds = 10
+	}
+	if c.NucleiConcurrency <= 0 {
+		c.NucleiConcurrency = 2
+	}
 	return c
 }
 
@@ -184,7 +202,13 @@ func noopHostComplete(HostResult) {}
 // nseScripts is the resolved scan-profile script list passed straight
 // through to RunNmap (see that function's own doc comment) - nil/empty
 // means "Default", today's unchanged behavior.
-func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, excludes Excludes, probeHostnames map[string]string, nseScripts []string, onProgress ProgressFunc, onHostComplete HostCompleteFunc) (*ScanResult, error) {
+//
+// nucleiProfile gates the nuclei web-vulnerability-scanning stage
+// entirely: nil means nuclei never runs at all - the nucleiJobs worker
+// pool isn't even started, reproducing exactly today's behavior for every
+// caller that doesn't resolve a real profile (see resolveNucleiProfile in
+// internal/api/server.go, the only caller that ever passes non-nil).
+func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, excludes Excludes, probeHostnames map[string]string, nseScripts []string, nucleiProfile *NucleiProfile, onProgress ProgressFunc, onHostComplete HostCompleteFunc) (*ScanResult, error) {
 	cfg = cfg.withDefaults()
 	if onProgress == nil {
 		onProgress = noopProgress
@@ -278,6 +302,14 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 	ipmiJobs := make(chan ipmiJob, cfg.Concurrency)
 	dnsRecursionJobs := make(chan dnsRecursionJob, cfg.Concurrency)
 	upnpJobs := make(chan upnpJob, cfg.Concurrency)
+	// Only created/started when a nuclei profile is actually active - see
+	// RunScan's doc comment. Left nil otherwise, never closed below, and
+	// never enqueued onto in the per-port loop (all three guarded by the
+	// same nucleiProfile != nil check).
+	var nucleiJobs chan nucleiJob
+	if nucleiProfile != nil {
+		nucleiJobs = make(chan nucleiJob, cfg.NucleiConcurrency)
+	}
 
 	var subWG sync.WaitGroup
 	startGowitnessWorkers(ctx, cfg, shotJobs, tracker, onProgress, &subWG)
@@ -287,6 +319,9 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 	startIPMIWorkers(ctx, cfg, ipmiJobs, tracker, onProgress, &subWG)
 	startDNSRecursionWorkers(ctx, cfg, dnsRecursionJobs, tracker, onProgress, &subWG)
 	startUPnPWorkers(ctx, cfg, upnpJobs, tracker, onProgress, &subWG)
+	if nucleiProfile != nil {
+		startNucleiWorkers(ctx, cfg, *nucleiProfile, nucleiJobs, tracker, onProgress, &subWG)
+	}
 
 	type nmapJob struct {
 		ip    string
@@ -342,6 +377,9 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 						}
 						if isHTTP, _ := isHTTPPort(p); isHTTP {
 							subTasks++
+							if nucleiProfile != nil {
+								subTasks++
+							}
 						}
 						if isRDPPort(p) {
 							subTasks++
@@ -427,6 +465,13 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 								// reported at all.
 								tracker.complete(host.IP, nil)
 							}
+							if nucleiProfile != nil {
+								select {
+								case nucleiJobs <- nucleiJob{ip: host.IP, port: p, useTLS: useTLS, sniHostname: sniHostname}:
+								case <-ctx.Done():
+									tracker.complete(host.IP, nil)
+								}
+							}
 						}
 						if isRDPPort(p) {
 							select {
@@ -458,6 +503,9 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 	close(ipmiJobs)
 	close(dnsRecursionJobs)
 	close(upnpJobs)
+	if nucleiJobs != nil {
+		close(nucleiJobs)
+	}
 	subWG.Wait()
 
 	if nmapOK == 0 && nmapFailed > 0 {
@@ -875,6 +923,54 @@ func startUPnPWorkers(ctx context.Context, cfg Config, jobs <-chan upnpJob, trac
 						return
 					}
 					tracker.complete(j.ip, func(h *HostResult) { h.Ports = append(h.Ports, *port) })
+				})
+			}
+		}()
+	}
+}
+
+type nucleiJob struct {
+	ip          string
+	port        PortResult
+	useTLS      bool
+	sniHostname string
+}
+
+// startNucleiWorkers is startGowitnessWorkers' nuclei equivalent - same
+// job shape (gated on isHTTPPort, reusing the same scheme/sniHostname URL
+// construction), except a failure just means zero findings appended
+// rather than the sub-task producing nothing at all. Uses
+// cfg.NucleiConcurrency, separate from GowitnessConcurrency, for the same
+// heavy-external-process reasoning as gowitness/RDP - nuclei walks its
+// whole selected template set per target, not a single quick request.
+func startNucleiWorkers(ctx context.Context, cfg Config, profile NucleiProfile, jobs <-chan nucleiJob, tracker *hostTracker, onProgress ProgressFunc, wg *sync.WaitGroup) {
+	for i := 0; i < cfg.NucleiConcurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				recoverJob(func(r any) {
+					onProgress("nuclei", fmt.Sprintf("panic recovered scanning %s: %v", j.ip, r))
+					tracker.complete(j.ip, nil)
+				}, func() {
+					scheme := "http"
+					if j.useTLS {
+						scheme = "https"
+					}
+					urlHost := j.ip
+					if j.sniHostname != "" {
+						urlHost = j.sniHostname
+					}
+					url := fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(urlHost, strconv.Itoa(j.port.Port)))
+
+					onProgress("nuclei", fmt.Sprintf("scanning %s", url))
+					findings, err := RunNuclei(ctx, cfg, url, j.port.Port, profile)
+					if err != nil {
+						onProgress("nuclei", fmt.Sprintf("failed for %s: %v", url, err))
+						tracker.complete(j.ip, nil)
+						return
+					}
+					tracker.complete(j.ip, func(h *HostResult) { h.NucleiFindings = append(h.NucleiFindings, findings...) })
 				})
 			}
 		}()

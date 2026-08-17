@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router";
-import { api, HostDetail as HostDetailData, HostFilters, Me, NSEProfileSelection } from "../api";
+import { api, HostDetail as HostDetailData, HostFilters, Me, NSEProfileSelection, NucleiProfileSelection } from "../api";
 import { certExpiryStatus, certExpiryLabel } from "../lib/certExpiry";
 import { cveSeverityClass } from "../lib/cveSeverity";
 import PageHeader from "../components/PageHeader";
@@ -193,12 +193,12 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
     }, 5000);
   }
 
-  async function handleRescan(profile: NSEProfileSelection) {
+  async function handleRescan(profile: NSEProfileSelection, nucleiProfile: NucleiProfileSelection) {
     if (!id) return;
     setShowRescanModal(false);
     setRescanError(null);
     try {
-      await api.rescan(id, profile);
+      await api.rescan(id, profile, nucleiProfile);
       await load(id);
       startPollingForRescan(id);
     } catch (err) {
@@ -771,6 +771,27 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
                   </div>
                 )}
                 <div className="fingerprint">SHA256:{c.fingerprint_sha256}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {data.nucleiFindings.length > 0 && (
+        <section>
+          <h2>Web Vulnerabilities</h2>
+          <div className="banner-list">
+            {data.nucleiFindings.map((f) => (
+              <div key={f.id} className="banner-card">
+                <div className="banner-card-header">
+                  <span className={`cve-badge cve-${f.severity}`}>{f.severity}</span> {f.name}
+                </div>
+                <p className="host-meta">
+                  Port {f.port} · <span className="fingerprint">{f.template_id}</span>
+                </p>
+                <p className="host-meta banner">{f.matched_at}</p>
+                {f.description && <p>{f.description}</p>}
+                {f.tags && f.tags.length > 0 && <p className="host-meta">Tags: {f.tags.join(", ")}</p>}
               </div>
             ))}
           </div>

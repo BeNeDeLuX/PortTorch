@@ -177,6 +177,18 @@ type ingestNSEScript struct {
 	Output string `json:"output"`
 }
 
+type ingestNucleiFinding struct {
+	Port        int      `json:"port"`
+	TemplateID  string   `json:"templateId"`
+	Name        string   `json:"name"`
+	Severity    string   `json:"severity"`
+	MatchedAt   string   `json:"matchedAt"`
+	Description string   `json:"description,omitempty"`
+	Reference   []string `json:"reference,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	CurlCommand string   `json:"curlCommand,omitempty"`
+}
+
 type ingestPort struct {
 	Port           int                `json:"port"`
 	Protocol       string             `json:"protocol"`
@@ -195,16 +207,17 @@ type ingestPort struct {
 }
 
 type ingestHost struct {
-	IP         string       `json:"ip"`
-	Hostname   string       `json:"hostname,omitempty"`
-	OSName     string       `json:"osName,omitempty"`
-	OSFamily   string       `json:"osFamily,omitempty"`
-	OSVendor   string       `json:"osVendor,omitempty"`
-	DeviceType string       `json:"deviceType,omitempty"`
-	OSAccuracy int          `json:"osAccuracy,omitempty"`
-	MACAddress string       `json:"macAddress,omitempty"`
-	MACVendor  string       `json:"macVendor,omitempty"`
-	Ports      []ingestPort `json:"ports"`
+	IP             string                `json:"ip"`
+	Hostname       string                `json:"hostname,omitempty"`
+	OSName         string                `json:"osName,omitempty"`
+	OSFamily       string                `json:"osFamily,omitempty"`
+	OSVendor       string                `json:"osVendor,omitempty"`
+	DeviceType     string                `json:"deviceType,omitempty"`
+	OSAccuracy     int                   `json:"osAccuracy,omitempty"`
+	MACAddress     string                `json:"macAddress,omitempty"`
+	MACVendor      string                `json:"macVendor,omitempty"`
+	Ports          []ingestPort          `json:"ports"`
+	NucleiFindings []ingestNucleiFinding `json:"nucleiFindings,omitempty"`
 }
 
 // SubmitHosts submits the host/port results of a scan job.
@@ -247,17 +260,32 @@ func (c *Client) SubmitHosts(ctx context.Context, jobID string, hosts []pipeline
 				ExtraScripts:   extraScripts,
 			})
 		}
+		var nucleiFindings []ingestNucleiFinding
+		for _, f := range h.NucleiFindings {
+			nucleiFindings = append(nucleiFindings, ingestNucleiFinding{
+				Port:        f.Port,
+				TemplateID:  f.TemplateID,
+				Name:        f.Name,
+				Severity:    f.Severity,
+				MatchedAt:   f.MatchedAt,
+				Description: f.Description,
+				Reference:   f.Reference,
+				Tags:        f.Tags,
+				CurlCommand: f.CurlCommand,
+			})
+		}
 		payloadHosts = append(payloadHosts, ingestHost{
-			IP:         h.IP,
-			Hostname:   h.Hostname,
-			OSName:     h.OSName,
-			OSFamily:   h.OSFamily,
-			OSVendor:   h.OSVendor,
-			DeviceType: h.DeviceType,
-			OSAccuracy: h.OSAccuracy,
-			MACAddress: h.MACAddress,
-			MACVendor:  h.MACVendor,
-			Ports:      ports,
+			IP:             h.IP,
+			Hostname:       h.Hostname,
+			OSName:         h.OSName,
+			OSFamily:       h.OSFamily,
+			OSVendor:       h.OSVendor,
+			DeviceType:     h.DeviceType,
+			OSAccuracy:     h.OSAccuracy,
+			MACAddress:     h.MACAddress,
+			MACVendor:      h.MACVendor,
+			Ports:          ports,
+			NucleiFindings: nucleiFindings,
 		})
 	}
 
@@ -490,11 +518,13 @@ func (c *Client) uploadImage(ctx context.Context, path, imagePath string, fields
 // sends them, decoding to zero values, which resolveNSEScripts already
 // treats as "Default", today's unchanged behavior.
 type ScanRequest struct {
-	ID         string
-	TargetSpec string
-	PortSpec   string
-	NSEProfile string
-	NSEScripts []string
+	ID            string
+	TargetSpec    string
+	PortSpec      string
+	NSEProfile    string
+	NSEScripts    []string
+	NucleiProfile string
+	NucleiTags    []string
 }
 
 // PollNextScanRequest asks the webserver for the next pending scan request
@@ -522,11 +552,13 @@ func (c *Client) PollNextScanRequest(ctx context.Context) (*ScanRequest, error) 
 	}
 
 	var out struct {
-		ID         string   `json:"id"`
-		TargetSpec string   `json:"targetSpec"`
-		PortSpec   string   `json:"portSpec"`
-		NSEProfile string   `json:"nseProfile"`
-		NSEScripts []string `json:"nseScripts"`
+		ID            string   `json:"id"`
+		TargetSpec    string   `json:"targetSpec"`
+		PortSpec      string   `json:"portSpec"`
+		NSEProfile    string   `json:"nseProfile"`
+		NSEScripts    []string `json:"nseScripts"`
+		NucleiProfile string   `json:"nucleiProfile"`
+		NucleiTags    []string `json:"nucleiTags"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, fmt.Errorf("decoding scan request: %w", err)
@@ -534,6 +566,7 @@ func (c *Client) PollNextScanRequest(ctx context.Context) (*ScanRequest, error) 
 	return &ScanRequest{
 		ID: out.ID, TargetSpec: out.TargetSpec, PortSpec: out.PortSpec,
 		NSEProfile: out.NSEProfile, NSEScripts: out.NSEScripts,
+		NucleiProfile: out.NucleiProfile, NucleiTags: out.NucleiTags,
 	}, nil
 }
 

@@ -9,6 +9,7 @@ import {
   HostSummary,
   Me,
   NSEProfileSelection,
+  NucleiProfileSelection,
   SavedSearch,
   ScannerAgent,
 } from "../api";
@@ -405,13 +406,13 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
     }
   }
 
-  async function handleBulkRescan(profile: NSEProfileSelection) {
+  async function handleBulkRescan(profile: NSEProfileSelection, nucleiProfile: NucleiProfileSelection) {
     if (selected.size === 0) return;
     setShowRescanModal(false);
     setBulkBusy(true);
     setBulkStatus(null);
     try {
-      const results = await Promise.allSettled([...selected].map((id) => api.rescan(id, profile)));
+      const results = await Promise.allSettled([...selected].map((id) => api.rescan(id, profile, nucleiProfile)));
       const failed = results.filter((r) => r.status === "rejected").length;
       setBulkStatus(
         failed === 0

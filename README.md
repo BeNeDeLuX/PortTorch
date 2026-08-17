@@ -96,18 +96,18 @@ Each item below is a one-line summary - click **Details** to expand it.
   Open ports with banners/CPE/OS hints and known CVEs (matched against detected service versions, synced daily from the NVD database - see below), anonymous FTP directory listings, SMB share enumeration plus OS/computer-name/domain info (`smb-os-discovery`), NetBIOS name/domain (`nbstat`), and protocol/security-mode info (`smb-protocols`, `smb-security-mode`/`smb2-security-mode` - whether legacy SMBv1 is still enabled, whether signing is required), NFS/rsync listings, an anonymous LDAP root DSE, RPC portmapper/MSRPC endpoint enumeration, whether common database/service daemons (MongoDB, Redis, MySQL, Memcached, Oracle, Docker, CouchDB, Cassandra) are reachable with no authentication, which HTTP methods a server allows (`http-methods`), the HTTP auth scheme a server requires (`http-auth`) and any exposed `.git` repository (`http-git`), RDP hostname/domain/OS build and encryption level leaked pre-auth (`rdp-ntlm-info`/`rdp-enum-encryption`), SSH algorithm/protocol-version info (`ssh2-enum-algos`/`sshv1`), an SMTP open-relay check, whether a DNS server is an open recursive resolver, and SNMP/IPMI asset info (both via a small separate UDP probe - see below) - all when the target allows a no-credentials session (also matched by the free-text search box), OS/device classification and MAC address (when available - see "What each scan does" below), TLS certificates (with expiry status), SSH host keys, HTTP(S) and RDP screenshots (with detected technologies, response headers, and OCR'd screenshot text), a full scan history timeline (with which scanner agent produced each entry), a "changes since last scan" diff, host tags, and an append-only comment log (each comment keeps its author and timestamp). Prev/next buttons step through whichever filtered/sorted host list you came from (including across a page boundary), so you can click through a search's results without going back to the list each time. Its own **Export data** popup exports just this host - CSV (one row per open port, including banners/CPEs/CVE ids), JSON (the full host record plus its ports), or a PDF snapshot of the page as shown, screenshots included.
   </details>
 
-- :arrows_counterclockwise: **Rescan button** - on-demand rescan of a host's known open ports, with an NSE profile choice.
+- :arrows_counterclockwise: **Rescan button** - on-demand rescan of a host's known open ports, with an NSE profile and nuclei profile choice.
   <details>
   <summary>Details</summary>
 
-  Triggers an on-demand rescan of a host's currently known open ports, picked up by whichever scanner last scanned it. Opens a confirmation popup offering a choice of NSE script profile (see **Scan Profiles** below) rather than firing immediately.
+  Triggers an on-demand rescan of a host's currently known open ports, picked up by whichever scanner last scanned it. Opens a confirmation popup offering a choice of NSE script profile (see **Scan Profiles** below) and, independently, a nuclei profile (see **Nuclei Profiles** below) rather than firing immediately.
   </details>
 
 - :alarm_clock: **Schedule Scans** - interval, cron-style, or one-time scan schedules using the same queue as Rescan.
   <details>
   <summary>Details</summary>
 
-  Schedule a target/port spec to be scanned on a plain interval ("every N minutes"), a fixed schedule (every day, specific days of the week, or the Nth/last weekday of the month, all at a given time - with a point-and-click builder for the common cases plus a raw cron-expression field for anything else), or just once at a picked date and time. A one-time schedule auto-disables itself after it fires (kept, not deleted, for history) and can be re-armed to run again. Uses the same underlying request queue as the rescan button, including the same NSE script profile choice.
+  Schedule a target/port spec to be scanned on a plain interval ("every N minutes"), a fixed schedule (every day, specific days of the week, or the Nth/last weekday of the month, all at a given time - with a point-and-click builder for the common cases plus a raw cron-expression field for anything else), or just once at a picked date and time. A one-time schedule auto-disables itself after it fires (kept, not deleted, for history) and can be re-armed to run again. Uses the same underlying request queue as the rescan button, including the same NSE script profile and nuclei profile choices.
   </details>
 
 - :test_tube: **Scan Profiles** (admin only) - choose which NSE scripts a scan actually runs: Default, All Safe Modules, or a Custom list.
@@ -115,6 +115,13 @@ Each item below is a one-line summary - click **Details** to expand it.
   <summary>Details</summary>
 
   Choose which NSE scripts a scan actually runs, per rescan or schedule: **Default** (the standard script set below), **All Safe Modules** (nmap's own much larger "safe" script category), or a named **Custom** profile with its own hand-picked script list, managed on its own admin page. A separate, opt-in-only **Active Modules** tier (intrusive/exploit/brute-force/denial-of-service scripts) can be added to a Custom profile's script list, clearly flagged wherever it's used - these are never included in Default or All Safe Modules, and should only ever be run against systems you're explicitly authorized to test that way.
+  </details>
+
+- :spider_web: **Nuclei Profiles** (admin only) - opt-in web-application vulnerability scanning against discovered HTTP(S) ports: Off, Safe, or a Custom tag/severity list.
+  <details>
+  <summary>Details</summary>
+
+  Choose whether (and how) a scan runs [nuclei](https://github.com/projectdiscovery/nuclei) template checks against its discovered HTTP(S) ports, per rescan or schedule - independent of, and alongside, the NSE Scan Profile above. **Off** (default - nuclei never runs), **Safe** (excludes nuclei's own `dos`/`fuzz`/`intrusive` tag conventions), or a named **Custom** profile (your own tags/severities/excluded tags, managed on its own admin page) - a Custom profile isn't tag-restricted the way Safe is, so only run one against systems you're explicitly authorized to test that way. Matches show up on the host's **Web Vulnerabilities** section and the fleet-wide **Nuclei Findings** page below.
   </details>
 
 - :scroll: **Scan History** - every finished scan job, searchable/filterable, with the same live-log detail view as a running scan.
@@ -136,6 +143,13 @@ Each item below is a one-line summary - click **Details** to expand it.
   <summary>Details</summary>
 
   Every known CVE match (see vulnerability correlation below) across the whole fleet in one sortable table - host, port, CVE, severity, description - instead of having to check each host's detail page individually.
+  </details>
+
+- :spider_web: **Nuclei Findings** - every nuclei web-vulnerability match across the fleet in one sortable table.
+  <details>
+  <summary>Details</summary>
+
+  Every nuclei template match (see Nuclei Profiles above) across the whole fleet in one sortable table - host, port, template id, severity, matched URL, description - a separate table from Vulnerabilities overview since a template match's shape (template id/severity/tags) doesn't map onto CVE/CPE/CVSS/EPSS/KEV columns at all. Only ever populated for a scan that had a non-"Off" nuclei profile selected.
   </details>
 
 - :bar_chart: **Digest** - a fleet-wide "what changed" view over the last 24h/7d, also sendable daily by email/webhook.
@@ -390,6 +404,10 @@ surprised if `~/.config/porttorch/config.yaml` looks untouched after running
   imagemagick`
 - `tesseract-ocr` (optional, extracts searchable text from HTTP(S)/RDP
   screenshots) - `sudo apt-get install -y tesseract-ocr`
+- `nuclei` v3 (optional, for opt-in web-application vulnerability scanning
+  - see "Nuclei Profiles" above) - not packaged for Debian, install with
+  `go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest`,
+  then run `nuclei -update-templates` once
 
 ### Build
 
@@ -606,7 +624,18 @@ For every target, the pipeline runs:
    binary, the captured screenshot is also OCR'd and the recognized text
    stored alongside it (best-effort - a missing/failed OCR never fails
    the screenshot itself).
-4. **RDP screenshots** - for ports classified as RDP, spins up a virtual
+4. **nuclei** (optional, opt-in per scan - see "Nuclei Profiles" above) -
+   against every port classified as HTTP(S) (the same classification
+   gowitness uses), runs whichever tags/severities the scan's nuclei
+   profile resolved to, restricted to nuclei's own `http/` template
+   category (its `dns`/`network`/`ssl` categories would otherwise also run
+   against the target's bare hostname, unrelated to this one port). Off
+   ("Off" profile) unless a scan/schedule explicitly picked "Safe" or a
+   named Custom profile - never runs at all otherwise. Each match is
+   recorded as its own row (template id, severity, matched URL,
+   description, tags, curl repro command) on the host's **Web
+   Vulnerabilities** section and the fleet-wide **Nuclei Findings** page.
+5. **RDP screenshots** - for ports classified as RDP, spins up a virtual
    display and captures the login screen (only works against servers that
    still allow legacy RDP security - modern Windows defaults to Network
    Level Authentication, which can't be screenshotted without valid
@@ -614,13 +643,13 @@ For every target, the pipeline runs:
    retried since it would just fail identically every time). A
    timeout-like failure gets the same one retry as gowitness. Also OCR'd
    the same way as gowitness screenshots, when Tesseract is available.
-5. **TLS certificate probe** - a real TLS handshake (Go standard library
+6. **TLS certificate probe** - a real TLS handshake (Go standard library
    only) against every TLS-carrying port, not just HTTP(S) - also IMAPS,
    SMTPS, LDAPS, etc. Captures the certificate itself (CN, issuer, SANs,
    validity, fingerprint, self-signed detection) plus the negotiated
    handshake (TLS version, cipher suite) and the certificate's key
    algorithm/size.
-6. **OS/device-type fingerprinting** (optional, root-only) - if the
+7. **OS/device-type fingerprinting** (optional, root-only) - if the
    scanner process is running as root, nmap's `-O` also attempts to
    classify the host (e.g. "Windows", "Linux", or device types like
    "switch"/"router"/"printer"). This is skipped automatically when not
@@ -628,12 +657,12 @@ For every target, the pipeline runs:
    scanner only adds the flag when it detects `euid == 0`. Everything
    else above works the same either way; this is the one feature that
    genuinely needs root, not just the `setcap` capabilities above.
-7. **MAC address** (best-effort, no root needed) - nmap resolves this via
+8. **MAC address** (best-effort, no root needed) - nmap resolves this via
    ARP, which only works for a target on the scanner's own local network
    segment; a target reached over a routed hop simply has none captured
    (this is a property of ARP itself, not something any flag or
    privilege changes).
-8. **SNMP probe** (`snmp-info`/`snmp-sysdescr`/`snmp-interfaces`/
+9. **SNMP probe** (`snmp-info`/`snmp-sysdescr`/`snmp-interfaces`/
    `snmp-netstat`, community string `public`) - a small exception to the
    rest of this pipeline, which is entirely TCP: SNMP is UDP-only, so
    rather than adding general UDP scanning support, this is one extra,
@@ -643,20 +672,20 @@ For every target, the pipeline runs:
    inherently slower to determine than on TCP). Still honors a scan
    exclude that specifically covers port 161, even though the normal
    TCP-only exclude mechanisms never see this path.
-9. **IPMI probe** (`ipmi-version` against UDP/623) - the identical
+10. **IPMI probe** (`ipmi-version` against UDP/623) - the identical
    exception as the SNMP probe above, for the same reason (IPMI is also
    UDP-only) and built the same way. IPMI/BMC out-of-band management
    interfaces are a classic high-risk target - often left on default or
    no authentication, and easy to miss precisely because they sit
    outside a device's normal OS-level services.
-10. **DNS recursion probe** (`dns-recursion` against UDP/53) - the same
+11. **DNS recursion probe** (`dns-recursion` against UDP/53) - the same
     exception a third time, for the same reason (DNS recursion checks
     are only meaningful over UDP - that's the transport an open
     resolver actually gets abused over as a DNS amplification
     reflector). Flags an open recursive resolver reachable from
     anywhere, a real finding that puts third parties at risk, not just
     the resolver's own operator.
-11. **UPnP probe** (`upnp-info` against UDP/1900) - a fourth copy of the
+12. **UPnP probe** (`upnp-info` against UDP/1900) - a fourth copy of the
     same exception, asking any UPnP root device to describe itself (the
     same read a router/NAS/smart-TV's own control point would make).
     UPnP was never designed to be reachable past a single LAN, so a
@@ -669,9 +698,12 @@ described above. **Scan Profiles** (see "Dashboard features" above) let an
 admin instead choose **All Safe Modules** (nmap's own much broader "safe"
 script category) or a named **Custom** profile - including, opt-in only, a
 separate "Active Modules" tier of intrusive/exploit/brute-force/DoS
-scripts - per rescan or schedule, from the dashboard.
+scripts - per rescan or schedule, from the dashboard. **Nuclei Profiles**
+(also above) is the same idea for step 4's web-vulnerability scanning, but
+independent of the NSE choice and off by default rather than always
+running something.
 
-Steps 2-5 (plus the SNMP/IPMI/DNS-recursion/UPnP probes) run concurrently with each other rather
+Steps 2-6 (plus the SNMP/IPMI/DNS-recursion/UPnP probes) run concurrently with each other rather
 than as sequential batches, and **each host is submitted to the webserver
 as soon as its own work finishes** - a host with no HTTP(S)/RDP/TLS-
 carrying ports streams in right after its nmap call, while a different,
@@ -739,23 +771,25 @@ relay for email digests/webhooks, or the target URL of any Slack/Discord/
 Teams/custom webhook - these are whatever you configure, not fixed
 PortTorch domains.
 
-### Scanner (runtime, only if self-update is used)
+### Scanner (runtime, only if self-update or nuclei is used)
 
 | Domain | Needed for |
 | --- | --- |
-| `github.com` | Release metadata |
-| `release-assets.githubusercontent.com` | **Redirect target** of the actual binary/SHA256SUMS download - `github.com` alone is not enough, self-update breaks without this one too |
+| `github.com` | Release metadata; nuclei template updates (see below) |
+| `release-assets.githubusercontent.com` | **Redirect target** of the actual scanner binary/SHA256SUMS download - `github.com` alone is not enough, self-update breaks without this one too |
+| `codeload.github.com` | **Redirect target** of nuclei's own `-update-templates` - the `nuclei-templates` repo ships no release binary assets to redirect through `release-assets.githubusercontent.com` instead, so it fetches a source archive from `github.com`, which redirects here (confirmed by a real `curl -sI` against the exact archive URL nuclei's updater uses) - only reachable when `serve` mode's update watcher or `install.sh` actually calls `nuclei -update-templates` |
 
 ### `install.sh` (install / rebuild time only)
 
 | Domain | Needed for |
 | --- | --- |
 | `github.com` + `release-assets.githubusercontent.com` | Downloading a prebuilt release binary (same redirect as above), or cloning masscan's source on RHEL-family hosts where it isn't packaged |
+| `github.com` + `codeload.github.com` | nuclei's one-time `-update-templates` fetch after install (same redirect as above) |
 | `go.dev` + `dl.google.com` | Go toolchain bootstrap, only when building from source - `go.dev` redirects to `dl.google.com` for the actual tarball |
-| `proxy.golang.org` | Go module proxy (`go install`/`go build`/`go mod download`, e.g. gowitness) |
+| `proxy.golang.org` | Go module proxy (`go install`/`go build`/`go mod download`, e.g. gowitness/nuclei) |
 | `sum.golang.org` | Go checksum database, same context |
 | `deb.debian.org` + `security.debian.org` | apt package mirrors (Debian/Ubuntu) |
-| your distro's dnf/EPEL mirrors | equivalent package mirrors on the RHEL family - not a fixed domain, varies by mirror configuration |
+| your distro's dnf/EPEL mirrors | equivalent package mirrors on the RHEL family (nuclei itself is packaged there - see "Scanner installation" above - so this also covers its install, not just the go install fallback) - not a fixed domain, varies by mirror configuration |
 
 ### Docker Compose quick start
 

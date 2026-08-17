@@ -1637,6 +1637,16 @@ th {
   border-color: var(--border);
 }
 
+/* nuclei's severity enum adds "info"/"unknown" beyond CVSS's own four
+   levels (see the Nuclei Findings page) - same muted treatment as
+   .cve-low rather than inventing a third visual tier for what's already
+   the least severe end of the scale. */
+.cve-info,
+.cve-unknown {
+  color: var(--muted);
+  border-color: var(--border);
+}
+
 /* CISA KEV (Known Exploited Vulnerabilities) badge - confirmed active
    exploitation, a stronger signal than any CVSS severity level, so it
    gets its own distinct treatment rather than reusing .cve-critical. */
@@ -1973,6 +1983,15 @@ th {
 .modal-body {
   padding: 1rem;
   overflow-y: auto;
+}
+
+/* A bare <label> defaults to inline, so two adjacent ones (e.g.
+   RescanModal's Scan profile + Nuclei profile pickers) would otherwise run
+   together on one line instead of stacking - same "label above its field"
+   convention .schedule-form label already establishes elsewhere. */
+.modal-body label {
+  display: block;
+  margin-bottom: 1rem;
 }
 
 /* Export modal (components/ExportModal.tsx) */

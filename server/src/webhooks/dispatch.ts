@@ -57,7 +57,8 @@ export type WebhookEvent =
   | "digest.daily"
   | "scan.stale"
   | "scanner.update_failed"
-  | "scan_queue.backlog";
+  | "scan_queue.backlog"
+  | "nuclei.finding";
 
 // Plain-English subject line for an email channel - a webhook channel has
 // no equivalent need, since "event"/"data" already ride along in the JSON
@@ -74,6 +75,7 @@ const EVENT_SUBJECTS: Record<WebhookEvent, string> = {
   "scan.stale": "Scan looks stalled",
   "scanner.update_failed": "Scanner self-update failed",
   "scan_queue.backlog": "Scan queue backlog",
+  "nuclei.finding": "Nuclei web vulnerability finding",
 };
 
 // A Teams "Workflows" webhook (the current replacement for the classic,

@@ -40,6 +40,7 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
             ...(me.role === "admin"
               ? [
                   { to: "/scan-profiles", label: "Scan Profiles" },
+                  { to: "/nuclei-profiles", label: "Nuclei Profiles" },
                   { to: "/excludes", label: "Excludes" },
                 ]
               : []),
@@ -47,6 +48,7 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
         />
         <NavLink to="/certificates">Certificates</NavLink>
         <NavLink to="/vulnerabilities">Vulnerabilities</NavLink>
+        <NavLink to="/nuclei-findings">Nuclei Findings</NavLink>
         <NavLink to="/digest">Digest</NavLink>
         <NavLink to="/trends">Trends</NavLink>
         <NavLink to="/health">Health</NavLink>

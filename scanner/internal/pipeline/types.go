@@ -139,6 +139,26 @@ type TLSCertificate struct {
 	KeyBits      int
 }
 
+// NucleiFinding describes one matched nuclei template against an HTTP(S)
+// port - a web-application-level finding (exposed panel/config, known CVE,
+// misconfiguration, tech fingerprint) distinct from nmap's own NSE-script
+// output on PortResult. Reference/Tags/CurlCommand mirror nuclei's own
+// -jsonl output fields (captured from a real run - see nuclei.go's doc
+// comment) - Reference and Description are frequently absent entirely for
+// a given template, not just empty, so both are best-effort like everything
+// else best-effort in this pipeline.
+type NucleiFinding struct {
+	Port        int
+	TemplateID  string
+	Name        string
+	Severity    string
+	MatchedAt   string
+	Description string
+	Reference   []string
+	Tags        []string
+	CurlCommand string
+}
+
 // HostResult aggregates all results for a host.
 type HostResult struct {
 	IP       string
@@ -168,6 +188,7 @@ type HostResult struct {
 	Screenshots     []Screenshot
 	RDPScreenshots  []RDPScreenshot
 	TLSCertificates []TLSCertificate
+	NucleiFindings  []NucleiFinding
 }
 
 // ScanResult is the overall result of a scan run through

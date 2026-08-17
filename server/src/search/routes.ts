@@ -13,6 +13,7 @@ import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { requestRescan } from "../rescan";
 import { NSEProfileSelection } from "../scanProfiles/resolve";
+import { NucleiProfileSelection } from "../nucleiProfiles/resolve";
 import { singleParam } from "../lib/reqParams";
 
 declare global {
@@ -932,6 +933,21 @@ hostsRouter.get("/:id", asyncHandler(async (req, res) => {
     .orderBy("captured_at", "desc")
     .execute();
 
+  // Same "most recent per identity" convention as tlsCertificates/
+  // sshHostKeys above - a finding stays a distinct row per scan (see the
+  // nuclei_profiles migration's own comment), identity here is
+  // (template_id, matched_at) since the same template can match multiple
+  // URLs/paths on the same host.
+  const nucleiFindings = await db
+    .selectFrom("nuclei_findings")
+    .selectAll()
+    .distinctOn(["template_id", "matched_at"])
+    .where("host_id", "=", req.params.id)
+    .orderBy("template_id")
+    .orderBy("matched_at")
+    .orderBy("observed_at", "desc")
+    .execute();
+
   const tags = await db
     .selectFrom("host_tags")
     .select(["tag"])
@@ -956,6 +972,7 @@ hostsRouter.get("/:id", asyncHandler(async (req, res) => {
     rdpScreenshots,
     tlsCertificates,
     sshHostKeys,
+    nucleiFindings,
     tags: tags.map((t) => t.tag),
     comments,
     lastScanRequest: lastScanRequest ?? null,
@@ -1052,7 +1069,16 @@ const nseProfileSelectionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("custom"), profileId: z.string().uuid() }),
 ]);
 
-const rescanBodySchema = z.object({ profile: nseProfileSelectionSchema.optional() });
+const nucleiProfileSelectionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("off") }),
+  z.object({ kind: z.literal("safe") }),
+  z.object({ kind: z.literal("custom"), profileId: z.string().uuid() }),
+]);
+
+const rescanBodySchema = z.object({
+  profile: nseProfileSelectionSchema.optional(),
+  nucleiProfile: nucleiProfileSelectionSchema.optional(),
+});
 
 hostsRouter.post("/:id/rescan", requireOperator, asyncHandler(async (req, res) => {
   const parsedBody = rescanBodySchema.safeParse(req.body ?? {});
@@ -1061,7 +1087,8 @@ hostsRouter.post("/:id/rescan", requireOperator, asyncHandler(async (req, res) =
     return;
   }
   const profile: NSEProfileSelection = parsedBody.data.profile ?? { kind: "default" };
-  const outcome = await requestRescan(singleParam(req.params.id), req.session.username ?? null, profile);
+  const nucleiProfile: NucleiProfileSelection = parsedBody.data.nucleiProfile ?? { kind: "off" };
+  const outcome = await requestRescan(singleParam(req.params.id), req.session.username ?? null, profile, nucleiProfile);
   if (!outcome.ok) {
     res.status(outcome.status).json({ error: outcome.error });
     return;

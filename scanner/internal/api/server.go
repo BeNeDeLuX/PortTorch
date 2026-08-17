@@ -161,10 +161,11 @@ func (s *Server) handleCreateScan(c echo.Context) error {
 	s.mu.Unlock()
 
 	s.logger.Info("scan requested via rest api", "event", "scan.requested", "scan_job_id", jobID, "target", req.Target, "ports", req.Ports, "source_ip", c.RealIP())
-	// nil nseScripts: this local REST endpoint (bypasses the webserver's
-	// scan_requests queue entirely) has no scan-profile concept - always
-	// runs DefaultNSEScripts, same as before this feature existed.
-	go s.runScan(jobID, req.Target, req.Ports, nil, state)
+	// nil nseScripts/nucleiProfile: this local REST endpoint (bypasses the
+	// webserver's scan_requests queue entirely) has no scan-profile
+	// concept - always runs DefaultNSEScripts and never runs nuclei, same
+	// as before nuclei existed.
+	go s.runScan(jobID, req.Target, req.Ports, nil, nil, state)
 
 	return c.JSON(http.StatusAccepted, map[string]string{"id": jobID, "status": "running"})
 }
@@ -321,7 +322,7 @@ func (s *Server) pollOnce(ctx context.Context) {
 	s.scans[jobID] = state
 	s.mu.Unlock()
 
-	s.runScan(jobID, scanReq.TargetSpec, scanReq.PortSpec, resolveNSEScripts(scanReq.NSEProfile, scanReq.NSEScripts), state)
+	s.runScan(jobID, scanReq.TargetSpec, scanReq.PortSpec, resolveNSEScripts(scanReq.NSEProfile, scanReq.NSEScripts), resolveNucleiProfile(scanReq.NucleiProfile, scanReq.NucleiTags), state)
 
 	snapshot := state.snapshot()
 	completeCtx, completeCancel := context.WithTimeout(context.Background(), timeoutCreateJob)
@@ -348,6 +349,31 @@ func resolveNSEScripts(profile string, custom []string) []string {
 	}
 }
 
+// resolveNucleiProfile is resolveNSEScripts' nuclei equivalent: turns a
+// webserver-provided profile kind + optional custom tag list into the
+// *pipeline.NucleiProfile RunScan needs. "off" (or any unrecognized/empty
+// value - a pre-nuclei scan_requests row, or an older webserver that
+// doesn't send this at all) resolves to nil, which RunScan's own doc
+// comment already documents as "nuclei doesn't run at all" - so an
+// un-upgraded caller reproduces exactly today's (pre-nuclei) behavior.
+// "safe" excludes nuclei's own dos/fuzz/intrusive tag conventions rather
+// than naming an allowlist - unlike NSE's "All Safe Modules", nuclei has
+// no single stable "safe" category to point at (its tag taxonomy has
+// thousands of entries and grows with every template release), so this is
+// the same "safe means excluding the risky, not enumerating everything
+// else" approach the frontend's Scan Profiles warning already applies to
+// custom NSE profiles containing Active Modules scripts.
+func resolveNucleiProfile(profile string, tags []string) *pipeline.NucleiProfile {
+	switch profile {
+	case "safe":
+		return &pipeline.NucleiProfile{ExcludeTags: []string{"dos", "fuzz", "intrusive"}}
+	case "custom":
+		return &pipeline.NucleiProfile{Tags: tags}
+	default:
+		return nil
+	}
+}
+
 // runScan runs a cancellable scan: scanCtx is registered in s.cancels
 // under jobID for the duration of the pipeline stage, so
 // StartCancelWatcher can cancel it from a separate goroutine while this
@@ -358,7 +384,7 @@ func resolveNSEScripts(profile string, custom []string) []string {
 // cancellable=true (handleCreateScan, pollOnce) - callers that don't
 // (main.go, tui/commands.go) never register anything here, but registering
 // unconditionally is harmless and keeps this function the same for both.
-func (s *Server) runScan(jobID, target, ports string, nseScripts []string, state *scanState) {
+func (s *Server) runScan(jobID, target, ports string, nseScripts []string, nucleiProfile *pipeline.NucleiProfile, state *scanState) {
 	start := time.Now()
 	s.logger.Info("scan started", "event", "scan.started", "scan_job_id", jobID, "target", target, "ports", ports)
 
@@ -411,7 +437,7 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, state
 	tracker := progress.NewTracker(s.client, jobID, progress.DefaultPushInterval)
 	defer tracker.Close()
 
-	result, err := pipeline.RunScan(scanCtx, s.pcfg, target, ports, excludes, probeHostnames, nseScripts,
+	result, err := pipeline.RunScan(scanCtx, s.pcfg, target, ports, excludes, probeHostnames, nseScripts, nucleiProfile,
 		func(stage, message string) {
 			state.appendLog("[" + stage + "] " + message)
 			s.logger.Info(message, "event", "scan.progress", "scan_job_id", jobID, "stage", stage)

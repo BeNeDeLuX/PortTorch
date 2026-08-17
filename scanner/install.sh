@@ -15,10 +15,14 @@
 #     SELinux policy, only warns if it detects Enforcing mode.
 # Chromium and FreeRDP screenshot support, by contrast, were confirmed
 # working fine on both Fedora and RHEL-family via testing - no gap there.
+# nuclei (web vulnerability scanning) is the inverse of masscan's gap:
+# packaged via EPEL on RHEL-family, but NOT on Debian/Ubuntu or Fedora's
+# own repos (also confirmed by testing) - built from source (go install)
+# there instead.
 #
-# Installs masscan/nmap/gowitness/xfreerdp(3)/Xvfb/ImageMagick/tesseract,
-# gets the porttorch binary (downloaded prebuilt, or built from this
-# checkout - see below), grants masscan/nmap raw socket capabilities,
+# Installs masscan/nmap/gowitness/nuclei/xfreerdp(3)/Xvfb/ImageMagick/
+# tesseract, gets the porttorch binary (downloaded prebuilt, or built from
+# this checkout - see below), grants masscan/nmap raw socket capabilities,
 # writes ~porttorch/.config/porttorch/config.yaml, and sets up a systemd
 # service running "porttorch serve" so rescans and recurring schedules
 # work without a human keeping a terminal open.
@@ -120,6 +124,11 @@ else
   # acl (setfacl/getfacl) is what lets the unprivileged $SERVICE_USER
   # write into $BIN_PATH's own directory for self-update - see the ACL
   # grant further below for why this can't just be a chown.
+  # Whether nuclei ends up installed from the distro's own package below
+  # (RHEL-family via EPEL only - see the check further down) - read by the
+  # gowitness/nuclei build section further below to decide whether it
+  # still needs a go install fallback.
+  NUCLEI_FROM_PACKAGE=false
   if [[ "$DISTRO_FAMILY" == "debian" ]]; then
     log "Installing required packages (masscan, nmap, libcap2-bin, acl)"
     apt-get update -qq
@@ -155,12 +164,35 @@ else
       log "masscan installed from the distro's own package"
     else
       log "masscan isn't packaged for this distro - building it from source instead"
+      # libpcap-devel lives in CRB (CodeReady Builder), not the base repo
+      # or EPEL - a real, confirmed-by-testing gap: a stock Rocky/RHEL9
+      # host with only EPEL enabled (as above) fails this dnf install
+      # outright ("Unable to find a match: libpcap-devel") before ever
+      # reaching the masscan build. Not needed on Fedora, which has no
+      # CRB-equivalent split and already has this package directly.
+      if [[ "${ID:-}" != "fedora" ]]; then
+        dnf install -y dnf-plugins-core
+        dnf config-manager --set-enabled crb
+      fi
       dnf install -y gcc make git libpcap-devel
       tmp_masscan_src="$(mktemp -d)"
       git clone --depth 1 https://github.com/robertdavidgraham/masscan.git "$tmp_masscan_src/masscan"
       make -C "$tmp_masscan_src/masscan" -j"$(nproc)"
       install -m 755 "$tmp_masscan_src/masscan/bin/masscan" /usr/local/bin/masscan
       rm -rf "$tmp_masscan_src"
+    fi
+
+    # nuclei is the inverse situation from masscan above: unpackaged on
+    # Debian/Ubuntu and Fedora's own repos (confirmed by testing - apt-
+    # cache/dnf search find nothing for either), but genuinely available
+    # via EPEL on RHEL-family - confirmed by testing (dnf search on Rocky
+    # Linux 9 with EPEL enabled matches "nuclei.x86_64", version 3.11.0).
+    # Only attempted here (not on Fedora, which has no EPEL) - the go
+    # install fallback below covers Debian/Fedora/a failed EPEL attempt
+    # alike.
+    if [[ "${ID:-}" != "fedora" ]] && dnf install -y nuclei 2>/dev/null; then
+      log "nuclei installed from the distro's own package (EPEL)"
+      NUCLEI_FROM_PACKAGE=true
     fi
   fi
 
@@ -352,6 +384,20 @@ else
   log "Building gowitness -> /usr/local/bin/gowitness"
   if ! GOBIN=/usr/local/bin go install github.com/sensepost/gowitness@latest; then
     warn "gowitness build failed - HTTP(S) screenshots will be skipped (best-effort, see doctor output at the end)"
+  fi
+
+  # --- nuclei (web vulnerability scanning) - optional, best-effort --------
+  if $NUCLEI_FROM_PACKAGE; then
+    log "nuclei already installed from the distro's package (EPEL) above"
+  else
+    log "Building nuclei -> /usr/local/bin/nuclei"
+    if ! GOBIN=/usr/local/bin go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest; then
+      warn "nuclei build failed - web vulnerability scanning will be skipped (best-effort, see doctor output at the end)"
+    fi
+  fi
+  if command -v nuclei >/dev/null 2>&1; then
+    log "Fetching nuclei templates (one-time - not kept up to date automatically, see CLAUDE.md)"
+    nuclei -update-templates || warn "nuclei template update failed - web vulnerability scanning may find nothing until 'nuclei -update-templates' is run manually"
   fi
 
   # --- raw socket capabilities for masscan/nmap ---------------------------

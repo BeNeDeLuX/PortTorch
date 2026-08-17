@@ -87,6 +87,7 @@ func runDoctor(configPath string) error {
 	checks = append(checks, checkBinary("Xvfb (RDP screenshots)", cfg.XvfbPath, false))
 	checks = append(checks, checkBinary("ImageMagick import (RDP screenshots)", cfg.ImportPath, false))
 	checks = append(checks, checkBinary("tesseract (screenshot OCR)", cfg.TesseractPath, false))
+	checks = append(checks, checkBinary("nuclei (web vulnerability scanning)", cfg.NucleiPath, false))
 
 	checks = append(checks, checkWebserver(cfg))
 

@@ -91,6 +91,24 @@ tlsCertTimeoutSeconds: 8
 #   sudo apt-get install -y tesseract-ocr
 tesseractPath: "tesseract"
 
+# Web-application vulnerability scanning: runs nuclei against every port
+# classified as HTTP(S) (same classification gowitness above uses),
+# whenever a scan's nuclei profile resolves to something other than "Off"
+# (see the dashboard's Nuclei Profiles page) - never runs at all otherwise.
+# Not packaged for Debian - install with
+#   go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+# then run "nuclei -update-templates" once. Best-effort like
+# gowitness/xfreerdp/tesseract above - a missing binary just means that
+# host's nuclei sub-tasks fail individually, not a failed scan.
+nucleiPath: "nuclei"
+# Per-request timeout nuclei itself uses (its own -timeout flag) - not an
+# overall scan timeout.
+nucleiTimeoutSeconds: 10
+# Separate from "concurrency" for the same reason as gowitnessConcurrency/
+# rdpConcurrency above - each nuclei invocation walks its whole selected
+# template set against one target, far heavier than a single nmap process.
+nucleiConcurrency: 2
+
 # SSH host keys: captured as best-effort via nmap's "ssh-hostkey" script in
 # addition to the banner script (no separate toggle needed). Limitation:
 # nmap's ssh2 NSE library doesn't support modern KEX algorithms (e.g.

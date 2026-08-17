@@ -317,9 +317,10 @@ func runScan(configPath, target, ports string) error {
 	var tallyMu sync.Mutex
 	var hostsSubmitted, openPorts, screenshots, rdpScreenshots, tlsCertificates int
 
-	// nil nseScripts: the one-shot scan CLI has no scan-profile concept -
-	// always runs DefaultNSEScripts, same as before this feature existed.
-	result, scanErr := pipeline.RunScan(ctx, cfg.Pipeline(), target, ports, excludes, probeHostnames, nil,
+	// nil nseScripts/nucleiProfile: the one-shot scan CLI has no scan-
+	// profile concept - always runs DefaultNSEScripts and never runs
+	// nuclei, same as before nuclei existed.
+	result, scanErr := pipeline.RunScan(ctx, cfg.Pipeline(), target, ports, excludes, probeHostnames, nil, nil,
 		func(stage, message string) {
 			log.Info(message, "event", "scan.progress", "scan_job_id", jobID, "stage", stage)
 			tracker.Progress(stage, message)
