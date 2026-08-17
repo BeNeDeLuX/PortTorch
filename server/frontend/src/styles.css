@@ -8,6 +8,14 @@
   --accent: #ff6b25;
   --danger: #ff6b6b;
   --warning: #f0b429;
+  /* Fixed green for "everything is fine" indicators (Fleet Health's
+     all-clear banner) - deliberately NOT --accent, which is user-
+     selectable (orange/green/blue, see Account preferences) and reads as
+     a caution color for the ~2/3 of users who haven't picked green,
+     confirmed a real point of confusion. Same green already validated
+     for [data-accent="green"] below, reused here as a status color fixed
+     regardless of the user's own accent choice. */
+  --success: #35d07f;
   /* Dataviz skill's validated categorical palette (blue/orange/aqua/yellow,
      slots 1-4), dark-mode steps - re-validated against this app's actual
      --bg (#0b0f14), not the skill's own default dark surface, via
@@ -52,6 +60,7 @@
   --accent: #ff6b25;
   --danger: #c0392b;
   --warning: #96690a;
+  --success: #1f9d5a;
   /* Same palette's light-mode steps - validated against this app's actual
      --bg (#f4f6f8). Contrast vs surface WARNs for series-2/3/4 (2.95/2.60/2.0,
      under the 3:1 target) - the relief rule applies here: the trend
@@ -1268,6 +1277,27 @@ th {
   border-radius: 6px;
   padding: 1rem;
   margin-bottom: 1rem;
+}
+
+/* Fleet Health's all-clear banner - same box shape as .callout, --success
+   border/icon instead of --accent since this specifically means "nothing
+   needs attention," which shouldn't depend on (or be confused with) the
+   user's own selectable accent color. */
+.callout-success {
+  background: var(--panel);
+  border: 1px solid var(--success);
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  color: var(--success);
+}
+
+.callout-success svg {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
 }
 
 /* Active Modules' risk warning (Scan Profiles page) - same box shape as

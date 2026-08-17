@@ -131,8 +131,13 @@ export function useFleetHealth(me: Me): FleetHealthData {
   const behindAgents = liveAgents.filter((a) => isVersionBehind(a.version, latestRelease?.latestVersion ?? null));
   const pendingUpdates = liveAgents.filter((a) => a.update_request_status === "pending");
   const failedUpdates = liveAgents.filter((a) => a.update_request_status === "failed");
-  const updatesStatus: HealthStatus =
-    failedUpdates.length > 0 ? "critical" : behindAgents.length > 0 || pendingUpdates.length > 0 ? "warning" : "ok";
+  // A newer release existing (or an update an admin already requested
+  // still being applied) isn't itself a problem worth a "Warning" badge -
+  // only an update that actually *failed* is something that needs
+  // attention. Version drift/pending-ness still shows as a plain, muted
+  // detail line on the card itself (see FleetHealth.tsx) - a quiet fact,
+  // not an escalated status.
+  const updatesStatus: HealthStatus = failedUpdates.length > 0 ? "critical" : "ok";
 
   const oldestQueuedMs =
     scanQueue.length > 0 ? Math.max(...scanQueue.map((q) => Date.now() - new Date(q.created_at).getTime())) : 0;

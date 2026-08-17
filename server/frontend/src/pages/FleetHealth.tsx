@@ -71,7 +71,7 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
       </p>
 
       {health.overall === "ok" ? (
-        <div className="callout">
+        <div className="callout-success">
           <IconCheck /> All systems normal - no stale scans, no scan queue backlog, no submission retry backlog, and
           no certificate expiring soon.
         </div>
