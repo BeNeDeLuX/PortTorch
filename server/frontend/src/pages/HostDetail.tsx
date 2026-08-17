@@ -479,23 +479,26 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
         {formatDateTime(data.host.last_seen_at, me.preferences)}
         {historyGroups[0]?.scannerAgentName && <> · last scanned by {historyGroups[0].scannerAgentName}</>}
       </p>
-      <p className="host-meta">
-        Probe hostname (used instead of the IP for TLS SNI / screenshot capture, e.g. for a
-        target that only routes correctly for a known hostname):{" "}
-        {data.host.probe_hostname ?? <em>not set</em>}
-      </p>
-      {canEdit && (
-        <form className="inline-form" onSubmit={handleSetProbeHostname}>
-          <input
-            placeholder="e.g. example.com - leave blank to clear"
-            value={probeHostnameInput}
-            onChange={(e) => setProbeHostnameInput(e.target.value)}
-          />
-          <button type="submit" className="btn-icon-label">
-            <IconSave /> Save
-          </button>
-        </form>
-      )}
+      <details className="advanced-options">
+        <summary>Advanced options</summary>
+        <p className="host-meta">
+          Probe hostname (optional - used instead of the IP for TLS SNI / screenshot capture, e.g.
+          for a target that only routes correctly for a known hostname):{" "}
+          {data.host.probe_hostname ?? <em>not set</em>}
+        </p>
+        {canEdit && (
+          <form className="inline-form" onSubmit={handleSetProbeHostname}>
+            <input
+              placeholder="e.g. example.com - leave blank to clear"
+              value={probeHostnameInput}
+              onChange={(e) => setProbeHostnameInput(e.target.value)}
+            />
+            <button type="submit" className="btn-icon-label">
+              <IconSave /> Save
+            </button>
+          </form>
+        )}
+      </details>
       {(data.host.os_name || data.host.device_type) && (
         <p className="host-meta">
           {[data.host.device_type, data.host.os_name || data.host.os_family].filter(Boolean).join(" · ")}

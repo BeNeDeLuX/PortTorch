@@ -1260,6 +1260,20 @@ th {
   color: var(--muted);
 }
 
+/* Host Detail's "Advanced options" (probe hostname today) - collapsed by
+   default since it's an optional, rarely-touched override, not something
+   every host needs a visible field for. */
+.advanced-options {
+  margin: 0.75rem 0;
+}
+
+.advanced-options summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
 .headers-details summary {
   cursor: pointer;
   color: var(--accent);
