@@ -789,7 +789,7 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
                 <p className="host-meta">
                   Port {f.port} · <span className="fingerprint">{f.template_id}</span>
                 </p>
-                <p className="host-meta banner">{f.matched_at}</p>
+                <p className="host-meta finding-matched-at">{f.matched_at}</p>
                 {f.description && <p>{f.description}</p>}
                 {f.tags && f.tags.length > 0 && <p className="host-meta">Tags: {f.tags.join(", ")}</p>}
               </div>

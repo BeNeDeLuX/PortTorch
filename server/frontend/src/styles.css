@@ -902,6 +902,15 @@ th {
   white-space: nowrap;
 }
 
+/* Web Findings card on Host Detail - unlike .banner above (a table cell,
+   where truncating a long value to a fixed width is the right call), the
+   matched-at URL here has a full-width card to itself, so it should wrap
+   in full rather than being cut off with "...". */
+.finding-matched-at {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
 .audit-details {
   max-width: 480px;
   white-space: normal;
