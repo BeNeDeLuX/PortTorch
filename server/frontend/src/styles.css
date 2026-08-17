@@ -911,11 +911,13 @@ th {
   word-break: break-word;
 }
 
-/* Scan History's Ports column - a rescan/ad-hoc scan against many
-   individual ports (e.g. "22,80,443,3306,3389,...") has no spaces to
-   wrap on naturally, so without a width cap it just grows the whole
-   table wider than the viewport, pushing the Actions column off-screen
-   and forcing horizontal scroll just to reach the Details button. */
+/* Any table cell showing a port_spec (Scan History's Ports column,
+   Scanner Agents' Current scan / queued-request Ports columns) - a
+   rescan/ad-hoc scan against many individual ports (e.g.
+   "22,80,443,3306,3389,...") has no spaces to wrap on naturally, so
+   without a width cap it just grows the whole table wider than the
+   viewport, pushing the Actions column off-screen and forcing
+   horizontal scroll just to reach it. */
 .port-spec-cell {
   max-width: 260px;
   overflow-wrap: break-word;

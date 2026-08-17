@@ -456,7 +456,7 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
                   return (
                     <tr key={a.id}>
                       {sharedCells(a)}
-                      <td>
+                      <td className="port-spec-cell">
                         {activeJob && (
                           <>
                             {activeJob.target_spec} <span className="host-meta">(ports {activeJob.port_spec})</span>
@@ -554,7 +554,7 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
                 {sortedQueue.map((q) => (
                   <tr key={q.id}>
                     <td>{q.target_spec}</td>
-                    <td>{q.port_spec}</td>
+                    <td className="port-spec-cell">{q.port_spec}</td>
                     <td>{q.scanner_agent_name ?? "-"}</td>
                     <td>{q.host_hostname ?? q.host_ip ?? "-"}</td>
                     <td>{q.requested_by ?? "-"}</td>
