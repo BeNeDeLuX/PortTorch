@@ -293,12 +293,12 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
   const rdpScreenshotDateGroups = groupByDate(data.rdpScreenshots, (s) => formatDateOnly(s.captured_at, me.preferences));
   // Same "most recent stays visible, older gets grouped+collapsed by date"
   // treatment as the screenshot sections above, but keyed by count (the
-  // most recent 10 scan runs) rather than by date - a host rescanned many
+  // most recent 5 scan runs) rather than by date - a host rescanned many
   // times in one day would otherwise never collapse anything under a
   // date-only split. historyGroups is already newest-first, so slicing
-  // off the first 10 leaves the remainder still newest-first for
+  // off the first 5 leaves the remainder still newest-first for
   // groupByDate to bucket correctly.
-  const RECENT_HISTORY_COUNT = 10;
+  const RECENT_HISTORY_COUNT = 5;
   const recentHistory = historyGroups.slice(0, RECENT_HISTORY_COUNT);
   const olderHistoryDateGroups = groupByDate(
     historyGroups.slice(RECENT_HISTORY_COUNT),
