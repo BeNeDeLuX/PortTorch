@@ -13,6 +13,8 @@ import { logger } from "../logger";
 import { dispatchWebhook } from "../webhooks/dispatch";
 import { zIp } from "../lib/zodIp";
 import { singleParam } from "../lib/reqParams";
+import { deriveServiceTags } from "../lib/serviceTags";
+import { recordAudit } from "../audit/log";
 
 export const ingestRouter = Router();
 ingestRouter.use(asyncHandler(apiKeyAuth));
@@ -456,6 +458,7 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
   const hostNewEvents: Array<{ ip: string; hostname: string | null }> = [];
   const portOpenedEvents: Array<{ ip: string; hostname: string | null; port: number; serviceName: string | null }> = [];
   const nucleiFindingEvents: Array<{ ip: string; hostname: string | null; templateId: string; name: string; severity: string }> = [];
+  const autoTagEvents: Array<{ hostId: string; ip: string; tag: string }> = [];
 
   await db.transaction().execute(async (trx) => {
     for (const host of parsed.data.hosts) {
@@ -542,6 +545,26 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
             }))
           )
           .execute();
+      }
+
+      // Auto-tags derived from which services this scan found open -
+      // never removed automatically (host_tags has no manual/auto
+      // distinction, and a host that stops running a service still once
+      // did, which stays worth surfacing) - a user can always delete one
+      // by hand, and it simply comes back on a later scan that still
+      // finds the same service, same idempotent onConflict-doNothing
+      // shape as every other insert in this transaction.
+      const derivedTags = deriveServiceTags(host.ports);
+      if (derivedTags.length > 0) {
+        const insertedTags = await trx
+          .insertInto("host_tags")
+          .values(derivedTags.map((tag) => ({ host_id: upserted.id, tag })))
+          .onConflict((oc) => oc.columns(["host_id", "tag"]).doNothing())
+          .returning(["tag"])
+          .execute();
+        for (const t of insertedTags) {
+          autoTagEvents.push({ hostId: upserted.id, ip: host.ip, tag: t.tag });
+        }
       }
 
       const sshHostKeyRows = host.ports.flatMap((p) =>
@@ -636,6 +659,10 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
       `${e.severity} nuclei finding "${e.name}" on ${e.hostname || e.ip}`,
       { ip: e.ip, hostname: e.hostname, template_id: e.templateId, name: e.name, severity: e.severity }
     );
+  }
+  for (const e of autoTagEvents) {
+    logger.info({ event: "host.tag_added", host_id: e.hostId, tag: e.tag, added_by: "auto-tag" });
+    recordAudit("host.tag_added", "auto-tag", undefined, { host_id: e.hostId, tag: e.tag, ip: e.ip });
   }
 
   res.status(204).end();
