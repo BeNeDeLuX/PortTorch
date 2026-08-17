@@ -601,6 +601,14 @@ export interface Schedule {
   nuclei_profile_label: string | null;
 }
 
+export interface AdhocScanResult {
+  id: string;
+  created_at: string;
+  nse_profile_label: string | null;
+  nuclei_profile_label: string | null;
+  scannerAgentName: string;
+}
+
 export interface ScanHistoryEntry {
   id: string;
   target_spec: string;
@@ -820,6 +828,14 @@ export const api = {
     }
   ) => request<void>(`/api/schedules/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteSchedule: (id: string) => request<void>(`/api/schedules/${id}`, { method: "DELETE" }),
+
+  createAdhocScan: (input: {
+    scannerAgentId: string;
+    targetSpec: string;
+    portSpec: string;
+    profile?: NSEProfileSelection;
+    nucleiProfile?: NucleiProfileSelection;
+  }) => request<AdhocScanResult>("/api/adhoc-scans", { method: "POST", body: JSON.stringify(input) }),
 
   scanProfiles: () => request<ScanProfile[]>("/api/scan-profiles"),
   createScanProfile: (name: string, nseScripts: string[]) =>

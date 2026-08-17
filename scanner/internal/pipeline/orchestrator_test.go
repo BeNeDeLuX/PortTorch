@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
@@ -118,5 +119,77 @@ func TestIsTimeoutLikeErr(t *testing.T) {
 				t.Errorf("isTimeoutLikeErr(%v) = %v, want %v", c.err, got, c.want)
 			}
 		})
+	}
+}
+
+func TestIsHostname(t *testing.T) {
+	cases := []struct {
+		name       string
+		targetSpec string
+		want       bool
+	}{
+		{"single IPv4", "10.0.0.1", false},
+		{"CIDR", "10.0.0.0/24", false},
+		{"IPv4 range", "10.0.0.1-10.0.0.10", false},
+		{"comma-separated multi-target", "10.0.0.1,10.0.0.2", false},
+		{"plain hostname", "example.com", true},
+		{"hostname with a hyphen", "web-01.internal.example.com", true},
+		{"bare short hostname (no dots)", "my-scanner-target", true},
+		{"empty string", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isHostname(c.targetSpec); got != c.want {
+				t.Errorf("isHostname(%q) = %v, want %v", c.targetSpec, got, c.want)
+			}
+		})
+	}
+}
+
+// TestResolveHostnameIPv4RealDNS is a real integration test - it performs
+// an actual DNS lookup for "localhost", not a mock, to confirm
+// resolveHostnameIPv4's use of net.DefaultResolver actually works end to
+// end rather than just type-checking. "localhost" resolves to 127.0.0.1 on
+// every real environment this is expected to run in (no network access
+// needed - it's satisfied locally via /etc/hosts or the OS's own stub
+// resolver).
+func TestResolveHostnameIPv4RealDNS(t *testing.T) {
+	ip, err := resolveHostnameIPv4(context.Background(), "localhost")
+	if err != nil {
+		t.Fatalf("resolveHostnameIPv4(localhost) failed: %v", err)
+	}
+	if ip != "127.0.0.1" {
+		t.Errorf("resolveHostnameIPv4(localhost) = %q, want 127.0.0.1", ip)
+	}
+}
+
+func TestResolveHostnameIPv4UnresolvableFailsClearly(t *testing.T) {
+	_, err := resolveHostnameIPv4(context.Background(), "this-hostname-should-never-resolve.invalid")
+	if err == nil {
+		t.Fatal("expected an error resolving a nonexistent hostname, got nil")
+	}
+}
+
+func TestWithProbeHostname(t *testing.T) {
+	original := map[string]string{"10.0.0.5": "existing.internal"}
+
+	merged := withProbeHostname(original, "10.0.0.9", "new.internal")
+
+	if len(original) != 1 {
+		t.Errorf("withProbeHostname mutated the caller's original map - got %d entries, want 1", len(original))
+	}
+	if merged["10.0.0.5"] != "existing.internal" {
+		t.Errorf("merged map lost the original entry: %v", merged)
+	}
+	if merged["10.0.0.9"] != "new.internal" {
+		t.Errorf("merged map missing the new entry: %v", merged)
+	}
+
+	// A nil input map must not panic and should still produce a working
+	// single-entry map - the case every caller that's never configured any
+	// probe hostnames hits.
+	fromNil := withProbeHostname(nil, "10.0.0.1", "only.internal")
+	if len(fromNil) != 1 || fromNil["10.0.0.1"] != "only.internal" {
+		t.Errorf("withProbeHostname(nil, ...) = %v, want a single entry", fromNil)
 	}
 }

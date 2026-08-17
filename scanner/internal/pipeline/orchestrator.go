@@ -208,6 +208,74 @@ func noopHostComplete(HostResult) {}
 // pool isn't even started, reproducing exactly today's behavior for every
 // caller that doesn't resolve a real profile (see resolveNucleiProfile in
 // internal/api/server.go, the only caller that ever passes non-nil).
+
+// isHostname reports whether targetSpec should be treated as a DNS name to
+// resolve, rather than an IPv4 address/CIDR/"start-end" range masscan
+// already understands natively. Nothing in this codebase validated that
+// shape before this existed - masscan simply errored out on anything it
+// couldn't parse itself - so this is deliberately conservative: false for
+// anything that already looks like a valid IP/CIDR/range/comma-separated
+// multi-target spec (masscan accepts comma-separated targets too, and a
+// hostname can never contain a comma), true only for the remainder. A
+// hostname can legitimately contain a hyphen (e.g. "web-01.internal"), so
+// the range check must confirm *both* sides of a "-" split are themselves
+// valid IPs before concluding it's a range - a plain "contains a hyphen"
+// check would misclassify that example as a range.
+func isHostname(targetSpec string) bool {
+	targetSpec = strings.TrimSpace(targetSpec)
+	if targetSpec == "" || strings.Contains(targetSpec, ",") {
+		return false
+	}
+	if net.ParseIP(targetSpec) != nil {
+		return false
+	}
+	if _, _, err := net.ParseCIDR(targetSpec); err == nil {
+		return false
+	}
+	if before, after, ok := strings.Cut(targetSpec, "-"); ok {
+		if net.ParseIP(strings.TrimSpace(before)) != nil && net.ParseIP(strings.TrimSpace(after)) != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// resolveHostnameIPv4 resolves hostname via the scanner's own local DNS
+// and returns the first IPv4 address found. IPv4 only for now - masscan
+// (the discovery engine a resolved hostname target still goes through) has
+// no IPv6 capability at all, matching the existing IPv6 target path's own
+// single/list-address-only scoping (see parseIPv6TargetList) rather than
+// folding hostname resolution into it too. Only the first address is used,
+// not every A record - the least-surprising interpretation of "I typed a
+// hostname, I meant that one host," and it avoids unintentionally sweeping
+// every edge IP behind a load-balanced/CDN-fronted name.
+func resolveHostnameIPv4(ctx context.Context, hostname string) (string, error) {
+	addrs, err := net.DefaultResolver.LookupIP(ctx, "ip4", hostname)
+	if err != nil {
+		return "", err
+	}
+	if len(addrs) == 0 {
+		return "", fmt.Errorf("no IPv4 address found for %s", hostname)
+	}
+	return addrs[0].String(), nil
+}
+
+// withProbeHostname returns a copy of probeHostnames with ip -> hostname
+// added, rather than mutating the input in place - every current caller of
+// RunScan builds/fetches probeHostnames fresh per call (server.go's
+// runScan calls GetProbeHostnames() once per scan), but mutating a
+// caller-owned map in place would be a surprising aliasing bug for any
+// future caller that doesn't. A nil input is handled the same as an empty
+// one, so a caller that never set up probe hostnames at all still works.
+func withProbeHostname(probeHostnames map[string]string, ip, hostname string) map[string]string {
+	merged := make(map[string]string, len(probeHostnames)+1)
+	for k, v := range probeHostnames {
+		merged[k] = v
+	}
+	merged[ip] = hostname
+	return merged
+}
+
 func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, excludes Excludes, probeHostnames map[string]string, nseScripts []string, nucleiProfile *NucleiProfile, onProgress ProgressFunc, onHostComplete HostCompleteFunc) (*ScanResult, error) {
 	cfg = cfg.withDefaults()
 	if onProgress == nil {
@@ -227,6 +295,29 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 	}
 	if effectivePortSpec != portSpec {
 		onProgress("masscan", fmt.Sprintf("port excludes applied: %s -> %s", portSpec, effectivePortSpec))
+	}
+
+	// A hostname target (e.g. the Ad-hoc Scans page's Target field, or a
+	// Schedule pointed at one) is resolved here, scanner-side, rather than
+	// by the webserver - only the scanner can correctly resolve an
+	// internal-only/split-horizon name from its own network (see the root
+	// CLAUDE.md's "Why two separate services" - the webserver has no
+	// visibility into whatever DNS the scanner's own network actually
+	// uses, and a public-DNS resolution attempted webserver-side could
+	// silently resolve to the wrong thing, or nothing, for an internal
+	// name). masscan/nmap downstream never see the original hostname -
+	// only the resolved IP - so the hostname is preserved solely via the
+	// probeHostnames override below, the exact same mechanism a manually
+	// set hosts.probe_hostname already uses for TLS SNI and the gowitness
+	// screenshot URL (see RunScan's own doc comment above).
+	if isHostname(targetSpec) {
+		resolvedIP, err := resolveHostnameIPv4(ctx, targetSpec)
+		if err != nil {
+			return nil, fmt.Errorf("resolving hostname %q: %w", targetSpec, err)
+		}
+		onProgress("discovery", fmt.Sprintf("resolved %s -> %s", targetSpec, resolvedIP))
+		probeHostnames = withProbeHostname(probeHostnames, resolvedIP, targetSpec)
+		targetSpec = resolvedIP
 	}
 
 	var discovered map[string][]PortResult

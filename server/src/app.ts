@@ -16,6 +16,7 @@ import { scanJobsRouter } from "./scanJobs/routes";
 import { hostsRouter } from "./search/routes";
 import { screenshotsRouter, rdpScreenshotsRouter } from "./screenshots/routes";
 import { schedulesRouter } from "./schedules/routes";
+import { adhocScansRouter } from "./adhocScans/routes";
 import { certificatesRouter } from "./certificates/routes";
 import { vulnerabilitiesRouter } from "./vulnerabilities/routes";
 import { usersRouter } from "./users/routes";
@@ -70,6 +71,7 @@ export function buildApp() {
   app.use("/api/screenshots", screenshotsRouter);
   app.use("/api/rdp-screenshots", rdpScreenshotsRouter);
   app.use("/api/schedules", schedulesRouter);
+  app.use("/api/adhoc-scans", adhocScansRouter);
   app.use("/api/certificates", certificatesRouter);
   app.use("/api/vulnerabilities", vulnerabilitiesRouter);
   app.use("/api/users", usersRouter);

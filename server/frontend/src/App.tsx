@@ -10,6 +10,7 @@ import HostDetail from "./pages/HostDetail";
 import ScannerAgents from "./pages/ScannerAgents";
 import ScanHistory from "./pages/ScanHistory";
 import Schedules from "./pages/Schedules";
+import AdhocScans from "./pages/AdhocScans";
 import Certificates from "./pages/Certificates";
 import Vulnerabilities from "./pages/Vulnerabilities";
 import Users from "./pages/Users";
@@ -105,6 +106,10 @@ export default function App() {
       <Route
         path="/schedules"
         element={routeElement(false, (m) => <Schedules me={m} onLogout={() => setMe(null)} />)}
+      />
+      <Route
+        path="/adhoc-scans"
+        element={routeElement(false, (m) => <AdhocScans me={m} onLogout={() => setMe(null)} />)}
       />
       <Route
         path="/scan-history"
