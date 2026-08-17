@@ -739,6 +739,7 @@ export const api = {
     request<HostComment>(`/api/hosts/${id}/comments`, { method: "POST", body: JSON.stringify({ body }) }),
   deleteHostComment: (id: string, commentId: string) =>
     request<void>(`/api/hosts/${id}/comments/${commentId}`, { method: "DELETE" }),
+  deleteHost: (id: string) => request<void>(`/api/hosts/${id}`, { method: "DELETE" }),
 
   expiringCertificates: () => request<ExpiringCertificate[]>("/api/certificates"),
   vulnerabilities: () => request<FleetVulnerability[]>("/api/vulnerabilities"),

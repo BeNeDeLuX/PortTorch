@@ -911,6 +911,17 @@ th {
   word-break: break-word;
 }
 
+/* Scan History's Ports column - a rescan/ad-hoc scan against many
+   individual ports (e.g. "22,80,443,3306,3389,...") has no spaces to
+   wrap on naturally, so without a width cap it just grows the whole
+   table wider than the viewport, pushing the Actions column off-screen
+   and forcing horizontal scroll just to reach the Details button. */
+.port-spec-cell {
+  max-width: 260px;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
 .audit-details {
   max-width: 480px;
   white-space: normal;

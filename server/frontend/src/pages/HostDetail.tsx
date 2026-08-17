@@ -215,6 +215,19 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
     await load(id);
   }
 
+  async function handleDelete() {
+    if (!id || !data) return;
+    if (
+      !window.confirm(
+        `Delete host ${data.host.ip}${data.host.hostname ? ` (${data.host.hostname})` : ""}? This permanently removes its ports, screenshots, certificates, tags, and comments. This can't be undone.`
+      )
+    ) {
+      return;
+    }
+    await api.deleteHost(id);
+    navigate("/");
+  }
+
   async function handleAddTag(e: FormEvent) {
     e.preventDefault();
     if (!id || !newTag.trim()) return;
@@ -443,6 +456,11 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
         <h1>
           {data.host.ip} {data.host.hostname && <span className="host-hostname">({data.host.hostname})</span>}
         </h1>
+        {isAdmin && (
+          <button type="button" className="btn-icon-label" onClick={handleDelete}>
+            <IconTrash /> Delete Host
+          </button>
+        )}
         <button type="button" className="btn-icon-label" onClick={() => setShowExportModal(true)}>
           <IconDownload /> Export data
         </button>

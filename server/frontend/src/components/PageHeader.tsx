@@ -34,9 +34,9 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
         <NavGroup
           label="Scanning"
           items={[
-            { to: "/agents", label: "Scanner Agents" },
             { to: "/adhoc-scans", label: "Ad-hoc Scans" },
             { to: "/schedules", label: "Schedule Scans" },
+            { to: "/agents", label: "Scanner Agents" },
             { to: "/scan-history", label: "Scan History" },
             ...(me.role === "admin"
               ? [

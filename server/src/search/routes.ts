@@ -1199,3 +1199,33 @@ hostsRouter.delete("/:id/comments/:commentId", requireAdmin, asyncHandler(async 
 
   res.status(204).end();
 }));
+
+// Admin-only, same tier as revoking/deleting a scanner agent - unlike
+// retention's automated sweep (age-based, no operator judgment involved),
+// this is a deliberate one-off removal of a specific host and everything
+// tied to it, so it gets the same access level as every other hard,
+// irreversible delete in this codebase. Cascades through
+// host_port_observations/screenshots/rdp_screenshots/tls_certificates/
+// ssh_host_keys/host_tags/host_comments exactly like retention.ts's own
+// deleteFrom("hosts") does (ON DELETE CASCADE on every one of those
+// foreign keys); scan_requests.host_id is ON DELETE SET NULL, so any
+// still-queued request for this host survives with the reference cleared
+// rather than vanishing.
+hostsRouter.delete("/:id", requireAdmin, asyncHandler(async (req, res) => {
+  if (!uuidSchema.safeParse(req.params.id).success) {
+    res.status(400).json({ error: "invalid host id" });
+    return;
+  }
+
+  const result = await db.deleteFrom("hosts").where("id", "=", req.params.id).returning(["ip"]).executeTakeFirst();
+
+  if (!result) {
+    res.status(404).json({ error: "host not found" });
+    return;
+  }
+
+  logger.info({ event: "host.deleted", host_id: req.params.id, ip: result.ip, deleted_by: req.session.username, source_ip: req.ip });
+  recordAudit("host.deleted", req.session.username, req.ip, { host_id: req.params.id, ip: result.ip });
+
+  res.status(204).end();
+}));
