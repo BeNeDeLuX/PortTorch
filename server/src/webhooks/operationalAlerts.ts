@@ -1,9 +1,10 @@
 import { sql } from "kysely";
 import { config } from "../config";
 import { db } from "../db";
-import { isStale } from "../lib/staleness";
+import { isStaleScanJob } from "../lib/staleness";
 import { logger } from "../logger";
 import { dispatchWebhook } from "./dispatch";
+import { getAppSettings } from "../settings/appSettings";
 
 // Far more frequent than the hourly certificate-expiry checks
 // (webhooks/expiryAlerts.ts, settings/certExpiryAlert.ts) - unlike a
@@ -30,30 +31,36 @@ async function tick(): Promise<void> {
 }
 
 // Fires scan.stale once per scan_jobs row (stale_alert_sent_at) - a job
-// stuck in "running" past config.staleScanThresholdMinutes almost always
-// means the scanner process died mid-scan (see lib/staleness.ts and the
-// existing is_stale flag on GET /api/scan-jobs/active). No need to ever
-// clear the flag: a scan_jobs row is created fresh per scan and either
-// finishes normally (leaving the "running" status this query filters on)
-// or stays stuck forever, so "fire once, forever" is correct here, same
-// idiom as tls_certificates.expiry_alert_sent_at.
+// stuck in "running" past app_settings.stale_scan_threshold_minutes with
+// no recent progress heartbeat almost always means the scanner process
+// died mid-scan (see lib/staleness.ts's isStaleScanJob and the existing
+// is_stale flag on GET /api/scan-jobs/active - same activity-aware check,
+// so this never fires for a scan that's merely slow but still genuinely
+// progressing). No need to ever clear the flag: a scan_jobs row is
+// created fresh per scan and either finishes normally (leaving the
+// "running" status this query filters on) or stays stuck forever, so
+// "fire once, forever" is correct here, same idiom as
+// tls_certificates.expiry_alert_sent_at.
 async function checkStaleScans(): Promise<void> {
   const candidates = await db
     .selectFrom("scan_jobs")
     .leftJoin("scanner_agents", "scanner_agents.id", "scan_jobs.scanner_agent_id")
+    .leftJoin("scan_job_progress", "scan_job_progress.scan_job_id", "scan_jobs.id")
     .select([
       "scan_jobs.id as id",
       "scan_jobs.target_spec as target_spec",
       "scan_jobs.port_spec as port_spec",
       "scan_jobs.started_at as started_at",
       "scanner_agents.name as scanner_agent_name",
+      "scan_job_progress.updated_at as last_progress_at",
     ])
     .where("scan_jobs.status", "=", "running")
     .where("scan_jobs.stale_alert_sent_at", "is", null)
     .execute();
+  const { staleScanThresholdMinutes } = await getAppSettings();
 
   for (const job of candidates) {
-    if (!isStale(job.started_at)) continue;
+    if (!isStaleScanJob(job.started_at, job.last_progress_at, staleScanThresholdMinutes)) continue;
 
     const scannerLabel = job.scanner_agent_name ?? "an unknown scanner";
     const message = `Scan job on ${scannerLabel} targeting ${job.target_spec}:${job.port_spec} looks stalled - still "running" since ${new Date(job.started_at).toISOString()}`;

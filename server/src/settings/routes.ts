@@ -8,7 +8,7 @@ import { recordAudit } from "../audit/log";
 import { config } from "../config";
 import { getCurrentCertInfo, saveCertKeyPair, validateCertKeyPair } from "../tls/certUpload";
 import { getActiveHttpsServer } from "../tls/activeServer";
-import { getAppSettings, setHostRetentionDays, setRequireAdminTotp } from "./appSettings";
+import { getAppSettings, setHostRetentionDays, setRequireAdminTotp, setStaleScanThresholdMinutes } from "./appSettings";
 import { runRetentionSweep } from "../retention";
 
 // Everything here is admin-only, like scanner agents/schedules/webhooks/
@@ -97,6 +97,7 @@ settingsRouter.get("/app", asyncHandler(async (_req, res) => {
 const appSettingsSchema = z.object({
   requireAdminTotp: z.boolean().optional(),
   hostRetentionDays: z.number().int().min(0).optional(),
+  staleScanThresholdMinutes: z.number().int().min(1).optional(),
 });
 
 // The first admin to flip this on effectively binds every admin account
@@ -135,6 +136,19 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
     });
     recordAudit("settings.host_retention_days_updated", req.session.username, req.ip, {
       host_retention_days: parsed.data.hostRetentionDays,
+    });
+  }
+
+  if ("staleScanThresholdMinutes" in req.body && parsed.data.staleScanThresholdMinutes !== undefined) {
+    await setStaleScanThresholdMinutes(parsed.data.staleScanThresholdMinutes);
+    logger.info({
+      event: "settings.stale_scan_threshold_minutes_updated",
+      stale_scan_threshold_minutes: parsed.data.staleScanThresholdMinutes,
+      updated_by: req.session.username,
+      source_ip: req.ip,
+    });
+    recordAudit("settings.stale_scan_threshold_minutes_updated", req.session.username, req.ip, {
+      stale_scan_threshold_minutes: parsed.data.staleScanThresholdMinutes,
     });
   }
 

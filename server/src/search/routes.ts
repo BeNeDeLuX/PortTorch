@@ -8,6 +8,7 @@ import { getAllowedScannerAgentIds } from "../auth/scannerScope";
 import { asyncHandler } from "../lib/asyncHandler";
 import { isIPv4Cidr, isIPv6Cidr } from "../lib/net";
 import { isStale } from "../lib/staleness";
+import { getAppSettings } from "../settings/appSettings";
 import { parseDateOnly, toDateOnlyString } from "../lib/dateOnly";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
@@ -907,7 +908,10 @@ hostsRouter.get("/:id", asyncHandler(async (req, res) => {
         ...lastScanRequestRow,
         is_stale:
           (lastScanRequestRow.status === "pending" || lastScanRequestRow.status === "claimed") &&
-          isStale(lastScanRequestRow.claimed_at ?? lastScanRequestRow.created_at),
+          isStale(
+            lastScanRequestRow.claimed_at ?? lastScanRequestRow.created_at,
+            (await getAppSettings()).staleScanThresholdMinutes
+          ),
       }
     : null;
 
@@ -1127,7 +1131,8 @@ hostsRouter.post("/:id/rescan/dismiss", requireOperator, asyncHandler(async (req
     return;
   }
   const stale =
-    (request.status === "pending" || request.status === "claimed") && isStale(request.claimed_at ?? request.created_at);
+    (request.status === "pending" || request.status === "claimed") &&
+    isStale(request.claimed_at ?? request.created_at, (await getAppSettings()).staleScanThresholdMinutes);
   if (!stale) {
     res.status(409).json({ error: "scan request is not stale" });
     return;

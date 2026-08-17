@@ -31,6 +31,10 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
   const [runningCleanup, setRunningCleanup] = useState(false);
   const [cleanupResult, setCleanupResult] = useState<string | null>(null);
 
+  const [staleThresholdInput, setStaleThresholdInput] = useState("");
+  const [savingStaleThreshold, setSavingStaleThreshold] = useState(false);
+  const [staleThresholdError, setStaleThresholdError] = useState<string | null>(null);
+
   useEffect(() => {
     load();
     api
@@ -38,6 +42,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       .then((s) => {
         setAppSettings(s);
         setRetentionDaysInput(String(s.hostRetentionDays));
+        setStaleThresholdInput(String(s.staleScanThresholdMinutes));
       })
       .catch(() => setAppSettings(null));
   }, []);
@@ -81,6 +86,26 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       setRetentionError(err instanceof Error ? err.message : "Failed to update setting");
     } finally {
       setSavingRetention(false);
+    }
+  }
+
+  async function handleSaveStaleThreshold(e: FormEvent) {
+    e.preventDefault();
+    const minutes = parseInt(staleThresholdInput, 10);
+    if (Number.isNaN(minutes) || minutes < 1) {
+      setStaleThresholdError("Enter a whole number of minutes, 1 or greater.");
+      return;
+    }
+    setStaleThresholdError(null);
+    setSavingStaleThreshold(true);
+    try {
+      const updated = await api.updateAppSettings({ staleScanThresholdMinutes: minutes });
+      setAppSettings(updated);
+      setStaleThresholdInput(String(updated.staleScanThresholdMinutes));
+    } catch (err) {
+      setStaleThresholdError(err instanceof Error ? err.message : "Failed to update setting");
+    } finally {
+      setSavingStaleThreshold(false);
     }
   }
 
@@ -256,6 +281,34 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
             </button>
           </p>
         </>
+      )}
+
+      <h3>Scan Staleness</h3>
+      <p className="host-meta">
+        A running scan flagged "stale" (Active scans banner, Scanner Agents page, host detail's last rescan line)
+        usually means the scanner that owns it is offline or died mid-scan - but a scan that's simply slow (e.g. a
+        large target range's masscan pass, which reports nothing until it fully completes) won't trip this as long
+        as the scanner keeps sending its periodic progress heartbeat; only a scan with no such heartbeat for this
+        many minutes is flagged. Purely a display/alert hint - nothing is deleted or reassigned.
+      </p>
+
+      {staleThresholdError && <p className="error">{staleThresholdError}</p>}
+
+      {appSettings && (
+        <form className="inline-form" onSubmit={handleSaveStaleThreshold}>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={staleThresholdInput}
+            onChange={(e) => setStaleThresholdInput(e.target.value)}
+            aria-label="Stale scan threshold minutes"
+          />
+          <span className="host-meta">minutes</span>
+          <button type="submit" className="btn-icon-label" disabled={savingStaleThreshold}>
+            <IconSave /> Save
+          </button>
+        </form>
       )}
     </div>
   );

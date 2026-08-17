@@ -5,11 +5,12 @@ import { db } from "../db";
 import { requireAuth, requireOperator } from "../auth/middleware";
 import { getAllowedScannerAgentIds } from "../auth/scannerScope";
 import { asyncHandler } from "../lib/asyncHandler";
-import { isStale } from "../lib/staleness";
+import { isStaleScanJob } from "../lib/staleness";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { requestScanCancel } from "../scanCancel";
 import { singleParam } from "../lib/reqParams";
+import { getAppSettings } from "../settings/appSettings";
 
 export const scanJobsRouter = Router();
 scanJobsRouter.use(requireAuth);
@@ -158,6 +159,10 @@ scanJobsRouter.get("/active", asyncHandler(async (req, res) => {
   let jobsQuery = db
     .selectFrom("scan_jobs")
     .leftJoin("scanner_agents", "scanner_agents.id", "scan_jobs.scanner_agent_id")
+    // Left, not inner: a job with no progress row yet (the scanner's
+    // first push hasn't landed) must still show up here - isStaleScanJob
+    // below falls back to started_at in exactly that case.
+    .leftJoin("scan_job_progress", "scan_job_progress.scan_job_id", "scan_jobs.id")
     .select([
       "scan_jobs.id as id",
       "scan_jobs.scanner_agent_id as scanner_agent_id",
@@ -167,12 +172,14 @@ scanJobsRouter.get("/active", asyncHandler(async (req, res) => {
       "scan_jobs.cancellable as cancellable",
       "scan_jobs.cancel_requested_at as cancel_requested_at",
       "scanner_agents.name as scanner_agent_name",
+      "scan_job_progress.updated_at as last_progress_at",
     ])
     .where("scan_jobs.status", "=", "running");
   if (allowed) {
     jobsQuery = jobsQuery.where("scan_jobs.scanner_agent_id", "in", allowed);
   }
   const jobs = await jobsQuery.orderBy("scan_jobs.started_at", "asc").execute();
+  const { staleScanThresholdMinutes } = await getAppSettings();
 
   // The target/port spec shown here is what was *requested* - excludes
   // (scan_excludes) are applied scanner-side before masscan ever runs
@@ -187,9 +194,9 @@ scanJobsRouter.get("/active", asyncHandler(async (req, res) => {
     : [];
 
   res.json(
-    jobs.map(({ cancel_requested_at, ...j }) => ({
+    jobs.map(({ cancel_requested_at, last_progress_at, ...j }) => ({
       ...j,
-      is_stale: isStale(j.started_at),
+      is_stale: isStaleScanJob(j.started_at, last_progress_at, staleScanThresholdMinutes),
       cancel_requested: cancel_requested_at !== null,
       ...(isAdmin
         ? {
@@ -381,7 +388,14 @@ scanJobsRouter.post("/:id/dismiss", requireOperator, asyncHandler(async (req, re
     res.status(404).json({ error: "scan job not found" });
     return;
   }
-  if (job.status !== "running" || !isStale(job.started_at)) {
+
+  const progress = await db
+    .selectFrom("scan_job_progress")
+    .select(["updated_at"])
+    .where("scan_job_id", "=", req.params.id)
+    .executeTakeFirst();
+  const { staleScanThresholdMinutes } = await getAppSettings();
+  if (job.status !== "running" || !isStaleScanJob(job.started_at, progress?.updated_at ?? null, staleScanThresholdMinutes)) {
     res.status(409).json({ error: "scan job is not a stale running job" });
     return;
   }

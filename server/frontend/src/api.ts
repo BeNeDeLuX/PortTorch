@@ -46,6 +46,7 @@ export interface Me {
 export interface AppSettings {
   requireAdminTotp: boolean;
   hostRetentionDays: number;
+  staleScanThresholdMinutes: number;
 }
 
 export interface DashboardUser {

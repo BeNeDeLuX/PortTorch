@@ -570,7 +570,7 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
           .select(["template_id", "matched_at"])
           .where("host_id", "=", upserted.id)
           .execute();
-        const existingFindingKeys = new Set(existingFindings.map((f) => `${f.template_id} ${f.matched_at}`));
+        const existingFindingKeys = new Set(existingFindings.map((f) => JSON.stringify([f.template_id, f.matched_at])));
 
         await trx
           .insertInto("nuclei_findings")
@@ -592,7 +592,7 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
           .execute();
 
         for (const f of host.nucleiFindings ?? []) {
-          if (!existingFindingKeys.has(`${f.templateId} ${f.matchedAt}`)) {
+          if (!existingFindingKeys.has(JSON.stringify([f.templateId, f.matchedAt]))) {
             nucleiFindingEvents.push({ ip: host.ip, hostname: host.hostname ?? null, templateId: f.templateId, name: f.name, severity: f.severity });
           }
         }

@@ -3,6 +3,7 @@ import { db } from "../db";
 export interface AppSettings {
   requireAdminTotp: boolean;
   hostRetentionDays: number;
+  staleScanThresholdMinutes: number;
 }
 
 // Singleton row (id always 1), same idiom as digest_email_state /
@@ -12,10 +13,14 @@ export interface AppSettings {
 export async function getAppSettings(): Promise<AppSettings> {
   const row = await db
     .selectFrom("app_settings")
-    .select(["require_admin_totp", "host_retention_days"])
+    .select(["require_admin_totp", "host_retention_days", "stale_scan_threshold_minutes"])
     .where("id", "=", 1)
     .executeTakeFirstOrThrow();
-  return { requireAdminTotp: row.require_admin_totp, hostRetentionDays: row.host_retention_days };
+  return {
+    requireAdminTotp: row.require_admin_totp,
+    hostRetentionDays: row.host_retention_days,
+    staleScanThresholdMinutes: row.stale_scan_threshold_minutes,
+  };
 }
 
 export async function setRequireAdminTotp(value: boolean): Promise<void> {
@@ -24,4 +29,8 @@ export async function setRequireAdminTotp(value: boolean): Promise<void> {
 
 export async function setHostRetentionDays(value: number): Promise<void> {
   await db.updateTable("app_settings").set({ host_retention_days: value }).where("id", "=", 1).execute();
+}
+
+export async function setStaleScanThresholdMinutes(value: number): Promise<void> {
+  await db.updateTable("app_settings").set({ stale_scan_threshold_minutes: value }).where("id", "=", 1).execute();
 }

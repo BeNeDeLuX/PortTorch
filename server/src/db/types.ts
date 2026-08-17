@@ -552,6 +552,9 @@ export interface AppSettingsTable {
   // live-editable from the Settings page (see retention.ts). 0 disables
   // the sweep entirely, same semantics the env var always had.
   host_retention_days: ColumnType<number, number | undefined, number>;
+  // Was config.ts's staleScanThresholdMinutes env var - moved here for the
+  // same reason as host_retention_days above (see lib/staleness.ts).
+  stale_scan_threshold_minutes: ColumnType<number, number | undefined, number>;
 }
 
 export interface AuditLogTable {
