@@ -184,11 +184,15 @@ settingsRouter.post("/retention/run-now", asyncHandler(async (req, res) => {
 
   logger.info({
     event: "settings.retention_run_now",
-    purged_count: result.purged,
+    purged_hosts: result.purgedHosts,
+    purged_audit_log_entries: result.purgedAuditLogEntries,
     triggered_by: req.session.username,
     source_ip: req.ip,
   });
-  recordAudit("settings.retention_run_now", req.session.username, req.ip, { purged_count: result.purged });
+  recordAudit("settings.retention_run_now", req.session.username, req.ip, {
+    purged_hosts: result.purgedHosts,
+    purged_audit_log_entries: result.purgedAuditLogEntries,
+  });
 
   res.json(result);
 }));

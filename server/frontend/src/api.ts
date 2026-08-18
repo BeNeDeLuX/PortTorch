@@ -886,7 +886,10 @@ export const api = {
   appSettings: () => request<AppSettings>("/api/settings/app"),
   updateAppSettings: (patch: Partial<AppSettings>) =>
     request<AppSettings>("/api/settings/app", { method: "PATCH", body: JSON.stringify(patch) }),
-  runRetentionSweepNow: () => request<{ purged: number }>("/api/settings/retention/run-now", { method: "POST" }),
+  runRetentionSweepNow: () =>
+    request<{ purgedHosts: number; purgedAuditLogEntries: number }>("/api/settings/retention/run-now", {
+      method: "POST",
+    }),
 
   users: () => request<DashboardUser[]>("/api/users"),
   createUser: (input: { username: string; password: string; role: string; scannerAgentIds?: string[] }) =>

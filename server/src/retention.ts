@@ -22,24 +22,33 @@ export function startRetention(): void {
  * Purges hosts whose last_seen_at is older than the current
  * app_settings.host_retention_days (admin-editable from the Settings
  * page - see settings/appSettings.ts; 0 disables the sweep entirely, a
- * no-op that still returns {purged: 0} rather than deleting everything).
- * masscan only reports hosts it finds with at least one open port, so a
- * host that's gone quiet simply stops appearing in scan results and its
- * last_seen_at freezes - there's no separate "still alive but portless"
- * signal to account for. ON DELETE CASCADE on host_port_observations,
- * screenshots, rdp_screenshots, tls_certificates, ssh_host_keys, host_tags,
- * and host_comments means deleting the host row takes all of its history
- * with it; scan_requests.host_id is ON DELETE SET NULL instead, so queue
- * rows survive with the host reference cleared.
+ * no-op that still returns {purgedHosts: 0, purgedAuditLogEntries: 0}
+ * rather than deleting everything). masscan only reports hosts it finds
+ * with at least one open port, so a host that's gone quiet simply stops
+ * appearing in scan results and its last_seen_at freezes - there's no
+ * separate "still alive but portless" signal to account for. ON DELETE
+ * CASCADE on host_port_observations, screenshots, rdp_screenshots,
+ * tls_certificates, ssh_host_keys, host_tags, and host_comments means
+ * deleting the host row takes all of its history with it;
+ * scan_requests.host_id is ON DELETE SET NULL instead, so queue rows
+ * survive with the host reference cleared.
+ *
+ * Also purges audit_log rows older than the same window - unlike
+ * webhook_deliveries (trimmed to a fixed count per webhook at insert
+ * time, a diagnostic tail, not a record), audit_log used to be kept
+ * forever with no pruning at all; tying it to the same admin-editable
+ * host_retention_days window (rather than a second, separate setting)
+ * keeps "how long do we keep history" a single knob instead of two that
+ * could drift out of sync with each other.
  *
  * Called both by the hourly ticker above and by the Settings page's
  * manual trigger (POST /api/settings/retention/run-now) - one shared
  * implementation so an on-demand cleanup can never behave differently
  * from what the scheduled sweep would have done.
  */
-export async function runRetentionSweep(): Promise<{ purged: number }> {
+export async function runRetentionSweep(): Promise<{ purgedHosts: number; purgedAuditLogEntries: number }> {
   const { hostRetentionDays } = await getAppSettings();
-  if (hostRetentionDays <= 0) return { purged: 0 };
+  if (hostRetentionDays <= 0) return { purgedHosts: 0, purgedAuditLogEntries: 0 };
 
   const threshold = new Date(Date.now() - hostRetentionDays * 24 * 60 * 60_000);
 
@@ -65,5 +74,25 @@ export async function runRetentionSweep(): Promise<{ purged: number }> {
     logger.info({ event: "retention.sweep_completed", purged_count: stale.length, retention_days: hostRetentionDays });
   }
 
-  return { purged: stale.length };
+  // Deliberately computed against the same "now" the host sweep above
+  // used (threshold), not a fresh Date.now() - keeps both halves of this
+  // one sweep referring to the exact same cutoff instant. Run after the
+  // host purge so this sweep's own host.tag_added/retention.host_purged
+  // entries from just above are themselves still subject to the same
+  // window on the *next* run, same as any other audit entry.
+  const auditPurgeResult = await db
+    .deleteFrom("audit_log")
+    .where("created_at", "<", threshold)
+    .executeTakeFirst();
+  const purgedAuditLogEntries = Number(auditPurgeResult.numDeletedRows);
+
+  if (purgedAuditLogEntries > 0) {
+    logger.info({ event: "retention.audit_log_purged", purged_count: purgedAuditLogEntries, retention_days: hostRetentionDays });
+    await recordAudit("retention.audit_log_purged", "retention", undefined, {
+      purged_count: purgedAuditLogEntries,
+      retention_days: hostRetentionDays,
+    });
+  }
+
+  return { purgedHosts: stale.length, purgedAuditLogEntries };
 }

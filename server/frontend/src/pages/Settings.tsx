@@ -137,7 +137,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
   async function handleCleanupNow() {
     if (
       !window.confirm(
-        `Permanently delete every host not seen in the last ${appSettings?.hostRetentionDays ?? "?"} day(s), along with all their ports/screenshots/tags/comments/certificates? This runs the same purge the hourly sweep does, right now, and can't be undone.`
+        `Permanently delete every host not seen in the last ${appSettings?.hostRetentionDays ?? "?"} day(s) (along with all their ports/screenshots/tags/comments/certificates), and every audit log entry older than the same window? This runs the same purge the hourly sweep does, right now, and can't be undone.`
       )
     ) {
       return;
@@ -147,9 +147,10 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
     setRunningCleanup(true);
     try {
       const result = await api.runRetentionSweepNow();
-      setCleanupResult(
-        result.purged === 0 ? "No hosts were old enough to purge." : `Purged ${result.purged} host(s).`
-      );
+      const parts: string[] = [];
+      parts.push(result.purgedHosts === 0 ? "no hosts" : `${result.purgedHosts} host(s)`);
+      parts.push(result.purgedAuditLogEntries === 0 ? "no audit log entries" : `${result.purgedAuditLogEntries} audit log entry/entries`);
+      setCleanupResult(`Purged ${parts.join(" and ")}.`);
     } catch (err) {
       setRetentionError(err instanceof Error ? err.message : "Failed to run cleanup");
     } finally {
@@ -278,7 +279,8 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       <h3>Host Retention</h3>
       <p className="host-meta">
         Hosts not seen (last seen) in this many days are purged automatically every hour, along with all their
-        history - ports, screenshots, tags, comments, certificates. Set to 0 to disable the sweep entirely.
+        history - ports, screenshots, tags, comments, certificates. Audit log entries older than the same window are
+        purged too, in the same sweep. Set to 0 to disable the sweep entirely.
       </p>
 
       {retentionError && <p className="error">{retentionError}</p>}

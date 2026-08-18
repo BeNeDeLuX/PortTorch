@@ -1904,8 +1904,18 @@ th {
   flex-wrap: wrap;
 }
 
+/* A rescan/ad-hoc scan against many individual ports (or a target
+   spanning many addresses) has no spaces to wrap on naturally - without
+   this, a long one stretches this flex item past the banner's own width
+   instead of wrapping, pushing the page into horizontal scroll. min-width:
+   0 overrides the flex default of min-width: auto, which otherwise
+   refuses to let a flex item shrink below its content's natural width
+   even when overflow-wrap would otherwise allow a break. */
 .active-scan-target {
   font-weight: 600;
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .active-scan-excludes {
