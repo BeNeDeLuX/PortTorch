@@ -69,9 +69,18 @@ export function zonedDateTimeToUtcIso(dateStr: string, timeStr: string, timeZone
 // the schedule keeps running at that fixed UTC time even after the next
 // DST transition, same as manually writing a UTC cron expression would.
 export function zonedTimeToUtcHourMinute(timeStr: string, timeZone: string): { hour: number; minute: number; dayShift: number } {
-  const [rawHour, rawMinute] = timeStr.split(":").map(Number);
-  const hour = Number.isNaN(rawHour) ? 9 : rawHour;
-  const minute = Number.isNaN(rawMinute) ? 0 : rawMinute;
+  // <input type="time"> can be cleared, handing back "" - which splits to
+  // a single element, so rawMinute is `undefined`, not NaN. Number.isNaN
+  // is false for undefined, so an isNaN-only guard let it through and
+  // Date.UTC below produced NaN, throwing "Invalid time value" out of
+  // Intl.formatToParts - during render, since Schedules.tsx computes the
+  // generated cron in a useMemo. Requiring both parts to be present and
+  // finite covers the empty, partial, and non-numeric cases alike.
+  const parts = timeStr.split(":");
+  const rawHour = Number(parts[0]);
+  const rawMinute = Number(parts[1]);
+  const hour = parts.length === 2 && Number.isFinite(rawHour) ? rawHour : 9;
+  const minute = parts.length === 2 && Number.isFinite(rawMinute) ? rawMinute : 0;
   const now = new Date();
   const naiveUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hour, minute, 0);
   const utcInstant = naiveUtc - offsetMsAt(naiveUtc, timeZone);
