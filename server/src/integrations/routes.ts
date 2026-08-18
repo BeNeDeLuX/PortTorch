@@ -8,7 +8,8 @@ import { requestRescan } from "../rescan";
 import { requestScanCancel } from "../scanCancel";
 import { tokenAuth } from "../apiTokens/tokenAuth";
 import { zIp } from "../lib/zodIp";
-import type { NSEProfileSelection } from "../scanProfiles/resolve";
+import { ScanProfileNotFoundError, resolveNSEProfile, type NSEProfileSelection } from "../scanProfiles/resolve";
+import { NucleiProfileNotFoundError, resolveNucleiProfile, type NucleiProfileSelection } from "../nucleiProfiles/resolve";
 
 // External, non-interactive API for SOAR/enrichment tools - token auth
 // (tokenAuth), not session auth or scanner API keys. Kept as its own
@@ -16,9 +17,14 @@ import type { NSEProfileSelection } from "../scanProfiles/resolve";
 // routes, since those assume an interactive session throughout (RBAC role
 // checks, req.session.username for audit attribution) and this has a
 // narrower, stable surface: look a host up by ip/hostname, trigger a
-// rescan of it. Read-only lookup and the rescan trigger share one token -
-// there's no separate read-only scope, since splitting that wasn't asked
-// for and would add a second token type to manage for no clear benefit yet.
+// rescan of it, or queue a one-shot scan against a target that isn't a
+// known host yet (POST /scans/adhoc below - the External API counterpart
+// to the dashboard's own Ad-hoc Scans page, for the case a SOAR tool
+// needs to scan something it just learned about from outside this app
+// entirely, e.g. a firewall alert about a newly-seen IP). Every route here
+// shares one token - there's no separate read-only scope, since splitting
+// that wasn't asked for and would add a second token type to manage for
+// no clear benefit yet.
 export const integrationsRouter = Router();
 integrationsRouter.use(tokenAuth);
 
@@ -89,6 +95,28 @@ async function resolveProfileParam(profile: string | undefined): Promise<{ ok: t
   const customProfile = await db.selectFrom("scan_profiles").select(["id"]).where("name", "=", profile).executeTakeFirst();
   if (!customProfile) {
     return { ok: false, error: `unknown scan profile "${profile}" - use "default", "all_safe", or the exact name of an existing Custom profile` };
+  }
+  return { ok: true, selection: { kind: "custom", profileId: customProfile.id } };
+}
+
+// Same flat-string-to-selection idea as resolveProfileParam above, for
+// the independent nuclei profile pick - "off" (nuclei never runs, the
+// default if omitted) / "safe" / the exact name of a Custom nuclei
+// profile.
+async function resolveNucleiProfileParam(nucleiProfile: string | undefined): Promise<{ ok: true; selection: NucleiProfileSelection } | { ok: false; error: string }> {
+  if (!nucleiProfile) {
+    return { ok: true, selection: { kind: "off" } };
+  }
+  const normalized = nucleiProfile.trim().toLowerCase();
+  if (normalized === "off") {
+    return { ok: true, selection: { kind: "off" } };
+  }
+  if (normalized === "safe") {
+    return { ok: true, selection: { kind: "safe" } };
+  }
+  const customProfile = await db.selectFrom("nuclei_profiles").select(["id"]).where("name", "=", nucleiProfile).executeTakeFirst();
+  if (!customProfile) {
+    return { ok: false, error: `unknown nuclei profile "${nucleiProfile}" - use "off", "safe", or the exact name of an existing Custom nuclei profile` };
   }
   return { ok: true, selection: { kind: "custom", profileId: customProfile.id } };
 }
@@ -230,6 +258,122 @@ integrationsRouter.post("/hosts/cancel-scan", asyncHandler(async (req, res) => {
   });
 
   res.status(204).end();
+}));
+
+const adhocScanSchema = z.object({
+  scannerAgent: z.string().min(1),
+  targetSpec: z.string().trim().min(1),
+  portSpec: z.string().trim().min(1),
+  profile: z.string().min(1).optional(),
+  nucleiProfile: z.string().min(1).optional(),
+});
+
+// Ad-hoc Scans' External API counterpart - the one route in this router
+// that doesn't require an existing host, unlike /hosts/rescan and
+// /hosts/cancel-scan above. Reuses the identical scan_requests insert
+// shape the dashboard's own POST /api/adhoc-scans (adhocScans/routes.ts)
+// already uses - same queue, same scanner-side pickup via
+// GET /api/ingest/scan-requests/next, just triggered by a token instead
+// of a session. scannerAgent is looked up by name (not the dashboard's
+// internal uuid), matching every other External API route's convention
+// of never expecting a caller to know this app's own internal ids.
+integrationsRouter.post("/scans/adhoc", asyncHandler(async (req, res) => {
+  const parsed = adhocScanSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const agent = await db
+    .selectFrom("scanner_agents")
+    .select(["id", "name"])
+    .where("name", "=", parsed.data.scannerAgent)
+    .executeTakeFirst();
+  if (!agent) {
+    res.status(400).json({ error: "unknown scanner agent" });
+    return;
+  }
+
+  const resolvedProfile = await resolveProfileParam(parsed.data.profile);
+  if (!resolvedProfile.ok) {
+    res.status(400).json({ error: resolvedProfile.error });
+    return;
+  }
+  const resolvedNucleiProfile = await resolveNucleiProfileParam(parsed.data.nucleiProfile);
+  if (!resolvedNucleiProfile.ok) {
+    res.status(400).json({ error: resolvedNucleiProfile.error });
+    return;
+  }
+
+  let nseResolution;
+  try {
+    nseResolution = await resolveNSEProfile(resolvedProfile.selection);
+  } catch (err) {
+    if (err instanceof ScanProfileNotFoundError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    throw err;
+  }
+
+  let nucleiResolution;
+  try {
+    nucleiResolution = await resolveNucleiProfile(resolvedNucleiProfile.selection);
+  } catch (err) {
+    if (err instanceof NucleiProfileNotFoundError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    throw err;
+  }
+
+  const requestedBy = `api-token:${req.apiTokenName}`;
+  const request = await db
+    .insertInto("scan_requests")
+    .values({
+      scanner_agent_id: agent.id,
+      host_id: null,
+      target_spec: parsed.data.targetSpec,
+      port_spec: parsed.data.portSpec,
+      requested_by: requestedBy,
+      nse_profile: nseResolution.nseProfile,
+      nse_scripts: nseResolution.nseScripts,
+      nse_profile_label: nseResolution.nseProfileLabel,
+      nuclei_profile: nucleiResolution.nucleiProfile,
+      nuclei_tags: nucleiResolution.nucleiTags,
+      nuclei_profile_label: nucleiResolution.nucleiProfileLabel,
+    })
+    .returning(["id", "status", "created_at"])
+    .executeTakeFirstOrThrow();
+
+  logger.info({
+    event: "adhoc_scan.requested",
+    scan_request_id: request.id,
+    scanner_agent_id: agent.id,
+    scanner_agent_name: agent.name,
+    target_spec: parsed.data.targetSpec,
+    port_spec: parsed.data.portSpec,
+    requested_by: requestedBy,
+    api_token_id: req.apiTokenId,
+    source_ip: req.ip,
+  });
+  recordAudit("adhoc_scan.requested", requestedBy, req.ip, {
+    scan_request_id: request.id,
+    scanner_agent_id: agent.id,
+    scanner_agent_name: agent.name,
+    target_spec: parsed.data.targetSpec,
+    port_spec: parsed.data.portSpec,
+    api_token_id: req.apiTokenId,
+  });
+
+  res.status(201).json({
+    scanRequestId: request.id,
+    status: request.status,
+    createdAt: request.created_at,
+    scannerAgentName: agent.name,
+    profile: nseResolution.nseProfileLabel,
+    nucleiProfile: nucleiResolution.nucleiProfileLabel,
+  });
 }));
 
 type LookupResult =

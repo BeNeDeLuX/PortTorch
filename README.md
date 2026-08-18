@@ -902,16 +902,29 @@ curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/js
 curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
   -d '{"ip":"10.0.0.5"}' \
   "https://porttorch.internal/api/v1/hosts/cancel-scan"
+
+# Queue a one-shot scan against a target that isn't a known host yet -
+# the External API counterpart to the dashboard's Ad-hoc Scans page, for
+# e.g. a SOAR playbook reacting to a firewall alert about a brand-new IP.
+# scannerAgent is the agent's name (Scanner Agents page), not an id.
+# profile/nucleiProfile are optional, same flat-string values as rescan
+# above (nucleiProfile: "off" (default), "safe", or a Custom nuclei
+# profile's name).
+curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"scannerAgent":"office-berlin","targetSpec":"10.0.0.99","portSpec":"1-1000","profile":"all_safe"}' \
+  "https://porttorch.internal/api/v1/scans/adhoc"
 ```
 
-All three endpoints return `404` for an unknown host; rescan returns
-`400` if the host has no currently-known open ports or no scan history to
-infer a scanner from (same constraints as the dashboard's Rescan button),
-or if `profile` doesn't match `"default"`, `"all_safe"`, or an existing
-Custom profile's name; cancel-scan returns `404` if nothing is currently
-running for that host.
-Every rescan/cancel trigger is logged and shows up in the audit log,
-attributed to the token's name (`api-token:<name>`).
+All three lookup-based endpoints return `404` for an unknown host; rescan
+returns `400` if the host has no currently-known open ports or no scan
+history to infer a scanner from (same constraints as the dashboard's
+Rescan button), or if `profile` doesn't match `"default"`, `"all_safe"`,
+or an existing Custom profile's name; cancel-scan returns `404` if
+nothing is currently running for that host. `scans/adhoc` returns `400`
+for an unknown `scannerAgent` name or an unrecognized `profile`/
+`nucleiProfile`.
+Every rescan/cancel/adhoc-scan trigger is logged and shows up in the
+audit log, attributed to the token's name (`api-token:<name>`).
 
 If you run scanners across multiple, non-interconnected networks with
 overlapping private IP ranges, the same `ip` can validly belong to more
