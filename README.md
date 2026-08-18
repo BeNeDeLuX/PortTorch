@@ -72,7 +72,16 @@ Each item below is a one-line summary - click **Details** to expand it.
   <details>
   <summary>Details</summary>
 
-  Table view has sortable, show/hide-able columns (hostname, open port count, last seen, screenshot, OS/device, a compact CVE/KEV risk indicator); your choice of view and column layout is remembered per browser. Both views support selecting multiple hosts to bulk-tag or bulk-rescan at once. A host's device type, OS family, and scanner - both on the card/row itself, not just the sidebar - are clickable to filter by them directly from the list.
+  Table view has sortable, show/hide-able columns (hostname, open port count, last seen, screenshot, OS/device, a compact CVE/KEV risk indicator); your choice of view and column layout is remembered per browser. Both views support selecting multiple hosts to bulk-tag, bulk-rescan, or (admin only) bulk-delete at once. A host's device type, OS family, and scanner - both on the card/row itself, not just the sidebar - are clickable to filter by them directly from the list.
+  </details>
+
+- :label: **Host tags** - free-form tags you add yourself, plus service tags applied automatically on every scan.
+  <details>
+  <summary>Details</summary>
+
+  Tag a host with anything you like (an owner, a ticket reference, an environment) from the host detail page, or several hosts at once from the list view - tags are filterable from the sidebar like any other facet.
+
+  On top of that, every scan automatically tags a host by the services it was actually found running: `WebServer`, `FTP-Server`, `SSH-Server`, `Telnet`, `DNS-Server`, `RDP`, `SMB`, `Mail-Server`, `LDAP`, `VNC`, `MySQL`, `PostgreSQL`, `MSSQL`, `MongoDB`, `Redis`, `Docker-API`, `SNMP`, and `IPMI` - so "show me every host still exposing Telnet" is a one-click filter without anyone having to tag them by hand. Auto-tags are shown with a dashed outline on the host detail page to distinguish them from your own, and are never removed automatically (a host that once ran FTP keeps the record of it); you can delete one by hand, but it comes back if a later scan still finds that service open.
   </details>
 
 - :floppy_disk: **Saved searches** - save a filter combination by name, get a webhook the first time a new host matches it.
@@ -93,7 +102,7 @@ Each item below is a one-line summary - click **Details** to expand it.
   <details>
   <summary>Details</summary>
 
-  Open ports with banners/CPE/OS hints and known CVEs (matched against detected service versions, synced daily from the NVD database - see below), anonymous FTP directory listings, SMB share enumeration plus OS/computer-name/domain info (`smb-os-discovery`), NetBIOS name/domain (`nbstat`), and protocol/security-mode info (`smb-protocols`, `smb-security-mode`/`smb2-security-mode` - whether legacy SMBv1 is still enabled, whether signing is required), NFS/rsync listings, an anonymous LDAP root DSE, RPC portmapper/MSRPC endpoint enumeration, whether common database/service daemons (MongoDB, Redis, MySQL, Memcached, Oracle, Docker, CouchDB, Cassandra) are reachable with no authentication, which HTTP methods a server allows (`http-methods`), the HTTP auth scheme a server requires (`http-auth`) and any exposed `.git` repository (`http-git`), RDP hostname/domain/OS build and encryption level leaked pre-auth (`rdp-ntlm-info`/`rdp-enum-encryption`), SSH algorithm/protocol-version info (`ssh2-enum-algos`/`sshv1`), an SMTP open-relay check, whether a DNS server is an open recursive resolver, and SNMP/IPMI asset info (both via a small separate UDP probe - see below) - all when the target allows a no-credentials session (also matched by the free-text search box), OS/device classification and MAC address (when available - see "What each scan does" below), TLS certificates (with expiry status), SSH host keys, HTTP(S) and RDP screenshots (with detected technologies, response headers, and OCR'd screenshot text), a full scan history timeline (with which scanner agent produced each entry), a "changes since last scan" diff, host tags, and an append-only comment log (each comment keeps its author and timestamp). Prev/next buttons step through whichever filtered/sorted host list you came from (including across a page boundary), so you can click through a search's results without going back to the list each time. Its own **Export data** popup exports just this host - CSV (one row per open port, including banners/CPEs/CVE ids), JSON (the full host record plus its ports), or a PDF snapshot of the page as shown, screenshots included.
+  Open ports with banners/CPE/OS hints and known CVEs (matched against detected service versions, synced daily from the NVD database - see below), anonymous FTP directory listings, SMB share enumeration plus OS/computer-name/domain info (`smb-os-discovery`), NetBIOS name/domain (`nbstat`), and protocol/security-mode info (`smb-protocols`, `smb-security-mode`/`smb2-security-mode` - whether legacy SMBv1 is still enabled, whether signing is required), NFS/rsync listings, an anonymous LDAP root DSE, RPC portmapper/MSRPC endpoint enumeration, whether common database/service daemons (MongoDB, Redis, MySQL, Memcached, Oracle, Docker, CouchDB, Cassandra) are reachable with no authentication, which HTTP methods a server allows (`http-methods`), the HTTP auth scheme a server requires (`http-auth`) and any exposed `.git` repository (`http-git`), RDP hostname/domain/OS build and encryption level leaked pre-auth (`rdp-ntlm-info`/`rdp-enum-encryption`), SSH algorithm/protocol-version info (`ssh2-enum-algos`/`sshv1`), an SMTP open-relay check, whether a DNS server is an open recursive resolver, and SNMP/IPMI asset info (both via a small separate UDP probe - see below) - all when the target allows a no-credentials session (also matched by the free-text search box), OS/device classification and MAC address (when available - see "What each scan does" below), TLS certificates (with expiry status), SSH host keys, HTTP(S) and RDP screenshots (with detected technologies, response headers, and OCR'd screenshot text), a full scan history timeline (with which scanner agent produced each entry), a "changes since last scan" diff, host tags, and an append-only comment log (each comment keeps its author and timestamp). Prev/next buttons step through whichever filtered/sorted host list you came from (including across a page boundary), so you can click through a search's results without going back to the list each time. Its own **Export data** popup exports just this host - CSV (one row per open port, including banners/CPEs/CVE ids), JSON (the full host record plus its ports), or a PDF snapshot of the page as shown, screenshots included. Admins also get a **Delete Host** button here (and a bulk equivalent on the list view) for permanently removing a decommissioned or misidentified host and all its history, without waiting for the retention sweep to age it out.
   </details>
 
 - :arrows_counterclockwise: **Rescan button** - on-demand rescan of a host's known open ports, with an NSE profile and nuclei profile choice.
@@ -101,6 +110,15 @@ Each item below is a one-line summary - click **Details** to expand it.
   <summary>Details</summary>
 
   Triggers an on-demand rescan of a host's currently known open ports, picked up by whichever scanner last scanned it. Opens a confirmation popup offering a choice of NSE script profile (see **Scan Profiles** below) and, independently, a nuclei profile (see **Nuclei Profiles** below) rather than firing immediately.
+  </details>
+
+- :zap: **Ad-hoc Scans** - fire a single scan right now against any target, including one that isn't a known host yet.
+  <details>
+  <summary>Details</summary>
+
+  Scan a target/port spec immediately, once, with no schedule attached - the counterpart to Rescan for anything that isn't already a known host (a newly-provisioned subnet, a system someone just told you about, a one-off check). Pick a scanner, a target, ports, and the same NSE script profile and nuclei profile choices Rescan and Schedule Scans offer; the request goes into the same queue and is picked up by the chosen scanner on its very next poll.
+
+  Unlike the other trigger points, the target field also accepts a **DNS hostname**, not just an IP/CIDR/range/IPv6 list. The hostname is resolved by the scanner itself (not the webserver - only the scanner can correctly resolve an internal-only or split-horizon name from inside its own network), and is automatically used as the TLS SNI and screenshot hostname for that scan, the same effect as setting a host's "probe hostname" by hand after the fact. Available to operators and admins, and also from the External API (`POST /api/v1/scans/adhoc`, see below) for SOAR/automation use.
   </details>
 
 - :alarm_clock: **Schedule Scans** - interval, cron-style, or one-time scan schedules using the same queue as Rescan.
@@ -243,7 +261,7 @@ Each item below is a one-line summary - click **Details** to expand it.
   <details>
   <summary>Details</summary>
 
-  Hosts not seen (`last_seen_at`) in a configurable number of days (default 180) are purged automatically (hourly check), along with all their history - ports, screenshots, tags, comments, certificates. The retention window is set from the Settings page (admin only, `0` disables the sweep), and a "Clean up now" button there runs the same purge on demand instead of waiting for the next hourly check. Every purge is logged and shows up in the audit log.
+  Hosts not seen (`last_seen_at`) in a configurable number of days (default 180) are purged automatically (hourly check), along with all their history - ports, screenshots, tags, comments, certificates. Audit log entries older than the same window are purged in the same sweep. The retention window is set from the Settings page (admin only, `0` disables the sweep entirely, including the audit log half), and a "Clean up now" button there runs the same purge on demand instead of waiting for the next hourly check. Every purge is logged and shows up in the audit log.
   </details>
 
 - :lock: **Login protection** - failed logins rate-limited per username and per source IP.
