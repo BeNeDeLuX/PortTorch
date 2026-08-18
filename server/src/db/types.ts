@@ -555,6 +555,9 @@ export interface AppSettingsTable {
   // Was config.ts's staleScanThresholdMinutes env var - moved here for the
   // same reason as host_retention_days above (see lib/staleness.ts).
   stale_scan_threshold_minutes: ColumnType<number, number | undefined, number>;
+  // How many pending scan_requests rows before Fleet Health's "Scan
+  // Queue" card escalates to "warning" - see useFleetHealth.ts.
+  scan_queue_warning_threshold: ColumnType<number, number | undefined, number>;
 }
 
 export interface AuditLogTable {

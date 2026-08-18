@@ -8,7 +8,13 @@ import { recordAudit } from "../audit/log";
 import { config } from "../config";
 import { getCurrentCertInfo, saveCertKeyPair, validateCertKeyPair } from "../tls/certUpload";
 import { getActiveHttpsServer } from "../tls/activeServer";
-import { getAppSettings, setHostRetentionDays, setRequireAdminTotp, setStaleScanThresholdMinutes } from "./appSettings";
+import {
+  getAppSettings,
+  setHostRetentionDays,
+  setRequireAdminTotp,
+  setScanQueueWarningThreshold,
+  setStaleScanThresholdMinutes,
+} from "./appSettings";
 import { runRetentionSweep } from "../retention";
 
 // Everything here is admin-only, like scanner agents/schedules/webhooks/
@@ -98,6 +104,7 @@ const appSettingsSchema = z.object({
   requireAdminTotp: z.boolean().optional(),
   hostRetentionDays: z.number().int().min(0).optional(),
   staleScanThresholdMinutes: z.number().int().min(1).optional(),
+  scanQueueWarningThreshold: z.number().int().min(1).optional(),
 });
 
 // The first admin to flip this on effectively binds every admin account
@@ -149,6 +156,19 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
     });
     recordAudit("settings.stale_scan_threshold_minutes_updated", req.session.username, req.ip, {
       stale_scan_threshold_minutes: parsed.data.staleScanThresholdMinutes,
+    });
+  }
+
+  if ("scanQueueWarningThreshold" in req.body && parsed.data.scanQueueWarningThreshold !== undefined) {
+    await setScanQueueWarningThreshold(parsed.data.scanQueueWarningThreshold);
+    logger.info({
+      event: "settings.scan_queue_warning_threshold_updated",
+      scan_queue_warning_threshold: parsed.data.scanQueueWarningThreshold,
+      updated_by: req.session.username,
+      source_ip: req.ip,
+    });
+    recordAudit("settings.scan_queue_warning_threshold_updated", req.session.username, req.ip, {
+      scan_queue_warning_threshold: parsed.data.scanQueueWarningThreshold,
     });
   }
 

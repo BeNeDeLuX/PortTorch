@@ -61,6 +61,7 @@ export interface FleetHealthData {
   latestRelease: ScannerReleaseInfo | null;
   scanQueue: QueuedScanRequest[];
   oldestQueuedMs: number;
+  queueWarningThreshold: number;
   agentsWithRetryBacklog: ScannerAgent[];
   totalRetryQueuePending: number;
   webserverCert: TlsCertificateInfo | null;
@@ -79,6 +80,10 @@ export function useFleetHealth(me: Me): FleetHealthData {
   const [activeScanJobs, setActiveScanJobs] = useState<ActiveScanJob[]>([]);
   const [scanQueue, setScanQueue] = useState<QueuedScanRequest[]>([]);
   const [webserverCert, setWebserverCert] = useState<TlsCertificateInfo | null>(null);
+  // How many pending requests before the queue counts as a "warning" -
+  // admin-editable (Settings page), defaults to 1 (today's behavior)
+  // until that first fetch resolves.
+  const [queueWarningThreshold, setQueueWarningThreshold] = useState(1);
 
   useEffect(() => {
     setLoading(true);
@@ -87,11 +92,13 @@ export function useFleetHealth(me: Me): FleetHealthData {
       api.agents(),
       api.latestScannerRelease().catch(() => null),
       me.role === "admin" ? api.tlsCertificate().catch(() => null) : Promise.resolve(null),
+      api.scanQueueThreshold().catch(() => null),
     ])
-      .then(([a, release, ws]) => {
+      .then(([a, release, ws, threshold]) => {
         setAgents(a);
         setLatestRelease(release);
         setWebserverCert(ws);
+        if (threshold) setQueueWarningThreshold(threshold.warningThreshold);
       })
       .catch(() => setError(true))
       .finally(() => setLoading(false));
@@ -141,8 +148,20 @@ export function useFleetHealth(me: Me): FleetHealthData {
 
   const oldestQueuedMs =
     scanQueue.length > 0 ? Math.max(...scanQueue.map((q) => Date.now() - new Date(q.created_at).getTime())) : 0;
+  // A single request stuck for 30+ min still escalates straight to
+  // critical regardless of queueWarningThreshold - that specifically
+  // means a scanner has stopped polling, not just "the queue is a bit
+  // busy," and staying below the count threshold shouldn't mask it. The
+  // count threshold only gates the milder "warning" tier, since a queue
+  // depth an admin has explicitly said is normal shouldn't page anyone.
   const queueStatus: HealthStatus =
-    scanQueue.length === 0 ? "ok" : oldestQueuedMs > STALE_QUEUE_THRESHOLD_MS ? "critical" : "warning";
+    scanQueue.length === 0
+      ? "ok"
+      : oldestQueuedMs > STALE_QUEUE_THRESHOLD_MS
+        ? "critical"
+        : scanQueue.length >= queueWarningThreshold
+          ? "warning"
+          : "ok";
 
   const webserverCertRawStatus = webserverCert ? certExpiryStatus(webserverCert.validTo) : "ok";
   const webserverCertStatus: HealthStatus =
@@ -187,6 +206,7 @@ export function useFleetHealth(me: Me): FleetHealthData {
     latestRelease,
     scanQueue,
     oldestQueuedMs,
+    queueWarningThreshold,
     agentsWithRetryBacklog,
     totalRetryQueuePending,
     webserverCert,

@@ -113,6 +113,16 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
                 new Date(Date.now() - health.oldestQueuedMs).toISOString()
               )} ago${health.oldestQueuedMs > STALE_QUEUE_THRESHOLD_MS ? " - target scanner may have stopped polling" : ""}`
             : "Nothing waiting"}
+          <br />
+          <span className="host-meta">
+            Warns at {health.queueWarningThreshold}+ pending
+            {me.role === "admin" && (
+              <>
+                {" "}
+                (<Link to="/settings">Settings</Link>)
+              </>
+            )}
+          </span>
         </HealthCard>
 
         <HealthCard to="/agents" title="Submission Retry Backlog" status={health.retryQueueStatus}>

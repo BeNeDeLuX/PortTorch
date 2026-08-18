@@ -35,6 +35,10 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
   const [savingStaleThreshold, setSavingStaleThreshold] = useState(false);
   const [staleThresholdError, setStaleThresholdError] = useState<string | null>(null);
 
+  const [queueThresholdInput, setQueueThresholdInput] = useState("");
+  const [savingQueueThreshold, setSavingQueueThreshold] = useState(false);
+  const [queueThresholdError, setQueueThresholdError] = useState<string | null>(null);
+
   useEffect(() => {
     load();
     api
@@ -43,6 +47,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
         setAppSettings(s);
         setRetentionDaysInput(String(s.hostRetentionDays));
         setStaleThresholdInput(String(s.staleScanThresholdMinutes));
+        setQueueThresholdInput(String(s.scanQueueWarningThreshold));
       })
       .catch(() => setAppSettings(null));
   }, []);
@@ -106,6 +111,26 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       setStaleThresholdError(err instanceof Error ? err.message : "Failed to update setting");
     } finally {
       setSavingStaleThreshold(false);
+    }
+  }
+
+  async function handleSaveQueueThreshold(e: FormEvent) {
+    e.preventDefault();
+    const count = parseInt(queueThresholdInput, 10);
+    if (Number.isNaN(count) || count < 1) {
+      setQueueThresholdError("Enter a whole number of pending requests, 1 or greater.");
+      return;
+    }
+    setQueueThresholdError(null);
+    setSavingQueueThreshold(true);
+    try {
+      const updated = await api.updateAppSettings({ scanQueueWarningThreshold: count });
+      setAppSettings(updated);
+      setQueueThresholdInput(String(updated.scanQueueWarningThreshold));
+    } catch (err) {
+      setQueueThresholdError(err instanceof Error ? err.message : "Failed to update setting");
+    } finally {
+      setSavingQueueThreshold(false);
     }
   }
 
@@ -306,6 +331,33 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
           />
           <span className="host-meta">minutes</span>
           <button type="submit" className="btn-icon-label" disabled={savingStaleThreshold}>
+            <IconSave /> Save
+          </button>
+        </form>
+      )}
+
+      <h3>Scan Queue Warning</h3>
+      <p className="host-meta">
+        Fleet Health's "Scan Queue" card (agents/queued requests still waiting to be claimed) warns once this many
+        requests are pending at once. A handful of queued requests is often normal during a busy period - raise this
+        if that's the case for your fleet. A single request stuck pending for 30+ minutes still escalates straight to
+        critical regardless of this setting, since that specifically suggests a scanner has stopped polling.
+      </p>
+
+      {queueThresholdError && <p className="error">{queueThresholdError}</p>}
+
+      {appSettings && (
+        <form className="inline-form" onSubmit={handleSaveQueueThreshold}>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={queueThresholdInput}
+            onChange={(e) => setQueueThresholdInput(e.target.value)}
+            aria-label="Scan queue warning threshold"
+          />
+          <span className="host-meta">pending requests</span>
+          <button type="submit" className="btn-icon-label" disabled={savingQueueThreshold}>
             <IconSave /> Save
           </button>
         </form>

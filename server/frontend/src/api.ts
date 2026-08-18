@@ -47,6 +47,7 @@ export interface AppSettings {
   requireAdminTotp: boolean;
   hostRetentionDays: number;
   staleScanThresholdMinutes: number;
+  scanQueueWarningThreshold: number;
 }
 
 export interface DashboardUser {
@@ -775,6 +776,9 @@ export const api = {
   activeScanJobs: () => request<ActiveScanJob[]>("/api/scan-jobs/active"),
   scanJobProgress: (id: string) => request<ScanJobProgress>(`/api/scan-jobs/${id}/progress`),
   scanQueue: () => request<QueuedScanRequest[]>("/api/scan-jobs/queue"),
+  // Not admin-gated, unlike appSettings()/updateAppSettings() below - see
+  // GET /api/scan-jobs/queue-threshold's own comment.
+  scanQueueThreshold: () => request<{ warningThreshold: number }>("/api/scan-jobs/queue-threshold"),
   dismissScanJob: (id: string) => request<void>(`/api/scan-jobs/${id}/dismiss`, { method: "POST" }),
   cancelScanJob: (id: string) => request<void>(`/api/scan-jobs/${id}/cancel`, { method: "POST" }),
   cancelQueuedScanRequest: (id: string) => request<void>(`/api/scan-jobs/queue/${id}/cancel`, { method: "POST" }),

@@ -282,6 +282,17 @@ scanJobsRouter.get("/:id/progress", asyncHandler(async (req, res) => {
 // and /history (finished) above - a scanner_agent_id can appear here even
 // while it also has a row in /active, which is exactly the "one more
 // request queued up behind the running one" case this exists to surface.
+// Not admin-gated (unlike PATCH /api/settings/app, which sets this) -
+// same "read-only hint value, no admin required" precedent as
+// GET /api/agents/latest-release - Fleet Health/the Dashboard's own
+// "needs attention" banner are visible to every role and need this value
+// to compute the Scan Queue card's status consistently for whoever's
+// looking, not just admins.
+scanJobsRouter.get("/queue-threshold", asyncHandler(async (_req, res) => {
+  const { scanQueueWarningThreshold } = await getAppSettings();
+  res.json({ warningThreshold: scanQueueWarningThreshold });
+}));
+
 scanJobsRouter.get("/queue", asyncHandler(async (req, res) => {
   const allowed = getAllowedScannerAgentIds(req);
   let queuedQuery = db
