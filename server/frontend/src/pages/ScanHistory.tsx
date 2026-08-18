@@ -133,8 +133,8 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
           <tbody>
             {items.map((s) => (
               <tr key={s.id}>
-                <td>{s.target_spec}</td>
-                <td className="port-spec-cell">{s.port_spec}</td>
+                <td className="spec-cell">{s.target_spec}</td>
+                <td className="spec-cell">{s.port_spec}</td>
                 <td>{s.scanner_agent_name ?? "?"}</td>
                 <td>
                   <span className={`scan-status scan-status-${s.status}`}>{s.status}</span>

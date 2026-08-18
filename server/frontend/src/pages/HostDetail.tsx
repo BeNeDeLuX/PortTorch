@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from "react-router";
 import { api, HostDetail as HostDetailData, HostFilters, Me, NSEProfileSelection, NucleiProfileSelection } from "../api";
 import { certExpiryStatus, certExpiryLabel } from "../lib/certExpiry";
 import { cveSeverityClass } from "../lib/cveSeverity";
+import { isAutoTag } from "../lib/knownServiceTags";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime, formatDateOnly } from "../lib/formatDate";
 import Lightbox, { LightboxItem } from "../components/Lightbox";
@@ -514,17 +515,24 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
 
       {(data.tags.length > 0 || canEdit) && (
         <div className="filter-chips">
-          {data.tags.map((tag) =>
-            canEdit ? (
-              <button key={tag} className="chip" onClick={() => handleRemoveTag(tag)}>
+          {data.tags.map((tag) => {
+            const auto = isAutoTag(tag);
+            const title = auto ? "Added automatically because this host was found running this service" : undefined;
+            return canEdit ? (
+              <button
+                key={tag}
+                className={`chip${auto ? " chip-auto" : ""}`}
+                title={title}
+                onClick={() => handleRemoveTag(tag)}
+              >
                 {tag} &times;
               </button>
             ) : (
-              <span key={tag} className="chip">
+              <span key={tag} className={`chip${auto ? " chip-auto" : ""}`} title={title}>
                 {tag}
               </span>
-            )
-          )}
+            );
+          })}
           {canEdit && (
             <form className="inline-form tag-form push-right" onSubmit={handleAddTag}>
               <input placeholder="Add tag..." value={newTag} onChange={(e) => setNewTag(e.target.value)} />

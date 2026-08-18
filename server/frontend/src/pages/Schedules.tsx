@@ -438,8 +438,8 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
   function sharedCells(s: Schedule) {
     return (
       <>
-        <td>{s.target_spec}</td>
-        <td>{s.port_spec}</td>
+        <td className="spec-cell">{s.target_spec}</td>
+        <td className="spec-cell">{s.port_spec}</td>
         <td>
           {s.schedule_type === "interval" ? (
             `every ${s.interval_minutes} min`
