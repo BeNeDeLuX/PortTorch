@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api, FleetNucleiFinding, Me } from "../api";
 import PageHeader from "../components/PageHeader";
+import TriageControl from "../components/TriageControl";
+import TableExport from "../components/TableExport";
 
 type SortKey = "host" | "port" | "template_id" | "severity";
 type SortDirection = "asc" | "desc";
@@ -41,6 +43,12 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [query, setQuery] = useState("");
   const [severityFilter, setSeverityFilter] = useState<string | null>(null);
+  // Hiding triaged findings is the whole point of triage - default on, so
+  // the page shows what still needs attention rather than everything ever
+  // found. Toggleable, since "what did we already dismiss, and why" is a
+  // real question too (e.g. reviewing a previous analyst's calls).
+  const [hideTriaged, setHideTriaged] = useState(true);
+  const canEdit = me.role === "admin" || me.role === "operator";
 
   useEffect(() => {
     load();
@@ -71,6 +79,7 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
 
   const trimmedQuery = query.trim().toLowerCase();
   const filtered = findings.filter((f) => {
+    if (hideTriaged && f.triage_state) return false;
     if (severityFilter && f.severity !== severityFilter) return false;
     if (!trimmedQuery) return true;
     return (
@@ -81,6 +90,7 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
     );
   });
   const sorted = [...filtered].sort((a, b) => compareFindings(a, b, sortKey, sortDirection));
+  const triagedCount = findings.filter((f) => f.triage_state).length;
 
   return (
     <div className="dashboard">
@@ -114,8 +124,35 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
               </button>
             ))}
           </div>
+          <div className="list-controls">
+            <label className="hide-empty-toggle">
+              <input type="checkbox" checked={hideTriaged} onChange={(e) => setHideTriaged(e.target.checked)} />
+              Hide triaged findings
+            </label>
+            <TableExport
+              rows={sorted}
+              filenameBase="porttorch-web-findings"
+              columns={[
+                { header: "host", value: (f) => f.host_hostname || f.host_ip },
+                { header: "host_ip", value: (f) => f.host_ip },
+                { header: "port", value: (f) => f.port },
+                { header: "template_id", value: (f) => f.template_id },
+                { header: "name", value: (f) => f.name },
+                { header: "severity", value: (f) => f.severity },
+                { header: "matched_at", value: (f) => f.matched_at },
+                { header: "description", value: (f) => f.description },
+                { header: "tags", value: (f) => (f.tags ?? []).join(" ") },
+                { header: "triage_state", value: (f) => f.triage_state },
+                { header: "triage_note", value: (f) => f.triage_note },
+                { header: "observed_at", value: (f) => f.observed_at },
+              ]}
+            />
+          </div>
           <p className="host-meta">
-            {query.trim() || severityFilter ? `${sorted.length} of ${findings.length} shown` : `${findings.length} total`}
+            {query.trim() || severityFilter || hideTriaged
+              ? `${sorted.length} of ${findings.length} shown`
+              : `${findings.length} total`}
+            {triagedCount > 0 && ` · ${triagedCount} triaged`}
           </p>
         </>
       )}
@@ -136,6 +173,7 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
               <th onClick={() => setSort("severity")}>Severity{sortIndicator("severity")}</th>
               <th>Matched at</th>
               <th>Description</th>
+              <th>Triage</th>
             </tr>
           </thead>
           <tbody>
@@ -151,6 +189,15 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
                 <td>{f.severity}</td>
                 <td className="banner">{f.matched_at}</td>
                 <td className="audit-details">{f.description}</td>
+                <td>
+                  <TriageControl
+                    target={{ kind: "nuclei", hostId: f.host_id, templateId: f.template_id, matchedAt: f.matched_at }}
+                    state={f.triage_state}
+                    note={f.triage_note}
+                    canEdit={canEdit}
+                    onChanged={load}
+                  />
+                </td>
               </tr>
             ))}
           </tbody>

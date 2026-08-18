@@ -20,6 +20,17 @@ nucleiFindingsRouter.get("/", asyncHandler(async (req, res) => {
   let query = db
     .selectFrom("nuclei_findings")
     .innerJoin("hosts", "hosts.id", "nuclei_findings.host_id")
+    // Left join: an untriaged finding (the normal case - only deliberate
+    // exceptions get a finding_triage row) still comes back, with a null
+    // state meaning "open". Keyed on the same (host, template, matched_at)
+    // identity this query already dedups on.
+    .leftJoin("finding_triage", (join) =>
+      join
+        .onRef("finding_triage.host_id", "=", "nuclei_findings.host_id")
+        .onRef("finding_triage.template_id", "=", "nuclei_findings.template_id")
+        .onRef("finding_triage.matched_at", "=", "nuclei_findings.matched_at")
+        .on("finding_triage.kind", "=", "nuclei")
+    )
     .select([
       "nuclei_findings.id as id",
       "hosts.id as host_id",
@@ -35,6 +46,8 @@ nucleiFindingsRouter.get("/", asyncHandler(async (req, res) => {
       "nuclei_findings.tags as tags",
       "nuclei_findings.curl_command as curl_command",
       "nuclei_findings.observed_at as observed_at",
+      "finding_triage.state as triage_state",
+      "finding_triage.note as triage_note",
     ])
     .distinctOn(["nuclei_findings.host_id", "nuclei_findings.template_id", "nuclei_findings.matched_at"])
     .orderBy("nuclei_findings.host_id")

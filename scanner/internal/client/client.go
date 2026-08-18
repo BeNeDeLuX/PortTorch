@@ -525,6 +525,11 @@ type ScanRequest struct {
 	NSEScripts    []string
 	NucleiProfile string
 	NucleiTags    []string
+	// Per-scan override of the scanner's own configured masscanRate - nil
+	// means "no override", i.e. keep using config.yaml's value. A pointer
+	// rather than an int so "not set" is distinguishable from a literal 0,
+	// which would otherwise silently look like a request for rate 0.
+	MasscanRate *int
 }
 
 // PollNextScanRequest asks the webserver for the next pending scan request
@@ -559,6 +564,7 @@ func (c *Client) PollNextScanRequest(ctx context.Context) (*ScanRequest, error) 
 		NSEScripts    []string `json:"nseScripts"`
 		NucleiProfile string   `json:"nucleiProfile"`
 		NucleiTags    []string `json:"nucleiTags"`
+		MasscanRate   *int     `json:"masscanRate"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, fmt.Errorf("decoding scan request: %w", err)
@@ -567,6 +573,7 @@ func (c *Client) PollNextScanRequest(ctx context.Context) (*ScanRequest, error) 
 		ID: out.ID, TargetSpec: out.TargetSpec, PortSpec: out.PortSpec,
 		NSEProfile: out.NSEProfile, NSEScripts: out.NSEScripts,
 		NucleiProfile: out.NucleiProfile, NucleiTags: out.NucleiTags,
+		MasscanRate: out.MasscanRate,
 	}, nil
 }
 

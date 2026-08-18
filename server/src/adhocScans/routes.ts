@@ -46,6 +46,10 @@ const createAdhocScanSchema = z.object({
   // and automatically becomes the TLS SNI/screenshot hostname too, no
   // separate field needed.
   portSpec: z.string().trim().min(1),
+  // Optional per-scan override of the scanner's own configured
+  // masscanRate - omitted/null means the scanner keeps using its config
+  // value, so this never changes behavior for anyone who doesn't set it.
+  masscanRate: z.number().int().min(1).max(10_000_000).optional(),
   profile: nseProfileSelectionSchema.optional(),
   nucleiProfile: nucleiProfileSelectionSchema.optional(),
 });
@@ -118,6 +122,7 @@ adhocScansRouter.post(
         nuclei_profile: resolvedNucleiProfile.nucleiProfile,
         nuclei_tags: resolvedNucleiProfile.nucleiTags,
         nuclei_profile_label: resolvedNucleiProfile.nucleiProfileLabel,
+        masscan_rate: parsed.data.masscanRate ?? null,
       })
       .returning(["id", "created_at", "nse_profile_label", "nuclei_profile_label"])
       .executeTakeFirstOrThrow();

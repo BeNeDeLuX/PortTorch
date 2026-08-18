@@ -3,6 +3,8 @@ import { Link } from "react-router";
 import { api, FleetVulnerability, Me } from "../api";
 import { cveSeverityClass } from "../lib/cveSeverity";
 import PageHeader from "../components/PageHeader";
+import TriageControl from "../components/TriageControl";
+import TableExport from "../components/TableExport";
 
 type SortKey = "host" | "port" | "cve_id" | "cvss_score" | "epss_score" | "kev";
 type SortDirection = "asc" | "desc";
@@ -51,6 +53,10 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
   const [query, setQuery] = useState("");
   const [severityFilter, setSeverityFilter] = useState<string | null>(null);
   const [kevOnly, setKevOnly] = useState(false);
+  // Default on - see WebFindings.tsx for the same reasoning: the page
+  // should show what still needs a decision, not every CVE ever matched.
+  const [hideTriaged, setHideTriaged] = useState(true);
+  const canEdit = me.role === "admin" || me.role === "operator";
 
   useEffect(() => {
     load();
@@ -81,6 +87,7 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
 
   const trimmedQuery = query.trim().toLowerCase();
   const filteredVulns = vulns.filter((v) => {
+    if (hideTriaged && v.triage_state) return false;
     if (severityFilter && severityOf(v) !== severityFilter) return false;
     if (kevOnly && !v.kev_date_added) return false;
     if (!trimmedQuery) return true;
@@ -92,6 +99,7 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
     );
   });
   const sortedVulns = [...filteredVulns].sort((a, b) => compareVulns(a, b, sortKey, sortDirection));
+  const triagedCount = vulns.filter((v) => v.triage_state).length;
 
   return (
     <div className="dashboard">
@@ -134,8 +142,35 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
               Known Exploited (CISA KEV)
             </button>
           </div>
+          <div className="list-controls">
+            <label className="hide-empty-toggle">
+              <input type="checkbox" checked={hideTriaged} onChange={(e) => setHideTriaged(e.target.checked)} />
+              Hide triaged findings
+            </label>
+            <TableExport
+              rows={sortedVulns}
+              filenameBase="porttorch-vulnerabilities"
+              columns={[
+                { header: "host", value: (v) => v.host_hostname || v.host_ip },
+                { header: "host_ip", value: (v) => v.host_ip },
+                { header: "port", value: (v) => v.port },
+                { header: "cve_id", value: (v) => v.cve_id },
+                { header: "cvss_score", value: (v) => v.cvss_score },
+                { header: "cvss_severity", value: (v) => v.cvss_severity },
+                { header: "epss_score", value: (v) => v.epss_score },
+                { header: "kev_date_added", value: (v) => v.kev_date_added },
+                { header: "kev_ransomware", value: (v) => v.kev_known_ransomware_campaign_use },
+                { header: "description", value: (v) => v.description },
+                { header: "triage_state", value: (v) => v.triage_state },
+                { header: "triage_note", value: (v) => v.triage_note },
+              ]}
+            />
+          </div>
           <p className="host-meta">
-            {query.trim() || severityFilter || kevOnly ? `${sortedVulns.length} of ${vulns.length} shown` : `${vulns.length} total`}
+            {query.trim() || severityFilter || kevOnly || hideTriaged
+              ? `${sortedVulns.length} of ${vulns.length} shown`
+              : `${vulns.length} total`}
+            {triagedCount > 0 && ` · ${triagedCount} triaged`}
           </p>
         </>
       )}
@@ -157,6 +192,7 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
               <th onClick={() => setSort("epss_score")}>EPSS{sortIndicator("epss_score")}</th>
               <th onClick={() => setSort("kev")}>KEV{sortIndicator("kev")}</th>
               <th>Description</th>
+              <th>Triage</th>
             </tr>
           </thead>
           <tbody>
@@ -194,6 +230,15 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
                   )}
                 </td>
                 <td className="audit-details">{v.description}</td>
+                <td>
+                  <TriageControl
+                    target={{ kind: "cve", hostId: v.host_id, cveId: v.cve_id }}
+                    state={v.triage_state}
+                    note={v.triage_note}
+                    canEdit={canEdit}
+                    onChanged={load}
+                  />
+                </td>
               </tr>
             ))}
           </tbody>

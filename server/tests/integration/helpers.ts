@@ -92,6 +92,7 @@ export interface SessionClient {
   get(path: string): request.Test;
   post(path: string): request.Test;
   patch(path: string): request.Test;
+  put(path: string): request.Test;
   delete(path: string): request.Test;
 }
 
@@ -123,6 +124,7 @@ export async function loginAs(username: string, password: string): Promise<Sessi
     get: (path: string) => request(getApp()).get(path).set("Cookie", cookie),
     post: (path: string) => request(getApp()).post(path).set("Cookie", cookie),
     patch: (path: string) => request(getApp()).patch(path).set("Cookie", cookie),
+    put: (path: string) => request(getApp()).put(path).set("Cookie", cookie),
     delete: (path: string) => request(getApp()).delete(path).set("Cookie", cookie),
   };
 }

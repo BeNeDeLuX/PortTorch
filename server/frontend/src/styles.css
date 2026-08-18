@@ -694,6 +694,68 @@ button.export-link {
   color: #04150b;
 }
 
+/* Finding triage (Vulnerabilities / Web Findings) - a triaged finding
+   stays visible but visibly de-emphasized, so "we already decided about
+   this one" reads differently from an untriaged finding at a glance,
+   without hiding the state itself. Colors are reused status tokens rather
+   than new ones: false positive and fixed are both "resolved" outcomes
+   (--success), accepted risk is a deliberate, still-live exposure
+   (--warning). */
+.triage-control {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.triage-select {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  padding: 0.2rem 0.3rem;
+  font-size: 0.8rem;
+  font-family: inherit;
+}
+
+.triage-select.triage-false_positive,
+.triage-select.triage-fixed {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.triage-select.triage-accepted_risk {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+.triage-badge {
+  font-size: 0.75rem;
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid currentColor;
+}
+
+.triage-badge.triage-false_positive,
+.triage-badge.triage-fixed {
+  color: var(--success);
+}
+
+.triage-badge.triage-accepted_risk {
+  color: var(--warning);
+}
+
+/* The note is context, not the primary content of the cell - truncated
+   with the full text on hover (title), same treatment as .banner. */
+.triage-note {
+  color: var(--muted);
+  font-size: 0.75rem;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Host Detail's tag chips - a tag server/src/lib/serviceTags.ts auto-adds
    based on a detected open service (WebServer, SSH-Server, ...) gets a
    dashed border instead of solid, so it reads visibly different from a

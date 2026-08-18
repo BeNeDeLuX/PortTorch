@@ -266,6 +266,10 @@ const adhocScanSchema = z.object({
   portSpec: z.string().trim().min(1),
   profile: z.string().min(1).optional(),
   nucleiProfile: z.string().min(1).optional(),
+  // Optional per-scan override of the scanner's own configured
+  // masscanRate - omitted/null means the scanner keeps using its config
+  // value, so this never changes behavior for anyone who doesn't set it.
+  masscanRate: z.number().int().min(1).max(10_000_000).optional(),
 });
 
 // Ad-hoc Scans' External API counterpart - the one route in this router
@@ -342,6 +346,7 @@ integrationsRouter.post("/scans/adhoc", asyncHandler(async (req, res) => {
       nuclei_profile: nucleiResolution.nucleiProfile,
       nuclei_tags: nucleiResolution.nucleiTags,
       nuclei_profile_label: nucleiResolution.nucleiProfileLabel,
+      masscan_rate: parsed.data.masscanRate ?? null,
     })
     .returning(["id", "status", "created_at"])
     .executeTakeFirstOrThrow();

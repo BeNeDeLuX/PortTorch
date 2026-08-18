@@ -38,6 +38,7 @@ schedulesRouter.get("/", asyncHandler(async (req, res) => {
       "scan_schedules.nuclei_profile as nuclei_profile",
       "scan_schedules.nuclei_tags as nuclei_tags",
       "scan_schedules.nuclei_profile_label as nuclei_profile_label",
+      "scan_schedules.masscan_rate as masscan_rate",
       "scanner_agents.name as scanner_agent_name",
     ]);
 
@@ -69,6 +70,9 @@ const baseScheduleFields = {
   profile: nseProfileSelectionSchema.optional(),
   // Omitted = Off, same discipline - independent of the NSE profile above.
   nucleiProfile: nucleiProfileSelectionSchema.optional(),
+  // Optional per-scan masscan packet-rate override; omitted/null means
+  // the target scanner keeps using its own configured masscanRate.
+  masscanRate: z.number().int().min(1).max(10_000_000).optional(),
 };
 
 const createScheduleSchema = z.discriminatedUnion("scheduleType", [
@@ -151,6 +155,7 @@ schedulesRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
       nuclei_profile: resolvedNucleiProfile.nucleiProfile,
       nuclei_tags: resolvedNucleiProfile.nucleiTags,
       nuclei_profile_label: resolvedNucleiProfile.nucleiProfileLabel,
+      masscan_rate: parsed.data.masscanRate ?? null,
       created_by: req.session.username ?? null,
     })
     .returning(["id"])
@@ -200,6 +205,9 @@ const updateScheduleSchema = z.object({
   // field here.
   profile: nseProfileSelectionSchema.optional(),
   nucleiProfile: nucleiProfileSelectionSchema.optional(),
+  // Optional per-scan masscan packet-rate override; omitted/null means
+  // the target scanner keeps using its own configured masscanRate.
+  masscanRate: z.number().int().min(1).max(10_000_000).optional(),
 });
 
 schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
@@ -372,6 +380,7 @@ schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
             nuclei_profile_label: resolvedNucleiProfile.nucleiProfileLabel,
           }
         : {}),
+      ...(parsed.data.masscanRate !== undefined ? { masscan_rate: parsed.data.masscanRate } : {}),
     })
     .where("id", "=", req.params.id)
     .executeTakeFirst();

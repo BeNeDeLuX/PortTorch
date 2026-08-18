@@ -46,6 +46,7 @@ async function tick(): Promise<void> {
           nuclei_profile: schedule.nuclei_profile,
           nuclei_tags: schedule.nuclei_tags,
           nuclei_profile_label: schedule.nuclei_profile_label,
+          masscan_rate: schedule.masscan_rate,
         })
         .execute();
 

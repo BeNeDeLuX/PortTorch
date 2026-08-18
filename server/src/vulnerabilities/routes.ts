@@ -33,6 +33,8 @@ vulnerabilitiesRouter.get("/", asyncHandler(async (req, res) => {
     // toDateOnlyString, applied below before this ever reaches res.json.
     kev_date_added: Date | string | null;
     kev_known_ransomware_campaign_use: string | null;
+    triage_state: string | null;
+    triage_note: string | null;
   }>`
     SELECT DISTINCT
       h.id AS host_id,
@@ -46,7 +48,9 @@ vulnerabilitiesRouter.get("/", asyncHandler(async (req, res) => {
       ec.epss AS epss_score,
       ec.percentile AS epss_percentile,
       kc.date_added AS kev_date_added,
-      kc.known_ransomware_campaign_use AS kev_known_ransomware_campaign_use
+      kc.known_ransomware_campaign_use AS kev_known_ransomware_campaign_use,
+      ft.state AS triage_state,
+      ft.note AS triage_note
     FROM current_host_ports chp
     JOIN hosts h ON h.id = chp.host_id
     JOIN cve_cache cc ON cc.cpe = ANY(chp.cpes)
@@ -58,6 +62,11 @@ vulnerabilitiesRouter.get("/", asyncHandler(async (req, res) => {
     -- Left, not inner, for the same reason - most CVEs are never added to
     -- CISA's KEV catalog at all, which is the normal case, not an error.
     LEFT JOIN kev_cache kc ON kc.cve_id = cve_elem->>'id'
+    -- Left, so an untriaged CVE (the overwhelming majority - see the
+    -- finding_triage migration on why only exceptions get a row) still
+    -- comes back, just with a null state meaning "open".
+    LEFT JOIN finding_triage ft
+      ON ft.kind = 'cve' AND ft.host_id = h.id AND ft.cve_id = cve_elem->>'id'
     WHERE chp.state = 'open'
     ${restriction}
   `.execute(db);

@@ -21,6 +21,7 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
   const [portSpec, setPortSpec] = useState("");
   const [profile, setProfile] = useState<NSEProfileSelection>({ kind: "default" });
   const [nucleiProfile, setNucleiProfile] = useState<NucleiProfileSelection>({ kind: "off" });
+  const [masscanRate, setMasscanRate] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,12 +59,14 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
         portSpec: portSpec.trim(),
         profile,
         nucleiProfile,
+        ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
       });
       setLastResult(result);
       setTargetSpec("");
       setPortSpec("");
       setProfile({ kind: "default" });
       setNucleiProfile({ kind: "off" });
+      setMasscanRate("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to queue scan");
     } finally {
@@ -121,6 +124,20 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
             Nuclei profile
             <NucleiProfilePicker value={nucleiProfile} onChange={setNucleiProfile} />
           </label>
+          <label>
+            Scan rate (optional)
+            <input
+              type="number"
+              min={1}
+              placeholder="scanner default"
+              value={masscanRate}
+              onChange={(e) => setMasscanRate(e.target.value)}
+            />
+          </label>
+          <p className="empty">
+            Packets per second for the masscan discovery pass. Leave blank to use whatever the chosen scanner has
+            configured (default 1000). Lower it for fragile or sensitive network segments; only affects this scan.
+          </p>
 
           <button type="submit" className="btn-icon-label" disabled={submitting}>
             <IconPlay /> {submitting ? "Queuing..." : "Start scan"}

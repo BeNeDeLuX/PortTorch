@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { api, ExpiringCertificate, Me } from "../api";
 import { certExpiryStatus, certExpiryLabel } from "../lib/certExpiry";
 import PageHeader from "../components/PageHeader";
+import TableExport from "../components/TableExport";
 import { formatDateOnly } from "../lib/formatDate";
 
 type SortKey = "host" | "port" | "subject_cn" | "issuer_cn" | "not_after" | "status";
@@ -105,6 +106,22 @@ export default function Certificates({ me, onLogout }: { me: Me; onLogout: () =>
                 Only expired certificates
               </label>
             </div>
+            <TableExport
+              rows={sortedCerts}
+              filenameBase="porttorch-certificates"
+              columns={[
+                { header: "host", value: (c) => c.host_hostname || c.host_ip },
+                { header: "host_ip", value: (c) => c.host_ip },
+                { header: "port", value: (c) => c.port },
+                { header: "subject_cn", value: (c) => c.subject_cn },
+                { header: "issuer_cn", value: (c) => c.issuer_cn },
+                { header: "self_signed", value: (c) => String(c.self_signed) },
+                { header: "not_before", value: (c) => c.not_before },
+                { header: "not_after", value: (c) => c.not_after },
+                { header: "status", value: (c) => certExpiryStatus(c.not_after) },
+                { header: "fingerprint_sha256", value: (c) => c.fingerprint_sha256 },
+              ]}
+            />
           </div>
           <p className="host-meta">
             {query.trim() || onlyExpired ? `${sortedCerts.length} of ${certs.length} shown` : `${certs.length} total`}

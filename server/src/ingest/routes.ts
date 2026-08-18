@@ -862,6 +862,7 @@ ingestRouter.get("/scan-requests/next", asyncHandler(async (req, res) => {
     nse_scripts: string[] | null;
     nuclei_profile: string;
     nuclei_tags: string[] | null;
+    masscan_rate: number | null;
   }>`
     UPDATE scan_requests
     SET status = 'claimed', claimed_at = now()
@@ -872,7 +873,7 @@ ingestRouter.get("/scan-requests/next", asyncHandler(async (req, res) => {
       FOR UPDATE SKIP LOCKED
       LIMIT 1
     )
-    RETURNING id, target_spec, port_spec, nse_profile, nse_scripts, nuclei_profile, nuclei_tags
+    RETURNING id, target_spec, port_spec, nse_profile, nse_scripts, nuclei_profile, nuclei_tags, masscan_rate
   `.execute(db);
 
   const next = claimed.rows[0];
@@ -900,6 +901,8 @@ ingestRouter.get("/scan-requests/next", asyncHandler(async (req, res) => {
     nseScripts: next.nse_scripts,
     nucleiProfile: next.nuclei_profile,
     nucleiTags: next.nuclei_tags,
+    // null = the scanner keeps using its own configured masscanRate.
+    masscanRate: next.masscan_rate,
   });
 }));
 

@@ -165,7 +165,7 @@ func (s *Server) handleCreateScan(c echo.Context) error {
 	// webserver's scan_requests queue entirely) has no scan-profile
 	// concept - always runs DefaultNSEScripts and never runs nuclei, same
 	// as before nuclei existed.
-	go s.runScan(jobID, req.Target, req.Ports, nil, nil, state)
+	go s.runScan(jobID, req.Target, req.Ports, nil, nil, nil, state)
 
 	return c.JSON(http.StatusAccepted, map[string]string{"id": jobID, "status": "running"})
 }
@@ -322,7 +322,7 @@ func (s *Server) pollOnce(ctx context.Context) {
 	s.scans[jobID] = state
 	s.mu.Unlock()
 
-	s.runScan(jobID, scanReq.TargetSpec, scanReq.PortSpec, resolveNSEScripts(scanReq.NSEProfile, scanReq.NSEScripts), resolveNucleiProfile(scanReq.NucleiProfile, scanReq.NucleiTags), state)
+	s.runScan(jobID, scanReq.TargetSpec, scanReq.PortSpec, resolveNSEScripts(scanReq.NSEProfile, scanReq.NSEScripts), resolveNucleiProfile(scanReq.NucleiProfile, scanReq.NucleiTags), scanReq.MasscanRate, state)
 
 	snapshot := state.snapshot()
 	completeCtx, completeCancel := context.WithTimeout(context.Background(), timeoutCreateJob)
@@ -384,7 +384,7 @@ func resolveNucleiProfile(profile string, tags []string) *pipeline.NucleiProfile
 // cancellable=true (handleCreateScan, pollOnce) - callers that don't
 // (main.go, tui/commands.go) never register anything here, but registering
 // unconditionally is harmless and keeps this function the same for both.
-func (s *Server) runScan(jobID, target, ports string, nseScripts []string, nucleiProfile *pipeline.NucleiProfile, state *scanState) {
+func (s *Server) runScan(jobID, target, ports string, nseScripts []string, nucleiProfile *pipeline.NucleiProfile, masscanRate *int, state *scanState) {
 	start := time.Now()
 	s.logger.Info("scan started", "event", "scan.started", "scan_job_id", jobID, "target", target, "ports", ports)
 
@@ -437,7 +437,16 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, nucle
 	tracker := progress.NewTracker(s.client, jobID, progress.DefaultPushInterval)
 	defer tracker.Close()
 
-	result, err := pipeline.RunScan(scanCtx, s.pcfg, target, ports, excludes, probeHostnames, nseScripts, nucleiProfile,
+	// A per-scan rate override applies to this scan only - s.pcfg is
+	// copied (Config is a plain struct passed by value), never mutated, so
+	// a slow one-off scan can't quietly re-rate every later scan this
+	// long-running serve process handles.
+	scanCfg := s.pcfg
+	if masscanRate != nil && *masscanRate > 0 {
+		scanCfg.MasscanRate = *masscanRate
+	}
+
+	result, err := pipeline.RunScan(scanCtx, scanCfg, target, ports, excludes, probeHostnames, nseScripts, nucleiProfile,
 		func(stage, message string) {
 			state.appendLog("[" + stage + "] " + message)
 			s.logger.Info(message, "event", "scan.progress", "scan_job_id", jobID, "stage", stage)

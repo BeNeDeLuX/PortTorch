@@ -31,6 +31,7 @@ import { savedSearchesRouter } from "./savedSearches/routes";
 import { scanProfilesRouter } from "./scanProfiles/routes";
 import { nucleiProfilesRouter } from "./nucleiProfiles/routes";
 import { nucleiFindingsRouter } from "./nucleiFindings/routes";
+import { findingTriageRouter } from "./findingTriage/routes";
 import { settingsRouter } from "./settings/routes";
 
 // Pure Express app construction, split out from index.ts so integration
@@ -85,6 +86,7 @@ export function buildApp() {
   app.use("/api/scan-profiles", scanProfilesRouter);
   app.use("/api/nuclei-profiles", nucleiProfilesRouter);
   app.use("/api/nuclei-findings", nucleiFindingsRouter);
+  app.use("/api/finding-triage", findingTriageRouter);
   app.use("/api/settings", settingsRouter);
   // External/SOAR-facing API - own auth chain (tokenAuth), not session auth.
   app.use("/api/v1", integrationsRouter);

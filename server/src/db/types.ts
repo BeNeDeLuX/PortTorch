@@ -302,6 +302,9 @@ export interface ScanSchedulesTable {
   nuclei_profile: ColumnType<"off" | "safe" | "custom", "off" | "safe" | "custom" | undefined, "off" | "safe" | "custom">;
   nuclei_tags: string[] | null;
   nuclei_profile_label: string | null;
+  // NULL = use the scanner's own configured masscanRate (see the
+  // scan_masscan_rate migration).
+  masscan_rate: number | null;
 }
 
 export interface ScanRequestsTable {
@@ -327,6 +330,9 @@ export interface ScanRequestsTable {
   nuclei_profile: ColumnType<"off" | "safe" | "custom", "off" | "safe" | "custom" | undefined, "off" | "safe" | "custom">;
   nuclei_tags: string[] | null;
   nuclei_profile_label: string | null;
+  // Same NULL-means-scanner-default semantics as ScanSchedulesTable's own
+  // column; snapshotted from the schedule when scheduler.ts spawns a run.
+  masscan_rate: number | null;
 }
 
 export interface ScanProfilesTable {
@@ -363,6 +369,28 @@ export interface NucleiFindingsTable {
   tags: string[] | null;
   curl_command: string | null;
   observed_at: ColumnType<Date, string | undefined, never>;
+}
+
+// Triage state for a security finding - see the finding_triage migration
+// for why this is its own table rather than a column on the finding.
+// Absence of a row means "open"/untriaged; only deliberate exceptions are
+// stored here.
+export type TriageState = "false_positive" | "accepted_risk" | "fixed";
+
+export interface FindingTriageTable {
+  id: Generated<string>;
+  kind: "cve" | "nuclei";
+  host_id: string;
+  // Exactly one identity shape is set, per the table's own CHECK: cve_id
+  // for kind='cve', template_id+matched_at for kind='nuclei'.
+  cve_id: string | null;
+  template_id: string | null;
+  matched_at: string | null;
+  state: TriageState;
+  note: string | null;
+  created_by: string | null;
+  created_at: ColumnType<Date, string | undefined, never>;
+  updated_at: ColumnType<Date, string | undefined, string>;
 }
 
 export interface TlsCertificatesTable {
@@ -603,6 +631,7 @@ export interface Database {
   scan_profiles: ScanProfilesTable;
   nuclei_profiles: NucleiProfilesTable;
   nuclei_findings: NucleiFindingsTable;
+  finding_triage: FindingTriageTable;
   scanner_release_cache: ScannerReleaseCacheTable;
   webserver_tls_alert_state: WebserverTlsAlertStateTable;
   app_settings: AppSettingsTable;

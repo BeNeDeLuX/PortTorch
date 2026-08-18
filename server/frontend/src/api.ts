@@ -318,6 +318,23 @@ export interface TrendsResult {
   }>;
 }
 
+// Triage state for a security finding - null/absent means untriaged
+// ("open"). See the finding_triage migration for why only deliberate
+// exceptions are stored server-side.
+export type TriageState = "false_positive" | "accepted_risk" | "fixed";
+
+export const TRIAGE_LABEL: Record<TriageState, string> = {
+  false_positive: "False positive",
+  accepted_risk: "Accepted risk",
+  fixed: "Fixed",
+};
+
+// The identity each finding kind is triaged by - matches what the server
+// already treats as that kind's identity (see findingTriage/routes.ts).
+export type TriageTarget =
+  | { kind: "cve"; hostId: string; cveId: string }
+  | { kind: "nuclei"; hostId: string; templateId: string; matchedAt: string };
+
 export interface FleetVulnerability {
   host_id: string;
   host_ip: string;
@@ -335,6 +352,8 @@ export interface FleetVulnerability {
   // probability.
   kev_date_added: string | null;
   kev_known_ransomware_campaign_use: string | null;
+  triage_state: TriageState | null;
+  triage_note: string | null;
 }
 
 export interface ExpiringCertificate {
@@ -577,6 +596,8 @@ export interface FleetNucleiFinding extends NucleiFinding {
   host_id: string;
   host_ip: string;
   host_hostname: string | null;
+  triage_state: TriageState | null;
+  triage_note: string | null;
 }
 
 export interface Schedule {
@@ -600,6 +621,8 @@ export interface Schedule {
   nuclei_profile: "off" | "safe" | "custom";
   nuclei_tags: string[] | null;
   nuclei_profile_label: string | null;
+  // null = the target scanner uses its own configured masscanRate.
+  masscan_rate: number | null;
 }
 
 export interface AdhocScanResult {
@@ -815,7 +838,7 @@ export const api = {
       | { scheduleType: "interval"; scannerAgentId: string; targetSpec: string; portSpec: string; intervalMinutes: number }
       | { scheduleType: "cron"; scannerAgentId: string; targetSpec: string; portSpec: string; cronExpression: string }
       | { scheduleType: "once"; scannerAgentId: string; targetSpec: string; portSpec: string; runAt: string }
-    ) & { profile?: NSEProfileSelection; nucleiProfile?: NucleiProfileSelection }
+    ) & { profile?: NSEProfileSelection; nucleiProfile?: NucleiProfileSelection; masscanRate?: number }
   ) => request<{ id: string }>("/api/schedules", { method: "POST", body: JSON.stringify(input) }),
   setScheduleEnabled: (id: string, enabled: boolean) =>
     request<void>(`/api/schedules/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
@@ -830,6 +853,7 @@ export const api = {
       runAt?: string;
       profile?: NSEProfileSelection;
       nucleiProfile?: NucleiProfileSelection;
+      masscanRate?: number;
     }
   ) => request<void>(`/api/schedules/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteSchedule: (id: string) => request<void>(`/api/schedules/${id}`, { method: "DELETE" }),
@@ -840,6 +864,8 @@ export const api = {
     portSpec: string;
     profile?: NSEProfileSelection;
     nucleiProfile?: NucleiProfileSelection;
+    // Omitted = the target scanner keeps using its own configured rate.
+    masscanRate?: number;
   }) => request<AdhocScanResult>("/api/adhoc-scans", { method: "POST", body: JSON.stringify(input) }),
 
   scanProfiles: () => request<ScanProfile[]>("/api/scan-profiles"),
@@ -861,6 +887,13 @@ export const api = {
   ) => request<NucleiProfile>(`/api/nuclei-profiles/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteNucleiProfile: (id: string) => request<void>(`/api/nuclei-profiles/${id}`, { method: "DELETE" }),
   nucleiFindings: () => request<FleetNucleiFinding[]>("/api/nuclei-findings"),
+  setFindingTriage: (target: TriageTarget, state: TriageState, note?: string) =>
+    request<{ id: string; state: TriageState; note: string | null }>("/api/finding-triage", {
+      method: "PUT",
+      body: JSON.stringify({ ...target, state, note }),
+    }),
+  clearFindingTriage: (target: TriageTarget) =>
+    request<void>("/api/finding-triage", { method: "DELETE", body: JSON.stringify(target) }),
 
   tlsCertificate: () => request<TlsCertificateInfo>("/api/settings/tls-certificate"),
   // Bypasses request()'s JSON-only helper - a multipart body needs the

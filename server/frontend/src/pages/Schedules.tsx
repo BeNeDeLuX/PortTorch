@@ -179,6 +179,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
   // a schedule's stored nuclei profile is its own separate snapshot.
   const [nucleiProfile, setNucleiProfile] = useState<NucleiProfileSelection>({ kind: "off" });
   const [nucleiProfileTouched, setNucleiProfileTouched] = useState(false);
+  const [masscanRate, setMasscanRate] = useState("");
   const [editingNucleiProfileLabel, setEditingNucleiProfileLabel] = useState<string | null>(null);
   const [scheduleType, setScheduleType] = useState<"interval" | "cron" | "once">("interval");
   const [intervalMinutes, setIntervalMinutes] = useState(60);
@@ -265,6 +266,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     setNucleiProfile({ kind: "off" });
     setNucleiProfileTouched(false);
     setEditingNucleiProfileLabel(null);
+    setMasscanRate("");
     setScheduleType("interval");
     setIntervalMinutes(60);
     setRepeatMode("daily");
@@ -296,6 +298,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     setNucleiProfile({ kind: s.nuclei_profile === "custom" ? "off" : s.nuclei_profile });
     setNucleiProfileTouched(false);
     setEditingNucleiProfileLabel(s.nuclei_profile_label);
+    setMasscanRate(s.masscan_rate != null ? String(s.masscan_rate) : "");
     setScheduleType(s.schedule_type);
 
     if (s.schedule_type === "interval") {
@@ -336,6 +339,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         scannerAgentId,
         ...(profileTouched ? { profile } : {}),
         ...(nucleiProfileTouched ? { nucleiProfile } : {}),
+        ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
       };
       if (scheduleType === "interval") {
         await api.updateSchedule(editingId, { ...base, intervalMinutes });
@@ -362,6 +366,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         intervalMinutes,
         profile,
         nucleiProfile,
+        ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
       });
     } else if (scheduleType === "once") {
       if (!runAt) return;
@@ -379,6 +384,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         runAt: zonedDateTimeToUtcIso(datePart, timePart, timezone),
         profile,
         nucleiProfile,
+        ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
       });
     } else {
       const cronExpression = advancedCron ? rawCronExpression.trim() : generatedCron;
@@ -391,6 +397,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         cronExpression,
         profile,
         nucleiProfile,
+        ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
       });
     }
     setTargetSpec("");
@@ -400,6 +407,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     setProfileTouched(false);
     setNucleiProfile({ kind: "off" });
     setNucleiProfileTouched(false);
+    setMasscanRate("");
     await load();
   }
 
@@ -549,6 +557,16 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
               this schedule's existing nuclei profile untouched.
             </p>
           )}
+          <label>
+            Scan rate (optional)
+            <input
+              type="number"
+              min={1}
+              placeholder="scanner default"
+              value={masscanRate}
+              onChange={(e) => setMasscanRate(e.target.value)}
+            />
+          </label>
           <label>
             Schedule type
             <select
