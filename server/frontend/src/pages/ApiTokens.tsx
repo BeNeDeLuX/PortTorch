@@ -105,9 +105,10 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
 
       <h2>API Tokens</h2>
       <p className="host-meta">
-        For external tools (SOAR, enrichment, ticketing) to query host data and trigger rescans via the REST API -
-        see <code>GET/POST /api/v1/hosts/...</code> in the README. Separate from Scanner Agent keys, which are only
-        for scanners submitting scan results.
+        For external tools (SOAR, enrichment, ticketing) to query host data, trigger rescans, or queue an ad-hoc
+        scan against a brand-new target via the REST API - see <code>GET/POST /api/v1/hosts/...</code> and{" "}
+        <code>POST /api/v1/scans/adhoc</code> in the README. Separate from Scanner Agent keys, which are only for
+        scanners submitting scan results.
       </p>
 
       {newToken && (
