@@ -14,7 +14,18 @@ import {
   ScannerAgent,
 } from "../api";
 import ExportModal from "../components/ExportModal";
-import { IconBookmark, IconDownload, IconInfo, IconPlus, IconRefresh, IconSearch, IconStop, IconWarning, IconX } from "../components/icons";
+import {
+  IconBookmark,
+  IconDownload,
+  IconInfo,
+  IconPlus,
+  IconRefresh,
+  IconSearch,
+  IconStop,
+  IconTrash,
+  IconWarning,
+  IconX,
+} from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import RescanModal from "../components/RescanModal";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
@@ -195,6 +206,7 @@ function RiskBadge({ host }: { host: HostSummary }) {
 
 export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const canEdit = me.role === "admin" || me.role === "operator";
+  const isAdmin = me.role === "admin";
   const health = useFleetHealth(me);
   const navigate = useNavigate();
   // Filters live in the URL (not just component state) so that navigating
@@ -419,6 +431,32 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
           ? `Rescan requested for ${selected.size} host(s).`
           : `Rescan requested for ${selected.size - failed} host(s), ${failed} failed (e.g. no known ports yet).`
       );
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function handleBulkDelete() {
+    if (selected.size === 0) return;
+    if (
+      !window.confirm(
+        `Permanently delete ${selected.size} selected host(s)? This removes their ports, screenshots, certificates, tags, and comments. This can't be undone.`
+      )
+    ) {
+      return;
+    }
+    setBulkBusy(true);
+    setBulkStatus(null);
+    try {
+      const results = await Promise.allSettled([...selected].map((id) => api.deleteHost(id)));
+      const failed = results.filter((r) => r.status === "rejected").length;
+      setBulkStatus(
+        failed === 0
+          ? `Deleted ${selected.size} host(s).`
+          : `Deleted ${selected.size - failed} host(s), ${failed} failed.`
+      );
+      setSelected(new Set());
+      await Promise.all([load(filters, page), api.facets(filters).then(setFacets).catch(() => {})]);
     } finally {
       setBulkBusy(false);
     }
@@ -766,6 +804,11 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
           <button className="btn-icon-label" onClick={() => setShowRescanModal(true)} disabled={bulkBusy}>
             <IconRefresh /> Rescan selected
           </button>
+          {isAdmin && (
+            <button className="btn-icon-label" onClick={handleBulkDelete} disabled={bulkBusy}>
+              <IconTrash /> Delete selected
+            </button>
+          )}
           <button className="link-button btn-icon-label" onClick={() => setSelected(new Set())}>
             <IconX /> Clear selection
           </button>

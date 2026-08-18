@@ -479,6 +479,18 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
         {formatDateTime(data.host.last_seen_at, me.preferences)}
         {historyGroups[0]?.scannerAgentName && <> · last scanned by {historyGroups[0].scannerAgentName}</>}
       </p>
+      {data.host.mac_address && (
+        <p className="host-meta">
+          MAC: <span className="fingerprint">{data.host.mac_address}</span>
+          {data.host.mac_vendor && ` (${data.host.mac_vendor})`}
+        </p>
+      )}
+      {(data.host.os_name || data.host.device_type) && (
+        <p className="host-meta">
+          {[data.host.device_type, data.host.os_name || data.host.os_family].filter(Boolean).join(" · ")}
+          {data.host.os_accuracy ? ` (${data.host.os_accuracy}% confidence)` : ""}
+        </p>
+      )}
       <details className="advanced-options">
         <summary>Advanced options</summary>
         <p className="host-meta">
@@ -499,18 +511,6 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
           </form>
         )}
       </details>
-      {(data.host.os_name || data.host.device_type) && (
-        <p className="host-meta">
-          {[data.host.device_type, data.host.os_name || data.host.os_family].filter(Boolean).join(" · ")}
-          {data.host.os_accuracy ? ` (${data.host.os_accuracy}% confidence)` : ""}
-        </p>
-      )}
-      {data.host.mac_address && (
-        <p className="host-meta">
-          MAC: <span className="fingerprint">{data.host.mac_address}</span>
-          {data.host.mac_vendor && ` (${data.host.mac_vendor})`}
-        </p>
-      )}
 
       {(data.tags.length > 0 || canEdit) && (
         <div className="filter-chips">
