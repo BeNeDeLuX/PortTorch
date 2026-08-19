@@ -27,6 +27,7 @@ import { auditRouter } from "./audit/routes";
 import { excludesRouter } from "./excludes/routes";
 import { apiTokensRouter } from "./apiTokens/routes";
 import { integrationsRouter } from "./integrations/routes";
+import { apiDocsRouter } from "./integrations/docsRoutes";
 import { savedSearchesRouter } from "./savedSearches/routes";
 import { scanProfilesRouter } from "./scanProfiles/routes";
 import { nucleiProfilesRouter } from "./nucleiProfiles/routes";
@@ -88,6 +89,9 @@ export function buildApp() {
   app.use("/api/nuclei-findings", nucleiFindingsRouter);
   app.use("/api/finding-triage", findingTriageRouter);
   app.use("/api/settings", settingsRouter);
+  // Mounted before integrationsRouter so the spec/UI stay outside its
+  // tokenAuth chain - see docsRoutes.ts for why that's deliberate.
+  app.use("/api/v1", apiDocsRouter);
   // External/SOAR-facing API - own auth chain (tokenAuth), not session auth.
   app.use("/api/v1", integrationsRouter);
 

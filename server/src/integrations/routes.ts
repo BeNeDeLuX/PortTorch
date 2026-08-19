@@ -33,7 +33,7 @@ integrationsRouter.use(tokenAuth);
 // because the common case (one scanner, or an ip that's only ever existed
 // on one network) is unambiguous without it - this never breaks an
 // existing caller that doesn't know the concept yet.
-const lookupSchema = z.object({
+export const lookupSchema = z.object({
   ip: zIp().optional(),
   hostname: z.string().min(1).optional(),
   scannerAgent: z.string().min(1).optional(),
@@ -62,7 +62,7 @@ integrationsRouter.get("/hosts/lookup", asyncHandler(async (req, res) => {
   res.json(await buildEnrichment(result.host.id));
 }));
 
-const rescanSchema = z.object({
+export const rescanSchema = z.object({
   ip: zIp().optional(),
   hostname: z.string().min(1).optional(),
   scannerAgent: z.string().min(1).optional(),
@@ -173,7 +173,7 @@ integrationsRouter.post("/hosts/rescan", asyncHandler(async (req, res) => {
   });
 }));
 
-const cancelScanSchema = z.object({
+export const cancelScanSchema = z.object({
   ip: zIp().optional(),
   hostname: z.string().min(1).optional(),
   scannerAgent: z.string().min(1).optional(),
@@ -260,7 +260,7 @@ integrationsRouter.post("/hosts/cancel-scan", asyncHandler(async (req, res) => {
   res.status(204).end();
 }));
 
-const adhocScanSchema = z.object({
+export const adhocScanSchema = z.object({
   scannerAgent: z.string().min(1),
   targetSpec: z.string().trim().min(1),
   portSpec: z.string().trim().min(1),

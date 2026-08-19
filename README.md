@@ -890,6 +890,14 @@ and the scanner ingest API (per-scanner API keys tied to submitting scan
 results). Manage tokens from **Admin login → API Tokens → Create**; the
 plaintext token is shown once.
 
+**Interactive API docs:** an OpenAPI 3.1 spec is served at
+`/api/v1/openapi.json`, with a browsable Swagger UI at `/api/v1/docs` -
+both reachable without a token (they describe the four endpoints and
+expose no scan data), so you can point `openapi-generator`, Postman, or a
+browser straight at them. Covers `/api/v1` only; the dashboard's own
+`/api/*` routes and the scanner ingest API are internal contracts and
+aren't documented there.
+
 ```bash
 # Look up a host by IP or hostname - returns open ports, service/version
 # fingerprints, known CVEs (from the vulnerability correlation cache),
