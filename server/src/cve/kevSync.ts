@@ -2,6 +2,7 @@ import { sql } from "kysely";
 import { db } from "../db";
 import { logger } from "../logger";
 import { dispatchWebhook } from "../webhooks/dispatch";
+import { ANY_TRIAGE_STATE, cveNotTriaged } from "../findingTriage/sqlFilters";
 
 // CISA publishes this as a single bulk JSON file, not a per-CVE lookup API
 // like EPSS's - there's no rate limit or API key to worry about, and no
@@ -117,6 +118,12 @@ export async function checkKevAlerts(): Promise<void> {
       JOIN cve_cache cc ON cc.cpe = ANY(chp.cpes)
       CROSS JOIN LATERAL jsonb_array_elements(cc.cves) AS cve_elem
       WHERE chp.state = 'open' AND cve_elem->>'id' = ${kev.cve_id}
+        -- A finding someone already triaged (false positive, accepted
+        -- risk, or fixed) must not re-alert - re-paging on a decision
+        -- that's already been made is the alert fatigue triage exists to
+        -- prevent. Broader than the host list's risk indicator, which
+        -- only drops false_positive/fixed (see sqlFilters.ts).
+        AND ${cveNotTriaged("h.id", "cve_elem->>'id'", ANY_TRIAGE_STATE)}
     `.execute(db);
 
     // Not relevant to this fleet (yet) - still mark it seen, same

@@ -3,6 +3,7 @@ import { db } from "../db";
 import { config } from "../config";
 import { logger } from "../logger";
 import { dispatchWebhook } from "../webhooks/dispatch";
+import { ANY_TRIAGE_STATE, cveNotTriaged } from "../findingTriage/sqlFilters";
 
 // Unlike cve_cache (see sync.ts), EPSS scores genuinely change day to day -
 // FIRST.org recomputes the underlying model daily - so this re-checks every
@@ -128,6 +129,12 @@ export async function checkHighEpssAlerts(): Promise<void> {
       JOIN cve_cache cc ON cc.cpe = ANY(chp.cpes)
       CROSS JOIN LATERAL jsonb_array_elements(cc.cves) AS cve_elem
       WHERE chp.state = 'open' AND cve_elem->>'id' = ${cve.cve_id}
+        -- A finding someone already triaged (false positive, accepted
+        -- risk, or fixed) must not re-alert - re-paging on a decision
+        -- that's already been made is the alert fatigue triage exists to
+        -- prevent. Broader than the host list's risk indicator, which
+        -- only drops false_positive/fixed (see sqlFilters.ts).
+        AND ${cveNotTriaged("h.id", "cve_elem->>'id'", ANY_TRIAGE_STATE)}
     `.execute(db);
 
     // A cve_cache entry can outlive the port it was fingerprinted from

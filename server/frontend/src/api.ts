@@ -413,6 +413,11 @@ export interface CveEntry {
   // this host's port.
   kevDateAdded: string | null;
   kevKnownRansomwareCampaignUse: string | null;
+  // Triage state for this CVE on this host - null = untriaged. Host
+  // Detail marks these rather than hiding them (unlike the fleet-wide
+  // Vulnerabilities page), since a host's own page is its full record.
+  triageState: TriageState | null;
+  triageNote: string | null;
 }
 
 export interface ScanRequest {

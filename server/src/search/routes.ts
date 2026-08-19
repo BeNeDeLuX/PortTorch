@@ -13,6 +13,7 @@ import { parseDateOnly, toDateOnlyString } from "../lib/dateOnly";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { requestRescan } from "../rescan";
+import { NOT_A_LIVE_RISK_STATES, cveNotTriaged } from "../findingTriage/sqlFilters";
 import { NSEProfileSelection } from "../scanProfiles/resolve";
 import { NucleiProfileSelection } from "../nucleiProfiles/resolve";
 import { singleParam } from "../lib/reqParams";
@@ -416,6 +417,7 @@ hostsRouter.get("/", asyncHandler(async (req, res) => {
         join cve_cache cc2 on cc2.cpe = ANY(chp2.cpes)
         cross join lateral jsonb_array_elements(cc2.cves) as cve_elem
         where chp2.host_id = hosts.id and chp2.state = 'open'
+          and ${cveNotTriaged("hosts.id", "cve_elem->>'id'", NOT_A_LIVE_RISK_STATES)}
       )`.as("cve_count"),
       sql<number | null>`(
         select max((cve_elem->>'cvssScore')::float)
@@ -423,6 +425,7 @@ hostsRouter.get("/", asyncHandler(async (req, res) => {
         join cve_cache cc2 on cc2.cpe = ANY(chp2.cpes)
         cross join lateral jsonb_array_elements(cc2.cves) as cve_elem
         where chp2.host_id = hosts.id and chp2.state = 'open'
+          and ${cveNotTriaged("hosts.id", "cve_elem->>'id'", NOT_A_LIVE_RISK_STATES)}
       )`.as("max_cvss_score"),
       sql<boolean>`exists (
         select 1
@@ -431,6 +434,7 @@ hostsRouter.get("/", asyncHandler(async (req, res) => {
         cross join lateral jsonb_array_elements(cc2.cves) as cve_elem
         join kev_cache kc2 on kc2.cve_id = cve_elem->>'id'
         where chp2.host_id = hosts.id and chp2.state = 'open'
+          and ${cveNotTriaged("hosts.id", "cve_elem->>'id'", NOT_A_LIVE_RISK_STATES)}
       )`.as("has_kev"),
     ])
     .groupBy([
@@ -825,21 +829,37 @@ hostsRouter.get("/:id", asyncHandler(async (req, res) => {
   const kevRows = allCveIds.length > 0 ? await db.selectFrom("kev_cache").select(["cve_id", "date_added", "known_ransomware_campaign_use"]).where("cve_id", "in", allCveIds).execute() : [];
   const kevByCveId = new Map(kevRows.map((r) => [r.cve_id, r]));
 
+  // Triage state is attached here but never used to *hide* anything -
+  // unlike the fleet-wide Vulnerabilities page (which filters triaged
+  // findings out by default), a host's own detail page is the complete
+  // record of what was found on it, so a dismissed CVE stays listed and
+  // is simply marked as decided.
+  const triageRows = await db
+    .selectFrom("finding_triage")
+    .select(["cve_id", "state", "note"])
+    .where("host_id", "=", req.params.id)
+    .where("kind", "=", "cve")
+    .execute();
+  const triageByCveId = new Map(triageRows.map((r) => [r.cve_id!, r]));
+
   const ports = rawPorts.map((p) => {
     const vulnerabilities = new Map<
       string,
-      (typeof cveRows)[number]["cves"][number] & { epssScore: number | null; epssPercentile: number | null; kevDateAdded: string | null; kevKnownRansomwareCampaignUse: string | null }
+      (typeof cveRows)[number]["cves"][number] & { epssScore: number | null; epssPercentile: number | null; kevDateAdded: string | null; kevKnownRansomwareCampaignUse: string | null; triageState: string | null; triageNote: string | null }
     >();
     for (const cpe of p.cpes ?? []) {
       for (const cve of cvesByCpe.get(cpe) ?? []) {
         const epss = epssByCveId.get(cve.id);
         const kev = kevByCveId.get(cve.id);
+        const triage = triageByCveId.get(cve.id);
         vulnerabilities.set(cve.id, {
           ...cve,
           epssScore: epss?.epss ?? null,
           epssPercentile: epss?.percentile ?? null,
           kevDateAdded: toDateOnlyString(kev?.date_added ?? null),
           kevKnownRansomwareCampaignUse: kev?.known_ransomware_campaign_use ?? null,
+          triageState: triage?.state ?? null,
+          triageNote: triage?.note ?? null,
         });
       }
     }

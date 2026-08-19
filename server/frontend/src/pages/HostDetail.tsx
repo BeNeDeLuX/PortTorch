@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router";
-import { api, HostDetail as HostDetailData, HostFilters, Me, NSEProfileSelection, NucleiProfileSelection } from "../api";
+import { api, HostDetail as HostDetailData, HostFilters, Me, NSEProfileSelection, NucleiProfileSelection, TRIAGE_LABEL } from "../api";
 import { certExpiryStatus, certExpiryLabel } from "../lib/certExpiry";
 import { cveSeverityClass } from "../lib/cveSeverity";
 import { isAutoTag } from "../lib/knownServiceTags";
@@ -664,6 +664,18 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
                               {v.cvssScore != null && ` (${v.cvssScore})`}
                               {v.epssScore != null && ` · EPSS ${(v.epssScore * 100).toFixed(1)}%`}
                             </a>
+                            {v.triageState && (
+                              <span
+                                className={`triage-badge triage-${v.triageState}`}
+                                title={
+                                  v.triageNote
+                                    ? `${TRIAGE_LABEL[v.triageState]}: ${v.triageNote}`
+                                    : `Triaged as ${TRIAGE_LABEL[v.triageState]} - still listed here since this is the host's full record`
+                                }
+                              >
+                                {TRIAGE_LABEL[v.triageState]}
+                              </span>
+                            )}
                             {v.kevDateAdded && (
                               <span
                                 className="kev-badge"
