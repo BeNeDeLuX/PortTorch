@@ -118,6 +118,8 @@ Each item below is a one-line summary - click **Details** to expand it.
 
   Scan a target/port spec immediately, once, with no schedule attached - the counterpart to Rescan for anything that isn't already a known host (a newly-provisioned subnet, a system someone just told you about, a one-off check). Pick a scanner, a target, ports, and the same NSE script profile and nuclei profile choices Rescan and Schedule Scans offer; the request goes into the same queue and is picked up by the chosen scanner on its very next poll.
 
+  Both Ad-hoc Scans and Schedule Scans also take an optional **scan rate** (packets per second for the masscan discovery pass). Left blank it uses whatever the chosen scanner has configured; setting it applies to that one scan only - useful for a fragile or sensitive segment you want probed gently, without editing config on the scanner host and restarting it for every later scan too.
+
   Unlike the other trigger points, the target field also accepts a **DNS hostname**, not just an IP/CIDR/range/IPv6 list. The hostname is resolved by the scanner itself (not the webserver - only the scanner can correctly resolve an internal-only or split-horizon name from inside its own network), and is automatically used as the TLS SNI and screenshot hostname for that scan, the same effect as setting a host's "probe hostname" by hand after the fact. Available to operators and admins, and also from the External API (`POST /api/v1/scans/adhoc`, see below) for SOAR/automation use.
   </details>
 
@@ -153,21 +155,38 @@ Each item below is a one-line summary - click **Details** to expand it.
   <details>
   <summary>Details</summary>
 
-  Every TLS certificate across the whole fleet, sorted soonest-expiring first. Searchable by host, port, CN, or issuer, plus a checkbox to show only already-expired certificates.
+  Every TLS certificate across the whole fleet, sorted soonest-expiring first. Searchable by host, port, CN, or issuer, plus a checkbox to show only already-expired certificates. Exportable as CSV or JSON, scoped to whatever the current search/filter is showing.
   </details>
 
 - :shield: **Vulnerabilities overview** - every known CVE match across the fleet in one sortable table.
   <details>
   <summary>Details</summary>
 
-  Every known CVE match (see vulnerability correlation below) across the whole fleet in one sortable table - host, port, CVE, severity, description - instead of having to check each host's detail page individually.
+  Every known CVE match (see vulnerability correlation below) across the whole fleet in one sortable table - host, port, CVE, severity, description - instead of having to check each host's detail page individually. Exportable as CSV or JSON (including triage state), scoped to whatever the current search/filter is showing.
   </details>
 
 - :spider_web: **Web Findings** - every nuclei web-vulnerability match across the fleet in one sortable table.
   <details>
   <summary>Details</summary>
 
-  Every nuclei template match (see Nuclei Profiles above) across the whole fleet in one sortable table - host, port, template id, severity, matched URL, description - a separate table from Vulnerabilities overview since a template match's shape (template id/severity/tags) doesn't map onto CVE/CPE/CVSS/EPSS/KEV columns at all. Named "Web Findings" rather than "Nuclei Findings" - nuclei is the tool that generates them, already explained above, not something a user needs to know to understand what this page shows. Only ever populated for a scan that had a non-"Off" nuclei profile selected.
+  Every nuclei template match (see Nuclei Profiles above) across the whole fleet in one sortable table - host, port, template id, severity, matched URL, description - a separate table from Vulnerabilities overview since a template match's shape (template id/severity/tags) doesn't map onto CVE/CPE/CVSS/EPSS/KEV columns at all. Named "Web Findings" rather than "Nuclei Findings" - nuclei is the tool that generates them, already explained above, not something a user needs to know to understand what this page shows. Only ever populated for a scan that had a non-"Off" nuclei profile selected. Exportable as CSV or JSON (including triage state), scoped to whatever the current search/filter is showing.
+  </details>
+
+- :white_check_mark: **Finding triage** - mark a CVE or web finding as a false positive, accepted risk, or fixed so it stops resurfacing.
+  <details>
+  <summary>Details</summary>
+
+  A recon tool that re-reports the same known-false-positive finding after every scan quickly stops being read. Any CVE on the Vulnerabilities page or nuclei match on Web Findings can be marked **False positive**, **Accepted risk**, or **Fixed**, with an optional note - both pages then hide triaged findings by default (a checkbox brings them back). Reversible from the same dropdown, and it never deletes or hides the underlying scan data.
+
+  Triage survives rescans: a nuclei finding gets a fresh database row every time it's re-observed, and CVE matches aren't stored per host at all, so the state is keyed on the finding's identity rather than on a row that gets replaced.
+
+  It's also respected outside those two pages, and deliberately means different things in different places:
+
+  - The host list's risk indicator (CVE count, max CVSS, KEV flag) drops **false positives and fixed** findings - but keeps **accepted risk**, since an accepted risk is still a real exposure and hiding it would understate the fleet's actual risk.
+  - EPSS and CISA KEV alert webhooks drop **all three** - being paged about something you already decided on is exactly the alert fatigue this exists to prevent.
+  - A host's own detail page hides **nothing** and simply badges the triaged entries, since that page is the host's complete record rather than a work queue.
+
+  Every triage change is attributed and shows up in the audit log.
   </details>
 
 - :bar_chart: **Digest** - a fleet-wide "what changed" view over the last 24h/7d, also sendable daily by email/webhook.
