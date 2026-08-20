@@ -9,6 +9,7 @@ import {
   TlsCertificateInfo,
 } from "../api";
 import { certExpiryStatus } from "./certExpiry";
+import { isVersionBehind } from "./semver";
 
 export type HealthStatus = "ok" | "warning" | "critical";
 
@@ -19,22 +20,6 @@ export function worstOf(...statuses: HealthStatus[]): HealthStatus {
   return statuses.reduce((worst, s) => (STATUS_RANK[s] > STATUS_RANK[worst] ? s : worst), "ok" as HealthStatus);
 }
 
-// Same plain X.Y.Z compare as ScannerAgents.tsx's own copy (and the
-// webserver's/scanner's own compareSemver) - kept as an independent copy
-// rather than a shared import since it's a tiny, self-contained function.
-function compareSemver(a: string, b: string): number {
-  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
-  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < 3; i++) {
-    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
-  }
-  return 0;
-}
-
-function isVersionBehind(current: string | null, latest: string | null): boolean {
-  if (!current || !latest) return false;
-  return compareSemver(latest, current) > 0;
-}
 
 // A queued scan_requests row older than this strongly suggests the
 // target scanner has stopped polling entirely, rather than just being

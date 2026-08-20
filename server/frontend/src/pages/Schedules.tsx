@@ -6,6 +6,7 @@ import PageHeader from "../components/PageHeader";
 import ScanProfilePicker from "../components/ScanProfilePicker";
 import NucleiProfilePicker from "../components/NucleiProfilePicker";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
+import ScanRateSupportNote from "../components/ScanRateSupportNote";
 import { formatDateTime } from "../lib/formatDate";
 import {
   resolveTimezone,
@@ -567,6 +568,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
               onChange={(e) => setMasscanRate(e.target.value)}
             />
           </label>
+          <ScanRateSupportNote agent={agents.find((a) => a.id === scannerAgentId)} rate={masscanRate} />
           <label>
             Schedule type
             <select

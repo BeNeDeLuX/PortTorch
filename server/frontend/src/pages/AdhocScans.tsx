@@ -5,6 +5,7 @@ import { IconPlay } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScanProfilePicker from "../components/ScanProfilePicker";
 import NucleiProfilePicker from "../components/NucleiProfilePicker";
+import ScanRateSupportNote from "../components/ScanRateSupportNote";
 import { formatDateTime } from "../lib/formatDate";
 
 // A one-shot "scan this right now" page - Schedule Scans minus all the
@@ -134,6 +135,7 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
               onChange={(e) => setMasscanRate(e.target.value)}
             />
           </label>
+          <ScanRateSupportNote agent={agents.find((a) => a.id === scannerAgentId)} rate={masscanRate} />
           <p className="empty">
             Packets per second for the masscan discovery pass. Leave blank to use whatever the chosen scanner has
             configured (default 1000). Lower it for fragile or sensitive network segments; only affects this scan.

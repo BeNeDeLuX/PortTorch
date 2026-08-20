@@ -6,28 +6,11 @@ import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanProgressModal from "../components/ScanProgressModal";
 import { formatDateTime } from "../lib/formatDate";
 import { elapsedLabel } from "../lib/elapsed";
+import { isVersionBehind } from "../lib/semver";
 
 type SortKey = "name" | "last_seen_at" | "last_seen_ip" | "version" | "current_scan" | "created_at";
 type SortDirection = "asc" | "desc";
 
-// Plain X.Y.Z numeric compare, mirroring the webserver's own
-// scannerUpdate/githubSync.ts compareSemver and the scanner's own
-// internal/updater compareSemver exactly - same "no pre-release/build-
-// metadata suffix" assumption, since neither this project's version.go
-// nor its scanner-vX.Y.Z release tags ever use one.
-function compareSemver(a: string, b: string): number {
-  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
-  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < 3; i++) {
-    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
-  }
-  return 0;
-}
-
-function isVersionBehind(current: string | null, latest: string | null): boolean {
-  if (!current || !latest) return false;
-  return compareSemver(latest, current) > 0;
-}
 
 // The "Update" button's own imperfect, documented heuristic for "this
 // agent is actually running in serve mode right now" - scanner_agents has
