@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { VERSION } from "../version";
-import { adhocScanSchema, cancelScanSchema, lookupSchema, rescanSchema } from "./routes";
+import { adhocScanSchema, cancelScanSchema, clearTriageSchema, lookupSchema, rescanSchema, triageSchema } from "./routes";
 
 // OpenAPI document for the External API (/api/v1) only - deliberately not
 // the dashboard's own /api/* routes or the scanner ingest API.
@@ -95,8 +95,8 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       version: VERSION,
       description:
         "Token-authenticated API for external tooling (SOAR platforms, ticketing, enrichment pipelines): look a host up, " +
-        "trigger a rescan of it, stop a running scan, or queue a one-shot ad-hoc scan against a target that isn't a known " +
-        "host yet.\n\n" +
+        "trigger a rescan of it, stop a running scan, queue a one-shot ad-hoc scan against a target that isn't a known " +
+        "host yet, or record a triage decision so a handled finding stops resurfacing.\n\n" +
         "This covers `/api/v1` only. The dashboard's own `/api/*` routes and the scanner ingest API are internal contracts " +
         "and are deliberately not documented here.\n\n" +
         "Create a token under **Admin → API Tokens**; the plaintext value is shown once.",
@@ -117,6 +117,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
     tags: [
       { name: "Hosts", description: "Look up and act on hosts already known to PortTorch." },
       { name: "Scans", description: "Queue scans against arbitrary targets." },
+      { name: "Findings", description: "Record decisions about CVE and web findings." },
     ],
     paths: {
       "/hosts/lookup": {
@@ -178,6 +179,52 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             204: { description: "Cancellation requested." },
             400: errorResponse,
             404: { description: "No such host, or nothing currently running for it." },
+            409: ambiguousResponse,
+          },
+        },
+      },
+      "/findings/triage": {
+        put: {
+          tags: ["Findings"],
+          summary: "Mark a finding false positive, accepted risk, or fixed",
+          description:
+            "Stops a finding resurfacing on the Vulnerabilities / Web Findings pages after every scan, and stops it " +
+            "counting toward the host's risk indicator and EPSS/KEV alerts. Intended for closing the loop from a " +
+            "ticketing/SOAR workflow. Identify the finding with `cveId`, or with `templateId` + `matchedAt` for a " +
+            "nuclei match. Set `reviewAt` to make the decision expire on that date, after which the finding comes back " +
+            "- accepting a risk indefinitely is possible but rarely what you want.",
+          requestBody: jsonBody(triageSchema),
+          responses: {
+            200: {
+              description: "Triage recorded (or updated, if the finding was already triaged).",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      id: { type: "string", format: "uuid" },
+                      state: { type: "string", enum: ["false_positive", "accepted_risk", "fixed"] },
+                      note: { type: "string", nullable: true },
+                      reviewAt: { type: "string", format: "date-time", nullable: true },
+                    },
+                  },
+                },
+              },
+            },
+            400: errorResponse,
+            404: { description: "No such host." },
+            409: ambiguousResponse,
+          },
+        },
+        delete: {
+          tags: ["Findings"],
+          summary: "Clear a finding's triage state",
+          description: "Returns the finding to untriaged, so it shows up again wherever triaged findings are hidden.",
+          requestBody: jsonBody(clearTriageSchema),
+          responses: {
+            204: { description: "Triage cleared." },
+            400: errorResponse,
+            404: { description: "No such host, or the finding wasn't triaged." },
             409: ambiguousResponse,
           },
         },

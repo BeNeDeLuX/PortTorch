@@ -78,6 +78,7 @@ agentsRouter.get("/", asyncHandler(async (req, res) => {
       "update_request_status",
       "update_failure_reason",
       "submit_queue_pending",
+      "nuclei_templates_updated_at",
     ]);
   if (allowed) {
     query = query.where("id", "in", allowed);

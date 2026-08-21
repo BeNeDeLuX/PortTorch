@@ -4,7 +4,13 @@ import { IconCheck, IconWarning } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { certExpiryDaysLeft, certExpiryLabel } from "../lib/certExpiry";
 import { elapsedLabel } from "../lib/elapsed";
-import { HealthStatus, STALE_QUEUE_THRESHOLD_MS, STATUS_LABEL, useFleetHealth } from "../lib/useFleetHealth";
+import {
+  HealthStatus,
+  NUCLEI_TEMPLATES_WARN_DAYS,
+  STALE_QUEUE_THRESHOLD_MS,
+  STATUS_LABEL,
+  useFleetHealth,
+} from "../lib/useFleetHealth";
 
 function HealthCard({
   to,
@@ -123,6 +129,18 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
               </>
             )}
           </span>
+        </HealthCard>
+
+        <HealthCard to="/agents" title="Nuclei Templates" status={health.nucleiTemplatesStatus}>
+          {health.oldestTemplateAgeDays === null
+            ? "No scanner reports template age"
+            : `Oldest: ${health.oldestTemplateAgeDays}d old`}
+          <br />
+          {health.oldestTemplateAgeDays === null
+            ? "nuclei may not be installed, or the scanners predate this reporting"
+            : health.staleTemplateAgents.length > 0
+              ? `${health.staleTemplateAgents.length} scanner${health.staleTemplateAgents.length === 1 ? "" : "s"} over ${NUCLEI_TEMPLATES_WARN_DAYS}d - run "nuclei -update-templates"`
+              : "All scanners reasonably current"}
         </HealthCard>
 
         <HealthCard to="/agents" title="Submission Retry Backlog" status={health.retryQueueStatus}>

@@ -52,6 +52,26 @@ func (c *Client) setAuthHeaders(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("X-Scanner-Version", version.Version)
 	req.Header.Set("X-Scanner-Submit-Queue-Pending", strconv.Itoa(int(atomic.LoadInt32(&c.submitQueuePending))))
+	// Omitted entirely when unknown (nuclei not installed, templates
+	// never fetched) rather than sent as an empty or epoch value - the
+	// webserver distinguishes "no templates" from "templates from 1970",
+	// and only the former is true here.
+	if ts, ok := c.nucleiTemplatesUpdatedAt.Load().(time.Time); ok && !ts.IsZero() {
+		req.Header.Set("X-Scanner-Nuclei-Templates-Updated", ts.UTC().Format(time.RFC3339))
+	}
+}
+
+// SetNucleiTemplatesUpdatedAt records when this scanner's nuclei template
+// tree was last written, reported on every subsequent request via the
+// same piggyback mechanism as version and submit-queue depth. Set once at
+// startup and refreshed after anything that could rewrite the tree -
+// atomic because the value is read from whichever goroutine happens to be
+// making a request at the time.
+// A zero time means "unknown" and simply stops the header being sent;
+// atomic.Value panics on a nil Store, so the zero value is what carries
+// that state rather than nil.
+func (c *Client) SetNucleiTemplatesUpdatedAt(t time.Time) {
+	c.nucleiTemplatesUpdatedAt.Store(t)
 }
 
 // Client talks to the webserver's authenticated ingest API.
@@ -66,6 +86,9 @@ type Client struct {
 	// any Enqueue call, from whichever goroutine is running the scan at
 	// the time, hence the atomic access rather than a plain int.
 	submitQueuePending int32
+	// nil until known - see SetNucleiTemplatesUpdatedAt. atomic.Value
+	// rather than a plain field for the same reason as the counter above.
+	nucleiTemplatesUpdatedAt atomic.Value
 }
 
 // SetSubmitQueuePending records the scanner's current internal/submitqueue
@@ -97,14 +120,34 @@ func New(cfg *config.Config) (*Client, error) {
 		tlsConfig.InsecureSkipVerify = true
 	}
 
-	return &Client{
+	c := &Client{
 		baseURL: strings.TrimSuffix(cfg.WebserverURL, "/"),
 		apiKey:  cfg.APIKey,
 		http: &http.Client{
 			Timeout:   60 * time.Second,
 			Transport: &http.Transport{TLSClientConfig: tlsConfig},
 		},
-	}, nil
+	}
+	// Resolved here rather than at each of the four call sites, so every
+	// mode (scan/menu/serve/doctor) reports it without duplication. Purely
+	// best-effort: a missing directory (nuclei not installed, or templates
+	// never fetched) just leaves it unknown and omits the header - it must
+	// never stop a client being constructed.
+	c.RefreshNucleiTemplatesUpdatedAt()
+	return c, nil
+}
+
+// RefreshNucleiTemplatesUpdatedAt re-stats the template tree. Called once
+// at construction and again before each queue-triggered scan, so a
+// long-running serve process notices a manual `nuclei -update-templates`
+// rather than reporting whatever was true when it started days ago.
+func (c *Client) RefreshNucleiTemplatesUpdatedAt() {
+	updated, err := pipeline.NucleiTemplatesUpdatedAt(pipeline.DefaultNucleiTemplatesDir())
+	if err != nil {
+		c.SetNucleiTemplatesUpdatedAt(time.Time{})
+		return
+	}
+	c.SetNucleiTemplatesUpdatedAt(updated)
 }
 
 type scanJobResponse struct {

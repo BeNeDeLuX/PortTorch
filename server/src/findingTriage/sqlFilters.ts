@@ -37,5 +37,10 @@ export function cveNotTriaged(hostIdExpr: string, cveIdExpr: string, states: rea
       AND ft.host_id = ${sql.raw(hostIdExpr)}
       AND ft.cve_id = ${sql.raw(cveIdExpr)}
       AND ft.state = ANY(${[...states]})
+      -- An expired decision stops being honored everywhere at once: it no
+      -- longer suppresses the finding here, exactly as if the row weren't
+      -- there. The row itself is kept (see the review_at migration) - who
+      -- decided what and when is worth more than the space it costs.
+      AND (ft.review_at IS NULL OR ft.review_at > now())
   )`;
 }

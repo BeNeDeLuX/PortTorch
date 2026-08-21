@@ -87,7 +87,7 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
 
   const trimmedQuery = query.trim().toLowerCase();
   const filteredVulns = vulns.filter((v) => {
-    if (hideTriaged && v.triage_state) return false;
+    if (hideTriaged && v.triage_state && !v.triage_expired) return false;
     if (severityFilter && severityOf(v) !== severityFilter) return false;
     if (kevOnly && !v.kev_date_added) return false;
     if (!trimmedQuery) return true;
@@ -163,6 +163,7 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
                 { header: "description", value: (v) => v.description },
                 { header: "triage_state", value: (v) => v.triage_state },
                 { header: "triage_note", value: (v) => v.triage_note },
+                { header: "triage_review_at", value: (v) => v.triage_review_at },
               ]}
             />
           </div>
@@ -235,6 +236,8 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
                     target={{ kind: "cve", hostId: v.host_id, cveId: v.cve_id }}
                     state={v.triage_state}
                     note={v.triage_note}
+                    reviewAt={v.triage_review_at}
+                    expired={v.triage_expired}
                     canEdit={canEdit}
                     onChanged={load}
                   />

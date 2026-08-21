@@ -354,6 +354,11 @@ export interface FleetVulnerability {
   kev_known_ransomware_campaign_use: string | null;
   triage_state: TriageState | null;
   triage_note: string | null;
+  triage_review_at: string | null;
+  // Server-computed (the client's clock isn't authoritative): the
+  // decision's review date has passed, so it no longer suppresses the
+  // finding anywhere.
+  triage_expired: boolean | null;
 }
 
 export interface ExpiringCertificate {
@@ -455,6 +460,9 @@ export interface ScannerAgent {
   // on every request - null until a scanner build with this support has
   // made at least one request (see apiKeyAuth.ts).
   submit_queue_pending: number | null;
+  // When this scanner last updated its nuclei templates. null = unknown
+  // (nuclei not installed, or a scanner build that doesn't report it).
+  nuclei_templates_updated_at: string | null;
 }
 
 export interface ScannerReleaseInfo {
@@ -603,6 +611,11 @@ export interface FleetNucleiFinding extends NucleiFinding {
   host_hostname: string | null;
   triage_state: TriageState | null;
   triage_note: string | null;
+  triage_review_at: string | null;
+  // Server-computed (the client's clock isn't authoritative): the
+  // decision's review date has passed, so it no longer suppresses the
+  // finding anywhere.
+  triage_expired: boolean | null;
 }
 
 export interface Schedule {
@@ -892,10 +905,10 @@ export const api = {
   ) => request<NucleiProfile>(`/api/nuclei-profiles/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteNucleiProfile: (id: string) => request<void>(`/api/nuclei-profiles/${id}`, { method: "DELETE" }),
   nucleiFindings: () => request<FleetNucleiFinding[]>("/api/nuclei-findings"),
-  setFindingTriage: (target: TriageTarget, state: TriageState, note?: string) =>
-    request<{ id: string; state: TriageState; note: string | null }>("/api/finding-triage", {
+  setFindingTriage: (target: TriageTarget, state: TriageState, note?: string, reviewAt?: string | null) =>
+    request<{ id: string; state: TriageState; note: string | null; review_at: string | null }>("/api/finding-triage", {
       method: "PUT",
-      body: JSON.stringify({ ...target, state, note }),
+      body: JSON.stringify({ ...target, state, note, reviewAt }),
     }),
   clearFindingTriage: (target: TriageTarget) =>
     request<void>("/api/finding-triage", { method: "DELETE", body: JSON.stringify(target) }),

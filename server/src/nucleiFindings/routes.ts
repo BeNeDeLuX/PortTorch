@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { sql } from "kysely";
 import { db } from "../db";
 import { requireAuth } from "../auth/middleware";
 import { getAllowedScannerAgentIds } from "../auth/scannerScope";
@@ -48,6 +49,8 @@ nucleiFindingsRouter.get("/", asyncHandler(async (req, res) => {
       "nuclei_findings.observed_at as observed_at",
       "finding_triage.state as triage_state",
       "finding_triage.note as triage_note",
+      "finding_triage.review_at as triage_review_at",
+      sql<boolean | null>`(finding_triage.review_at IS NOT NULL AND finding_triage.review_at <= now())`.as("triage_expired"),
     ])
     .distinctOn(["nuclei_findings.host_id", "nuclei_findings.template_id", "nuclei_findings.matched_at"])
     .orderBy("nuclei_findings.host_id")

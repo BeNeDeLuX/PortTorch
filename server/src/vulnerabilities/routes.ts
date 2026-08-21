@@ -35,6 +35,8 @@ vulnerabilitiesRouter.get("/", asyncHandler(async (req, res) => {
     kev_known_ransomware_campaign_use: string | null;
     triage_state: string | null;
     triage_note: string | null;
+    triage_review_at: Date | string | null;
+    triage_expired: boolean | null;
   }>`
     SELECT DISTINCT
       h.id AS host_id,
@@ -50,7 +52,11 @@ vulnerabilitiesRouter.get("/", asyncHandler(async (req, res) => {
       kc.date_added AS kev_date_added,
       kc.known_ransomware_campaign_use AS kev_known_ransomware_campaign_use,
       ft.state AS triage_state,
-      ft.note AS triage_note
+      ft.note AS triage_note,
+      ft.review_at AS triage_review_at,
+      -- Computed here rather than in the frontend so "expired" means the
+      -- same instant everywhere - the client's clock isn't authoritative.
+      (ft.review_at IS NOT NULL AND ft.review_at <= now()) AS triage_expired
     FROM current_host_ports chp
     JOIN hosts h ON h.id = chp.host_id
     JOIN cve_cache cc ON cc.cpe = ANY(chp.cpes)

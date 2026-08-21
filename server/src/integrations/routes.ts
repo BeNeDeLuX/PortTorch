@@ -381,6 +381,192 @@ integrationsRouter.post("/scans/adhoc", asyncHandler(async (req, res) => {
   });
 }));
 
+// Triage from outside the dashboard - the case this exists for is a SOAR
+// or ticketing system closing a remediation ticket and wanting the
+// finding to stop resurfacing, which otherwise stays a manual step
+// someone has to remember. The host is identified the same way every
+// other route here does it (ip/hostname + optional scannerAgent, via
+// lookupHost), never by internal uuid: an external caller has no way to
+// know PortTorch's own ids, and the ambiguity handling comes for free.
+export const triageSchema = z.object({
+  ip: zIp().optional(),
+  hostname: z.string().min(1).optional(),
+  scannerAgent: z.string().min(1).optional(),
+  // Which finding: a CVE id, or a nuclei template id plus the URL it
+  // matched (the same identity the dashboard uses - see
+  // findingTriage/routes.ts).
+  cveId: z.string().min(1).optional(),
+  templateId: z.string().min(1).optional(),
+  matchedAt: z.string().min(1).optional(),
+  state: z.enum(["false_positive", "accepted_risk", "fixed"]),
+  note: z.string().trim().max(2000).optional(),
+  // ISO timestamp after which the decision lapses and the finding comes
+  // back. Omitted = never expires.
+  reviewAt: z.string().datetime().nullable().optional(),
+});
+
+export const clearTriageSchema = z.object({
+  ip: zIp().optional(),
+  hostname: z.string().min(1).optional(),
+  scannerAgent: z.string().min(1).optional(),
+  cveId: z.string().min(1).optional(),
+  templateId: z.string().min(1).optional(),
+  matchedAt: z.string().min(1).optional(),
+});
+
+// Both triage routes accept either finding shape in one flat body, so
+// this is where "exactly one of them, fully specified" is enforced -
+// the dashboard's own route gets this from a discriminated union, which
+// doesn't fit an external API that shouldn't require a "kind" field.
+function resolveTriageTarget(input: {
+  cveId?: string;
+  templateId?: string;
+  matchedAt?: string;
+}): { ok: true; kind: "cve" | "nuclei" } | { ok: false; error: string } {
+  const isCve = !!input.cveId;
+  const isNuclei = !!input.templateId || !!input.matchedAt;
+  if (isCve && isNuclei) {
+    return { ok: false, error: "provide either cveId, or templateId+matchedAt - not both" };
+  }
+  if (isCve) return { ok: true, kind: "cve" };
+  if (input.templateId && input.matchedAt) return { ok: true, kind: "nuclei" };
+  if (isNuclei) return { ok: false, error: "a nuclei finding needs both templateId and matchedAt" };
+  return { ok: false, error: "provide a cveId, or templateId+matchedAt, to identify the finding" };
+}
+
+integrationsRouter.put("/findings/triage", asyncHandler(async (req, res) => {
+  const parsed = triageSchema.safeParse(req.body);
+  if (!parsed.success || (!parsed.data.ip && !parsed.data.hostname)) {
+    res.status(400).json({ error: parsed.success ? "provide an ip or hostname in the request body" : parsed.error.flatten() });
+    return;
+  }
+  const target = resolveTriageTarget(parsed.data);
+  if (!target.ok) {
+    res.status(400).json({ error: target.error });
+    return;
+  }
+
+  const result = await lookupHost(parsed.data.ip, parsed.data.hostname, parsed.data.scannerAgent);
+  if (result.status === "not_found") {
+    res.status(404).json({ error: "host not found" });
+    return;
+  }
+  if (result.status === "ambiguous") {
+    res.status(409).json({
+      error: "multiple hosts match - the same ip/hostname exists under more than one scanner agent, pass scannerAgent to disambiguate",
+      candidates: result.candidates,
+    });
+    return;
+  }
+
+  const values = {
+    kind: target.kind,
+    host_id: result.host.id,
+    cve_id: target.kind === "cve" ? parsed.data.cveId! : null,
+    template_id: target.kind === "nuclei" ? parsed.data.templateId! : null,
+    matched_at: target.kind === "nuclei" ? parsed.data.matchedAt! : null,
+    state: parsed.data.state,
+    note: parsed.data.note ?? null,
+    review_at: parsed.data.reviewAt ?? null,
+    created_by: `api-token:${req.apiTokenName}`,
+  };
+
+  const row = await db
+    .insertInto("finding_triage")
+    .values(values)
+    .onConflict((oc) =>
+      oc
+        .columns(target.kind === "cve" ? ["host_id", "cve_id"] : ["host_id", "template_id", "matched_at"])
+        .where("kind", "=", target.kind)
+        .doUpdateSet({
+          state: values.state,
+          note: values.note,
+          review_at: values.review_at,
+          created_by: values.created_by,
+          updated_at: new Date().toISOString(),
+        })
+    )
+    .returning(["id", "state", "note", "review_at"])
+    .executeTakeFirstOrThrow();
+
+  const identity = target.kind === "cve" ? { cve_id: values.cve_id } : { template_id: values.template_id, matched_at: values.matched_at };
+  logger.info({
+    event: "finding.triaged",
+    kind: target.kind,
+    host_id: result.host.id,
+    ...identity,
+    state: values.state,
+    review_at: values.review_at,
+    triaged_by: values.created_by,
+    api_token_id: req.apiTokenId,
+    source_ip: req.ip,
+  });
+  recordAudit("finding.triaged", values.created_by, req.ip, {
+    kind: target.kind,
+    host_id: result.host.id,
+    ...identity,
+    state: values.state,
+    api_token_id: req.apiTokenId,
+  });
+
+  res.json({ id: row.id, state: row.state, note: row.note, reviewAt: row.review_at });
+}));
+
+integrationsRouter.delete("/findings/triage", asyncHandler(async (req, res) => {
+  const parsed = clearTriageSchema.safeParse(req.body);
+  if (!parsed.success || (!parsed.data.ip && !parsed.data.hostname)) {
+    res.status(400).json({ error: parsed.success ? "provide an ip or hostname in the request body" : parsed.error.flatten() });
+    return;
+  }
+  const target = resolveTriageTarget(parsed.data);
+  if (!target.ok) {
+    res.status(400).json({ error: target.error });
+    return;
+  }
+
+  const result = await lookupHost(parsed.data.ip, parsed.data.hostname, parsed.data.scannerAgent);
+  if (result.status === "not_found") {
+    res.status(404).json({ error: "host not found" });
+    return;
+  }
+  if (result.status === "ambiguous") {
+    res.status(409).json({
+      error: "multiple hosts match - the same ip/hostname exists under more than one scanner agent, pass scannerAgent to disambiguate",
+      candidates: result.candidates,
+    });
+    return;
+  }
+
+  let query = db.deleteFrom("finding_triage").where("kind", "=", target.kind).where("host_id", "=", result.host.id);
+  query =
+    target.kind === "cve"
+      ? query.where("cve_id", "=", parsed.data.cveId!)
+      : query.where("template_id", "=", parsed.data.templateId!).where("matched_at", "=", parsed.data.matchedAt!);
+
+  const deleted = await query.executeTakeFirst();
+  if (deleted.numDeletedRows === 0n) {
+    res.status(404).json({ error: "no triage state set for this finding" });
+    return;
+  }
+
+  const requestedBy = `api-token:${req.apiTokenName}`;
+  logger.info({
+    event: "finding.triage_cleared",
+    kind: target.kind,
+    host_id: result.host.id,
+    cleared_by: requestedBy,
+    api_token_id: req.apiTokenId,
+    source_ip: req.ip,
+  });
+  recordAudit("finding.triage_cleared", requestedBy, req.ip, {
+    kind: target.kind,
+    host_id: result.host.id,
+    api_token_id: req.apiTokenId,
+  });
+
+  res.status(204).end();
+}));
+
 type LookupResult =
   | { status: "not_found" }
   | { status: "ambiguous"; candidates: { id: string; ip: string; hostname: string | null; scannerAgentName: string | null }[] }

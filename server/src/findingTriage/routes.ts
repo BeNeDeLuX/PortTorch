@@ -33,7 +33,15 @@ const identitySchema = z.discriminatedUnion("kind", [
 
 const setTriageSchema = z.intersection(
   identitySchema,
-  z.object({ state: z.enum(TRIAGE_STATES), note: z.string().trim().max(2000).optional() })
+  z.object({
+    state: z.enum(TRIAGE_STATES),
+    note: z.string().trim().max(2000).optional(),
+    // ISO timestamp after which this decision stops applying and the
+    // finding resurfaces. Omitted/null = never expires. Accepting a risk
+    // indefinitely is the exception, not the rule - see the review_at
+    // migration - but it stays possible, so this isn't required.
+    reviewAt: z.string().datetime().nullable().optional(),
+  })
 );
 
 const clearTriageSchema = identitySchema;
@@ -67,6 +75,7 @@ findingTriageRouter.put(
       matched_at: input.kind === "nuclei" ? input.matchedAt : null,
       state: input.state,
       note: input.note ?? null,
+      review_at: input.reviewAt ?? null,
       created_by: req.session.username ?? null,
     };
 
@@ -80,11 +89,15 @@ findingTriageRouter.put(
           .doUpdateSet({
             state: values.state,
             note: values.note,
+            // Re-triaging always rewrites the review date, including back
+            // to null - otherwise a stale expiry from a previous decision
+            // would keep applying to a fresh one.
+            review_at: values.review_at,
             created_by: values.created_by,
             updated_at: new Date().toISOString(),
           })
       )
-      .returning(["id", "state", "note", "updated_at"])
+      .returning(["id", "state", "note", "review_at", "updated_at"])
       .executeTakeFirstOrThrow();
 
     const identity = input.kind === "cve" ? { cve_id: input.cveId } : { template_id: input.templateId, matched_at: input.matchedAt };
@@ -94,6 +107,7 @@ findingTriageRouter.put(
       host_id: input.hostId,
       ...identity,
       state: input.state,
+      review_at: input.reviewAt ?? null,
       triaged_by: req.session.username,
       source_ip: req.ip,
     });

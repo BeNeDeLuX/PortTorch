@@ -64,6 +64,12 @@ export interface ScannerAgentsTable {
   // as version itself, so a never-reported scanner isn't shown as having
   // an empty queue.
   submit_queue_pending: number | null;
+  // When that scanner's nuclei template tree was last written, reported
+  // via the same piggyback header as version above. Null until a scanner
+  // build with this support reports one - templates are fetched once at
+  // install and never refreshed automatically, so this is what makes
+  // silent staleness visible (see Fleet Health's Nuclei Templates card).
+  nuclei_templates_updated_at: Date | null;
 }
 
 // Singleton (id always 1) cache of the latest published scanner-vX.Y.Z
@@ -388,6 +394,10 @@ export interface FindingTriageTable {
   matched_at: string | null;
   state: TriageState;
   note: string | null;
+  // When this decision stops being honored - NULL means it doesn't
+  // expire. An expired row is kept but ignored (see the review_at
+  // migration and findingTriage/sqlFilters.ts).
+  review_at: ColumnType<Date | null, string | null | undefined, string | null>;
   created_by: string | null;
   created_at: ColumnType<Date, string | undefined, never>;
   updated_at: ColumnType<Date, string | undefined, string>;

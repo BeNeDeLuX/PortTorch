@@ -12,39 +12,56 @@ const STATES: TriageState[] = ["false_positive", "accepted_risk", "fixed"];
 // high-frequency, low-stakes action (it never deletes scan data - the
 // finding is untouched, only its display state changes, and it's
 // reversible from the same control by picking "Open" again), so making it
-// one click matters more than confirming it. The optional note is a
-// separate, opt-in step for the same reason.
+// one click matters more than confirming it.
+//
+// The review date is a second, optional step for the same reason - it
+// only appears once something is actually triaged, since it's meaningless
+// for an open finding.
 export default function TriageControl({
   target,
   state,
   note,
+  reviewAt,
+  expired,
   canEdit,
   onChanged,
 }: {
   target: TriageTarget;
   state: TriageState | null;
   note: string | null;
+  reviewAt: string | null;
+  expired: boolean | null;
   canEdit: boolean;
   onChanged: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // <input type="date"> wants YYYY-MM-DD; the API carries a full ISO
+  // timestamp.
+  const reviewDateValue = reviewAt ? reviewAt.slice(0, 10) : "";
+
   if (!canEdit) {
-    return state ? <span className={`triage-badge triage-${state}`}>{TRIAGE_LABEL[state]}</span> : <span className="host-meta">-</span>;
+    if (!state) return <span className="host-meta">-</span>;
+    return (
+      <span className={`triage-badge triage-${expired ? "expired" : state}`}>
+        {TRIAGE_LABEL[state]}
+        {expired ? " · review due" : ""}
+      </span>
+    );
   }
 
-  async function apply(next: string) {
+  async function apply(nextState: string, nextReviewAt: string | null | undefined) {
     setBusy(true);
     setError(null);
     try {
-      if (next === "") {
+      if (nextState === "") {
         // Only meaningful if something was actually set - the server 404s
         // on clearing an untriaged finding, which would be a confusing
         // error for what is visually a no-op.
         if (state) await api.clearFindingTriage(target);
       } else {
-        await api.setFindingTriage(target, next as TriageState, note ?? undefined);
+        await api.setFindingTriage(target, nextState as TriageState, note ?? undefined, nextReviewAt);
       }
       onChanged();
     } catch (err) {
@@ -57,10 +74,10 @@ export default function TriageControl({
   return (
     <div className="triage-control">
       <select
-        className={state ? `triage-select triage-${state}` : "triage-select"}
+        className={state ? `triage-select triage-${expired ? "expired" : state}` : "triage-select"}
         value={state ?? ""}
         disabled={busy}
-        onChange={(e) => apply(e.target.value)}
+        onChange={(e) => apply(e.target.value, reviewAt)}
         title={note ?? undefined}
       >
         <option value="">Open</option>
@@ -70,6 +87,26 @@ export default function TriageControl({
           </option>
         ))}
       </select>
+
+      {state && (
+        <input
+          type="date"
+          className="triage-review-date"
+          value={reviewDateValue}
+          disabled={busy}
+          // Sent as end-of-day UTC so a date picked as "review on the 30th"
+          // stays honored through that whole day rather than lapsing at
+          // 00:00 on it.
+          onChange={(e) => apply(state, e.target.value ? `${e.target.value}T23:59:59.000Z` : null)}
+          title={
+            reviewAt
+              ? `This decision stops applying after ${reviewDateValue}, and the finding comes back`
+              : "Optional: a date after which this decision expires and the finding resurfaces"
+          }
+        />
+      )}
+
+      {expired && <span className="triage-badge triage-expired">review due</span>}
       {note && (
         <span className="triage-note" title={note}>
           {note}

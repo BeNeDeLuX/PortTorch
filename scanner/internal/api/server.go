@@ -388,6 +388,12 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, nucle
 	start := time.Now()
 	s.logger.Info("scan started", "event", "scan.started", "scan_job_id", jobID, "target", target, "ports", ports)
 
+	// Cheap re-stat so a serve process that has been up for weeks reports
+	// the templates it will actually use for this scan, not the ones it
+	// found at startup - someone may have run `nuclei -update-templates`
+	// on the host since.
+	s.client.RefreshNucleiTemplatesUpdatedAt()
+
 	// Fetched fresh for every scan rather than cached, so the webserver's
 	// most current exclude list always takes effect; fetch failure aborts
 	// the scan rather than proceeding unfiltered.

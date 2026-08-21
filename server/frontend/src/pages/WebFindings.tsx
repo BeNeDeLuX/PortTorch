@@ -79,7 +79,7 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
 
   const trimmedQuery = query.trim().toLowerCase();
   const filtered = findings.filter((f) => {
-    if (hideTriaged && f.triage_state) return false;
+    if (hideTriaged && f.triage_state && !f.triage_expired) return false;
     if (severityFilter && f.severity !== severityFilter) return false;
     if (!trimmedQuery) return true;
     return (
@@ -144,6 +144,7 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
                 { header: "tags", value: (f) => (f.tags ?? []).join(" ") },
                 { header: "triage_state", value: (f) => f.triage_state },
                 { header: "triage_note", value: (f) => f.triage_note },
+                { header: "triage_review_at", value: (f) => f.triage_review_at },
                 { header: "observed_at", value: (f) => f.observed_at },
               ]}
             />
@@ -194,6 +195,8 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
                     target={{ kind: "nuclei", hostId: f.host_id, templateId: f.template_id, matchedAt: f.matched_at }}
                     state={f.triage_state}
                     note={f.triage_note}
+                    reviewAt={f.triage_review_at}
+                    expired={f.triage_expired}
                     canEdit={canEdit}
                     onChanged={load}
                   />

@@ -17,17 +17,19 @@ describe("External API OpenAPI document", () => {
     expect(res.body.openapi).toBe("3.1.0");
   });
 
-  it("documents exactly the four endpoints the router exposes - no more, no fewer", async () => {
+  it("documents exactly the endpoints the router exposes - no more, no fewer", async () => {
     const res = await request(getApp()).get("/api/v1/openapi.json");
     const documented = Object.entries(res.body.paths as Record<string, Record<string, unknown>>)
       .flatMap(([path, ops]) => Object.keys(ops).map((method) => `${method.toUpperCase()} ${path}`))
       .sort();
 
     expect(documented).toEqual([
+      "DELETE /findings/triage",
       "GET /hosts/lookup",
       "POST /hosts/cancel-scan",
       "POST /hosts/rescan",
       "POST /scans/adhoc",
+      "PUT /findings/triage",
     ]);
   });
 

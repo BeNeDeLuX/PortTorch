@@ -28,6 +28,15 @@ export function worstOf(...statuses: HealthStatus[]): HealthStatus {
 // ScannerAgents.tsx's own RECENTLY_SEEN_THRESHOLD_MS.
 export const STALE_QUEUE_THRESHOLD_MS = 30 * 60_000;
 
+// nuclei templates are fetched once at install and never refreshed
+// automatically, so they age silently - a scan with stale templates looks
+// identical to one with current templates, it just finds less. These
+// thresholds are display-only heuristics: template releases land more or
+// less continuously, so a month is comfortably "getting old" and a
+// quarter is "you are almost certainly missing recent checks".
+export const NUCLEI_TEMPLATES_WARN_DAYS = 30;
+export const NUCLEI_TEMPLATES_CRITICAL_DAYS = 90;
+
 export interface FleetHealthData {
   loading: boolean;
   error: boolean;
@@ -37,6 +46,7 @@ export interface FleetHealthData {
   queueStatus: HealthStatus;
   retryQueueStatus: HealthStatus;
   webserverCertStatus: HealthStatus;
+  nucleiTemplatesStatus: HealthStatus;
   liveAgents: ScannerAgent[];
   staleJobs: ActiveScanJob[];
   activeScanJobs: ActiveScanJob[];
@@ -50,6 +60,10 @@ export interface FleetHealthData {
   agentsWithRetryBacklog: ScannerAgent[];
   totalRetryQueuePending: number;
   webserverCert: TlsCertificateInfo | null;
+  // Agents whose templates are old enough to warrant attention, and the
+  // single oldest age in days (null when no agent reports one at all).
+  staleTemplateAgents: ScannerAgent[];
+  oldestTemplateAgeDays: number | null;
 }
 
 // Shared by the Fleet Health page itself and the Dashboard's own small
@@ -171,7 +185,32 @@ export function useFleetHealth(me: Me): FleetHealthData {
   const retryQueueStatus: HealthStatus =
     totalRetryQueuePending === 0 ? "ok" : totalRetryQueuePending >= 20 ? "critical" : "warning";
 
-  const overall = worstOf(scannerStatus, updatesStatus, queueStatus, retryQueueStatus, webserverCert ? webserverCertStatus : "ok");
+  // Only agents that actually report a template date are considered -
+  // "unknown" (nuclei not installed, or an older scanner build) is not
+  // evidence of staleness and must not raise an alarm on a fleet that
+  // deliberately doesn't run nuclei at all.
+  const templateAges = liveAgents
+    .filter((a) => a.nuclei_templates_updated_at)
+    .map((a) => ({ agent: a, days: (Date.now() - new Date(a.nuclei_templates_updated_at!).getTime()) / 86_400_000 }));
+  const oldestTemplateAgeDays = templateAges.length > 0 ? Math.floor(Math.max(...templateAges.map((t) => t.days))) : null;
+  const staleTemplateAgents = templateAges.filter((t) => t.days >= NUCLEI_TEMPLATES_WARN_DAYS).map((t) => t.agent);
+  const nucleiTemplatesStatus: HealthStatus =
+    oldestTemplateAgeDays === null
+      ? "ok"
+      : oldestTemplateAgeDays >= NUCLEI_TEMPLATES_CRITICAL_DAYS
+        ? "critical"
+        : oldestTemplateAgeDays >= NUCLEI_TEMPLATES_WARN_DAYS
+          ? "warning"
+          : "ok";
+
+  const overall = worstOf(
+    scannerStatus,
+    updatesStatus,
+    queueStatus,
+    retryQueueStatus,
+    nucleiTemplatesStatus,
+    webserverCert ? webserverCertStatus : "ok"
+  );
 
   return {
     loading,
@@ -182,6 +221,7 @@ export function useFleetHealth(me: Me): FleetHealthData {
     queueStatus,
     retryQueueStatus,
     webserverCertStatus,
+    nucleiTemplatesStatus,
     liveAgents,
     staleJobs,
     activeScanJobs,
@@ -195,5 +235,7 @@ export function useFleetHealth(me: Me): FleetHealthData {
     agentsWithRetryBacklog,
     totalRetryQueuePending,
     webserverCert,
+    staleTemplateAgents,
+    oldestTemplateAgeDays,
   };
 }

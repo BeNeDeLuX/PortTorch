@@ -7,7 +7,7 @@ import { buildOpenApiDocument } from "./openapi";
 // specifically so it sits outside that router's tokenAuth chain: a browser
 // loading Swagger UI can't attach a bearer token to its own page load, and
 // codegen tooling (openapi-generator, Postman import) expects to fetch a
-// spec without credentials. What's exposed is the shape of four endpoints
+// spec without credentials. What's exposed is the shape of a handful of endpoints
 // and nothing else - no fleet data, no host records, no token material -
 // so this is a contract description, not an information leak of scan
 // results. The endpoints it documents remain token-authenticated; only

@@ -7,6 +7,7 @@ import ScanProgressModal from "../components/ScanProgressModal";
 import { formatDateTime } from "../lib/formatDate";
 import { elapsedLabel } from "../lib/elapsed";
 import { isVersionBehind } from "../lib/semver";
+import { NUCLEI_TEMPLATES_WARN_DAYS } from "../lib/useFleetHealth";
 
 type SortKey = "name" | "last_seen_at" | "last_seen_ip" | "version" | "current_scan" | "created_at";
 type SortDirection = "asc" | "desc";
@@ -20,6 +21,15 @@ type SortDirection = "asc" | "desc";
 // polls, refreshes it) - a false positive here just means the button does
 // nothing until the agent's next poll interval, not anything harmful.
 const RECENTLY_SEEN_THRESHOLD_MS = 5 * 60_000;
+
+// Whole days since this scanner last refreshed its nuclei templates, or
+// null when it has never reported one (nuclei not installed, or a build
+// predating the reporting header) - which is deliberately not the same as
+// "old" and shows nothing rather than a misleading badge.
+function templateAgeDays(a: ScannerAgent): number | null {
+  if (!a.nuclei_templates_updated_at) return null;
+  return Math.floor((Date.now() - new Date(a.nuclei_templates_updated_at).getTime()) / 86_400_000);
+}
 
 function looksLikeServeMode(a: ScannerAgent): boolean {
   if (!a.last_seen_at) return false;
@@ -335,6 +345,14 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
               title={`${a.submit_queue_pending} host submission(s) failed and are waiting to be retried (internal/submitqueue) - usually resolves itself once this scanner can reach the webserver again`}
             >
               {a.submit_queue_pending} queued for retry
+            </span>
+          )}
+          {templateAgeDays(a) !== null && templateAgeDays(a)! >= NUCLEI_TEMPLATES_WARN_DAYS && (
+            <span
+              className="stale-badge"
+              title={`nuclei templates last updated ${templateAgeDays(a)} days ago. They are fetched once at install and never refreshed automatically, so this scanner is likely missing newer checks - run "nuclei -update-templates" on that host.`}
+            >
+              templates {templateAgeDays(a)}d old
             </span>
           )}
         </td>

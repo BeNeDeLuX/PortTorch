@@ -85,7 +85,6 @@ describe("triage is respected consistently across surfaces", () => {
     await db.deleteFrom("kev_cache").where("cve_id", "in", [FP_CVE, ACCEPTED_CVE, OPEN_CVE]).execute();
     await deleteTestUser(operator.id);
     await deleteTestAgent(agent.id);
-    await closeDb();
   });
 
   it("drops a false positive from the host list risk indicator, but keeps an accepted risk", async () => {
@@ -141,5 +140,107 @@ describe("triage is respected consistently across surfaces", () => {
     expect(states.get(FP_CVE)).toBe("false_positive");
     expect(states.get(ACCEPTED_CVE)).toBe("accepted_risk");
     expect(states.get(OPEN_CVE)).toBeNull();
+  });
+});
+
+// An expiring decision is the whole reason review_at exists: accepting a
+// risk forever quietly recreates the problem triage was built to solve.
+describe("an expired triage decision stops being honored everywhere", () => {
+  let agent: TestAgent;
+  let operator: TestUser;
+  let client: SessionClient;
+  let hostId: string;
+  const IP2 = "240.12.2.2";
+  const CPE2 = "cpe:/a:it-triage-expiry:widget:1.0";
+  const CVE2 = "CVE-1999-9101";
+
+  beforeAll(async () => {
+    agent = await createTestAgent("it-triage-expiry-agent");
+    operator = await createTestUser("operator");
+    client = await loginAs(operator.username, operator.password);
+
+    const jobRes = await request(getApp())
+      .post("/api/ingest/scan-jobs")
+      .set("Authorization", `Bearer ${agent.apiKey}`)
+      .send({ targetSpec: IP2, portSpec: "443" });
+    await request(getApp())
+      .post("/api/ingest/hosts")
+      .set("Authorization", `Bearer ${agent.apiKey}`)
+      .send({
+        scanJobId: jobRes.body.id,
+        hosts: [{ ip: IP2, ports: [{ port: 443, protocol: "tcp", state: "open", serviceName: "https", cpes: [CPE2] }] }],
+      });
+    hostId = (await db.selectFrom("hosts").select(["id"]).where("ip", "=", IP2).executeTakeFirstOrThrow()).id;
+
+    await db
+      .insertInto("cve_cache")
+      .values({
+        cpe: CPE2,
+        cves: JSON.stringify([{ id: CVE2, cvssScore: 7.5, cvssSeverity: "HIGH", description: "expiring acceptance" }]),
+      })
+      .onConflict((oc) => oc.column("cpe").doUpdateSet({ cves: (eb) => eb.ref("excluded.cves") }))
+      .execute();
+  });
+
+  afterAll(async () => {
+    await db.deleteFrom("hosts").where("ip", "=", IP2).execute();
+    await db.deleteFrom("cve_cache").where("cpe", "=", CPE2).execute();
+    await deleteTestUser(operator.id);
+    await deleteTestAgent(agent.id);
+    // Only the last describe in the file may close the pool - doing it
+    // earlier breaks every block after it.
+    await closeDb();
+  });
+
+  it("suppresses the risk indicator while the acceptance is still in date", async () => {
+    const future = new Date(Date.now() + 30 * 86_400_000).toISOString();
+    await client
+      .put("/api/finding-triage")
+      .send({ kind: "cve", hostId, cveId: CVE2, state: "fixed", reviewAt: future });
+
+    const res = await client.get(`/api/hosts?q=${IP2}`);
+    const host = res.body.items.find((h: { id: string }) => h.id === hostId);
+    expect(host.cve_count).toBe(0);
+  });
+
+  it("counts again once the review date has passed, without the row being deleted", async () => {
+    const past = new Date(Date.now() - 86_400_000).toISOString();
+    await client.put("/api/finding-triage").send({ kind: "cve", hostId, cveId: CVE2, state: "fixed", reviewAt: past });
+
+    const res = await client.get(`/api/hosts?q=${IP2}`);
+    const host = res.body.items.find((h: { id: string }) => h.id === hostId);
+    expect(host.cve_count).toBe(1);
+
+    // The decision itself is kept - who decided what and when is the
+    // history worth preserving; expiry only stops it being honored.
+    const row = await db
+      .selectFrom("finding_triage")
+      .select(["state", "created_by"])
+      .where("host_id", "=", hostId)
+      .executeTakeFirstOrThrow();
+    expect(row.state).toBe("fixed");
+    expect(row.created_by).toBe(operator.username);
+  });
+
+  it("flags the finding as expired on the fleet-wide list so it can be re-reviewed", async () => {
+    const res = await client.get("/api/vulnerabilities");
+    const row = res.body.find((v: { host_id: string; cve_id: string }) => v.host_id === hostId && v.cve_id === CVE2);
+    expect(row.triage_state).toBe("fixed");
+    expect(row.triage_expired).toBe(true);
+  });
+
+  it("re-triaging without a review date clears the old expiry rather than inheriting it", async () => {
+    await client.put("/api/finding-triage").send({ kind: "cve", hostId, cveId: CVE2, state: "false_positive" });
+
+    const row = await db
+      .selectFrom("finding_triage")
+      .select(["review_at"])
+      .where("host_id", "=", hostId)
+      .executeTakeFirstOrThrow();
+    expect(row.review_at).toBeNull();
+
+    const res = await client.get(`/api/hosts?q=${IP2}`);
+    const host = res.body.items.find((h: { id: string }) => h.id === hostId);
+    expect(host.cve_count).toBe(0);
   });
 });

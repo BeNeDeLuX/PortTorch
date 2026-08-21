@@ -51,7 +51,6 @@ describe("external API - POST /scans/adhoc", () => {
     await db.deleteFrom("nuclei_profiles").where("id", "=", nucleiProfileId).execute();
     await deleteTestAgent(agent.id);
     await deleteTestApiToken(token.id);
-    await closeDb();
   });
 
   it("queues a scan_requests row with host_id null, resolves Custom NSE/nuclei profiles by name", async () => {
@@ -171,5 +170,126 @@ describe("external API - POST /scans/adhoc", () => {
     expect(nextRes.body.portSpec).toBe("22,443");
 
     await deleteTestAgent(freshAgent.id);
+  });
+});
+
+// Closing the loop from a ticketing/SOAR workflow: mark a finding handled
+// so it stops resurfacing, without anyone opening the dashboard.
+describe("external API - finding triage", () => {
+  let agent: TestAgent;
+  let token: TestApiToken;
+  let hostId: string;
+  const IP = "240.13.1.1";
+
+  beforeAll(async () => {
+    agent = await createTestAgent("it-extapi-triage-agent");
+    token = await createTestApiToken("it-extapi-triage-token");
+
+    const jobRes = await request(getApp())
+      .post("/api/ingest/scan-jobs")
+      .set("Authorization", `Bearer ${agent.apiKey}`)
+      .send({ targetSpec: IP, portSpec: "443" });
+    await request(getApp())
+      .post("/api/ingest/hosts")
+      .set("Authorization", `Bearer ${agent.apiKey}`)
+      .send({
+        scanJobId: jobRes.body.id,
+        hosts: [
+          {
+            ip: IP,
+            ports: [{ port: 443, protocol: "tcp", state: "open", serviceName: "https" }],
+            nucleiFindings: [
+              { port: 443, templateId: "extapi-tpl", name: "n", severity: "high", matchedAt: "https://240.13.1.1/x" },
+            ],
+          },
+        ],
+      });
+    hostId = (await db.selectFrom("hosts").select(["id"]).where("ip", "=", IP).executeTakeFirstOrThrow()).id;
+  });
+
+  afterAll(async () => {
+    await db.deleteFrom("hosts").where("ip", "=", IP).execute();
+    await deleteTestAgent(agent.id);
+    await deleteTestApiToken(token.id);
+    await closeDb();
+  });
+
+  const put = () => request(getApp()).put("/api/v1/findings/triage").set("Authorization", `Bearer ${token.token}`);
+  const del = () => request(getApp()).delete("/api/v1/findings/triage").set("Authorization", `Bearer ${token.token}`);
+
+  it("triages a CVE by ip, attributing it to the token rather than a user", async () => {
+    const res = await put().send({ ip: IP, cveId: "CVE-1999-7001", state: "fixed", note: "patched via TICKET-42" });
+    expect(res.status).toBe(200);
+    expect(res.body.state).toBe("fixed");
+
+    const row = await db
+      .selectFrom("finding_triage")
+      .selectAll()
+      .where("host_id", "=", hostId)
+      .where("kind", "=", "cve")
+      .executeTakeFirstOrThrow();
+    expect(row.cve_id).toBe("CVE-1999-7001");
+    expect(row.created_by).toBe(`api-token:${token.name}`);
+    expect(row.note).toBe("patched via TICKET-42");
+  });
+
+  it("triages a nuclei finding by template id and matched URL", async () => {
+    const res = await put().send({
+      ip: IP,
+      templateId: "extapi-tpl",
+      matchedAt: "https://240.13.1.1/x",
+      state: "false_positive",
+    });
+    expect(res.status).toBe(200);
+
+    const list = await request(getApp())
+      .get("/api/v1/hosts/lookup?ip=" + IP)
+      .set("Authorization", `Bearer ${token.token}`);
+    expect(list.status).toBe(200);
+  });
+
+  it("accepts a review date so the decision expires instead of lasting forever", async () => {
+    const reviewAt = new Date(Date.now() + 7 * 86_400_000).toISOString();
+    const res = await put().send({ ip: IP, cveId: "CVE-1999-7002", state: "accepted_risk", reviewAt });
+    expect(res.status).toBe(200);
+    expect(res.body.reviewAt).toBeTruthy();
+  });
+
+  it("rejects a body that identifies neither finding kind", async () => {
+    const res = await put().send({ ip: IP, state: "fixed" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/cveId/);
+  });
+
+  it("rejects a half-specified nuclei finding", async () => {
+    const res = await put().send({ ip: IP, templateId: "extapi-tpl", state: "fixed" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/matchedAt/);
+  });
+
+  it("rejects mixing both finding kinds in one call", async () => {
+    const res = await put().send({
+      ip: IP,
+      cveId: "CVE-1999-7003",
+      templateId: "extapi-tpl",
+      matchedAt: "https://240.13.1.1/x",
+      state: "fixed",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("404s for an unknown host", async () => {
+    const res = await put().send({ ip: "240.13.9.9", cveId: "CVE-1999-7004", state: "fixed" });
+    expect(res.status).toBe(404);
+  });
+
+  it("clears triage again, and 404s when there was nothing to clear", async () => {
+    expect((await del().send({ ip: IP, cveId: "CVE-1999-7001" })).status).toBe(204);
+    expect((await del().send({ ip: IP, cveId: "CVE-1999-7001" })).status).toBe(404);
+  });
+
+  it("requires a token", async () => {
+    const res = await request(getApp()).put("/api/v1/findings/triage").send({ ip: IP, cveId: "X", state: "fixed" });
+    expect(res.status).toBe(401);
   });
 });

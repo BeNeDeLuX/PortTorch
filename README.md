@@ -137,6 +137,15 @@ Each item below is a one-line summary - click **Details** to expand it.
   Choose which NSE scripts a scan actually runs, per rescan or schedule: **Default** (the standard script set below), **All Safe Modules** (nmap's own much larger "safe" script category), or a named **Custom** profile with its own hand-picked script list, managed on its own admin page. A separate, opt-in-only **Active Modules** tier (intrusive/exploit/brute-force/denial-of-service scripts) can be added to a Custom profile's script list, clearly flagged wherever it's used - these are never included in Default or All Safe Modules, and should only ever be run against systems you're explicitly authorized to test that way.
   </details>
 
+- :calendar: **Nuclei template age** - each scanner reports how old its nuclei templates are, so they don't go stale unnoticed.
+  <details>
+  <summary>Details</summary>
+
+  nuclei's templates are downloaded once during installation and are **not** refreshed automatically - a scanner quietly pulling new check logic off the internet is a decision you should make, not a default. The catch is that stale templates fail invisibly: a scan with year-old templates looks exactly like one with current templates, it just stops finding anything newer.
+
+  So each scanner reports its template age on every check-in, shown as a badge on the Scanner Agents page and as a **Nuclei Templates** card on Fleet Health (warning past 30 days, critical past 90). Refresh them by running `nuclei -update-templates` on the scanner host, or re-running `install.sh --rebuild-only`. Scanners without nuclei installed simply report nothing and are never flagged.
+  </details>
+
 - :spider_web: **Nuclei Profiles** (admin only) - opt-in web-application vulnerability scanning against discovered HTTP(S) ports: Off, Safe, or a Custom tag/severity list.
   <details>
   <summary>Details</summary>
@@ -186,7 +195,9 @@ Each item below is a one-line summary - click **Details** to expand it.
   - EPSS and CISA KEV alert webhooks drop **all three** - being paged about something you already decided on is exactly the alert fatigue this exists to prevent.
   - A host's own detail page hides **nothing** and simply badges the triaged entries, since that page is the host's complete record rather than a work queue.
 
-  Every triage change is attributed and shows up in the audit log.
+  A decision can carry a **review date**, after which it expires: the finding comes back into view with a "review due" badge and starts counting again everywhere. Accepting a risk indefinitely stays possible, but time-boxing it is usually what you want - otherwise the finding is gone for good and nobody revisits it.
+
+  Every triage change is attributed and shows up in the audit log, and it can also be driven from the External API (`PUT /api/v1/findings/triage`), so a ticketing/SOAR workflow can mark a finding handled when the remediation ticket closes.
   </details>
 
 - :bar_chart: **Digest** - a fleet-wide "what changed" view over the last 24h/7d, also sendable daily by email/webhook.

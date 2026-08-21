@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { describe, expect, it } from "vitest";
-import { hashApiKey, parseBearerToken, parseSubmitQueuePendingHeader } from "./apiKeyAuth";
+import { hashApiKey, parseBearerToken, parseSubmitQueuePendingHeader , parseNucleiTemplatesUpdatedHeader } from "./apiKeyAuth";
 
 describe("hashApiKey", () => {
   it("is deterministic", () => {
@@ -102,5 +102,34 @@ describe("parseSubmitQueuePendingHeader", () => {
     // the value is display-only (a Fleet Health badge), not something
     // security-sensitive enough to warrant rejecting it outright.
     expect(parseSubmitQueuePendingHeader("12abc")).toBe(12);
+  });
+});
+
+describe("parseNucleiTemplatesUpdatedHeader", () => {
+  const now = new Date("2026-06-15T12:00:00.000Z");
+
+  it("parses an RFC3339 timestamp the scanner sends", () => {
+    const parsed = parseNucleiTemplatesUpdatedHeader("2026-05-01T08:30:00Z", now);
+    expect(parsed?.toISOString()).toBe("2026-05-01T08:30:00.000Z");
+  });
+
+  it("returns null when the header is absent - unknown, not old", () => {
+    // Distinct from a very old date: nuclei may simply not be installed,
+    // and a fleet that doesn't use it shouldn't be flagged as stale.
+    expect(parseNucleiTemplatesUpdatedHeader(undefined, now)).toBeNull();
+  });
+
+  it("returns null for an unparseable value rather than an Invalid Date", () => {
+    expect(parseNucleiTemplatesUpdatedHeader("not-a-date", now)).toBeNull();
+    expect(parseNucleiTemplatesUpdatedHeader("", now)).toBeNull();
+  });
+
+  it("rejects a future timestamp, which would otherwise read as permanently fresh", () => {
+    expect(parseNucleiTemplatesUpdatedHeader("2027-01-01T00:00:00Z", now)).toBeNull();
+  });
+
+  it("tolerates small clock skew rather than discarding a nearly-now value", () => {
+    const slightlyAhead = new Date(now.getTime() + 30_000).toISOString();
+    expect(parseNucleiTemplatesUpdatedHeader(slightlyAhead, now)).not.toBeNull();
   });
 });

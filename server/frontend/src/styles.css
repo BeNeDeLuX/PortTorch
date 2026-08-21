@@ -745,6 +745,22 @@ button.export-link {
   color: var(--warning);
 }
 
+/* An expired decision reads as needing attention, not as resolved - it
+   deliberately overrides whatever state colour it would otherwise have,
+   because "we accepted this until March" and "March has passed" are very
+   different situations to look at. */
+.triage-badge.triage-expired,
+.triage-select.triage-expired {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.triage-review-date {
+  padding: 0.15rem 0.3rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
 /* The note is context, not the primary content of the cell - truncated
    with the full text on hover (title), same treatment as .banner. */
 .triage-note {

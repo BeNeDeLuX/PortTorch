@@ -48,6 +48,21 @@ export function parseSubmitQueuePendingHeader(header: string | undefined): numbe
   return Number.isNaN(n) || n < 0 ? null : n;
 }
 
+// When the scanner's nuclei template tree was last written (RFC3339).
+// Absent means "unknown" - nuclei isn't installed, or the templates were
+// never fetched - which is deliberately distinct from a very old date,
+// and only ever overwritten with a real value, never cleared by a
+// scanner build that doesn't send it. A future-dated value is rejected as
+// a clock problem rather than recorded, since "updated tomorrow" would
+// display as permanently fresh.
+export function parseNucleiTemplatesUpdatedHeader(header: string | undefined, now: Date = new Date()): Date | null {
+  if (header === undefined) return null;
+  const parsed = new Date(header);
+  if (Number.isNaN(parsed.getTime())) return null;
+  if (parsed.getTime() > now.getTime() + 60_000) return null;
+  return parsed;
+}
+
 // Plain X.Y.Z numeric compare - same "no pre-release/build-metadata
 // suffix" assumption as its independent counterparts in
 // scannerUpdate/githubSync.ts, ScannerAgents.tsx, and the scanner's own
@@ -96,6 +111,7 @@ export async function apiKeyAuth(req: Request, res: Response, next: NextFunction
   // above, reporting internal/submitqueue's current backlog size for
   // this scanner (see Fleet Health's "Retry Queue Backlog" card).
   const reportedPending = parseSubmitQueuePendingHeader(req.header("x-scanner-submit-queue-pending"));
+  const reportedTemplatesUpdated = parseNucleiTemplatesUpdatedHeader(req.header("x-scanner-nuclei-templates-updated"));
 
   // A scanner can end up already at (or past) the latest version while a
   // stale 'pending'/'failed' self-update request is still sitting on its
@@ -128,6 +144,11 @@ export async function apiKeyAuth(req: Request, res: Response, next: NextFunction
       last_seen_ip: req.ip ?? null,
       version: reportedVersion ?? null,
       submit_queue_pending: reportedPending,
+      // Only written when the scanner actually reported one - an older
+      // build that doesn't send the header must not wipe a value a newer
+      // one previously recorded, unlike version/submit_queue_pending
+      // where absence genuinely means "unknown right now".
+      ...(reportedTemplatesUpdated ? { nuclei_templates_updated_at: reportedTemplatesUpdated } : {}),
       ...(clearStaleUpdateState
         ? { update_requested_at: null, update_request_status: null, update_failure_reason: null, update_attempt_count: 0 }
         : {}),
