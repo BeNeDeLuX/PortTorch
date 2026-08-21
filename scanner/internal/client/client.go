@@ -734,6 +734,33 @@ func (c *Client) ReportUpdateOutcome(ctx context.Context, succeeded bool, failur
 	return c.doJSON(ctx, http.MethodPatch, "/api/ingest/update-outcome", body, nil)
 }
 
+// CheckTemplateUpdateRequested asks whether an admin has requested this
+// scanner refresh its nuclei templates (see the ScannerAgents "Update
+// templates" button) - the template counterpart to CheckUpdateRequested,
+// same implicit scoping to this scanner's own authenticated agent.
+func (c *Client) CheckTemplateUpdateRequested(ctx context.Context) (bool, error) {
+	var resp struct {
+		Requested bool `json:"requested"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/api/ingest/template-update-requested", nil, &resp); err != nil {
+		return false, err
+	}
+	return resp.Requested, nil
+}
+
+// ReportTemplateUpdateOutcome is ReportUpdateOutcome's template
+// counterpart - same body shape, same "a failure needs a human-readable
+// reason so it's visible on the dashboard" contract.
+func (c *Client) ReportTemplateUpdateOutcome(ctx context.Context, succeeded bool, failureReason string) error {
+	var body map[string]string
+	if succeeded {
+		body = map[string]string{"status": "succeeded"}
+	} else {
+		body = map[string]string{"status": "failed", "reason": failureReason}
+	}
+	return c.doJSON(ctx, http.MethodPatch, "/api/ingest/template-update-outcome", body, nil)
+}
+
 func (c *Client) doJSON(ctx context.Context, method, path string, body any, out any) error {
 	var reqBody io.Reader
 	if body != nil {

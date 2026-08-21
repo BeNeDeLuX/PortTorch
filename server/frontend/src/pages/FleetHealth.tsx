@@ -139,7 +139,7 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
           {health.oldestTemplateAgeDays === null
             ? "nuclei may not be installed, or the scanners predate this reporting"
             : health.staleTemplateAgents.length > 0
-              ? `${health.staleTemplateAgents.length} scanner${health.staleTemplateAgents.length === 1 ? "" : "s"} over ${NUCLEI_TEMPLATES_WARN_DAYS}d - run "nuclei -update-templates"`
+              ? `${health.staleTemplateAgents.length} scanner${health.staleTemplateAgents.length === 1 ? "" : "s"} over ${NUCLEI_TEMPLATES_WARN_DAYS}d - refresh from Scanner Agents`
               : "All scanners reasonably current"}
         </HealthCard>
 

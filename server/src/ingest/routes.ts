@@ -259,6 +259,104 @@ ingestRouter.patch("/update-outcome", asyncHandler(async (req, res) => {
   res.status(204).end();
 }));
 
+// The nuclei-template counterpart to /update-requested above - same
+// polled-flag shape, same implicit scoping to the calling agent.
+ingestRouter.get("/template-update-requested", asyncHandler(async (req, res) => {
+  const agent = await db
+    .selectFrom("scanner_agents")
+    .select(["template_update_status"])
+    .where("id", "=", req.scannerAgentId!)
+    .executeTakeFirstOrThrow();
+  // Keyed on the status rather than requested_at (unlike
+  // /update-requested), because requested_at deliberately survives a
+  // give-up here - see /template-update-outcome below.
+  res.json({ requested: agent.template_update_status === "pending" });
+}));
+
+// Mirrors /update-outcome exactly, including the give-up-after-3 policy -
+// a template refresh that keeps failing (no nuclei binary on that host, no
+// route to the template repo, an unwritable templates directory) is a
+// standing condition that won't fix itself by being retried forever, and
+// the failure reason has to stay visible until an admin acts on it.
+//
+// Deliberately no webhook counterpart to scanner.update_failed: stale
+// templates are already surfaced continuously via the reported template
+// age (Fleet Health's Nuclei Templates card), so a failed refresh can't
+// go unnoticed the way an exhausted binary update otherwise would.
+//
+// One deliberate divergence from /update-outcome: giving up does NOT
+// clear template_update_requested_at, only flips the status to 'failed'
+// (which is what actually stops the scanner polling for it - see
+// /template-update-requested above). The binary update can tell "already
+// fixed by hand" from "still broken" by comparing the reported version
+// against the release cache; templates have no version, only an age, so
+// the *request time* is the only available anchor for that same
+// reconciliation - and it's needed precisely in the given-up case, where
+// an admin who fixed it manually on the host would otherwise be stuck
+// with an undismissable "template update failed" badge. See apiKeyAuth.ts.
+ingestRouter.patch("/template-update-outcome", asyncHandler(async (req, res) => {
+  const parsed = updateOutcomeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  if (parsed.data.status === "succeeded") {
+    await db
+      .updateTable("scanner_agents")
+      .set({
+        template_update_requested_at: null,
+        template_update_status: null,
+        template_update_failure_reason: null,
+        template_update_attempt_count: 0,
+      })
+      .where("id", "=", req.scannerAgentId!)
+      .execute();
+    logger.info({
+      event: "scanner.template_update_succeeded",
+      scanner_agent_id: req.scannerAgentId,
+      scanner_agent_name: req.scannerAgentName,
+    });
+    res.status(204).end();
+    return;
+  }
+
+  const agent = await db
+    .selectFrom("scanner_agents")
+    .select(["template_update_attempt_count"])
+    .where("id", "=", req.scannerAgentId!)
+    .executeTakeFirstOrThrow();
+  const attempts = agent.template_update_attempt_count + 1;
+
+  await db
+    .updateTable("scanner_agents")
+    .set(
+      attempts >= MAX_UPDATE_ATTEMPTS
+        ? {
+            template_update_status: "failed",
+            template_update_failure_reason: parsed.data.reason,
+            template_update_attempt_count: attempts,
+          }
+        : {
+            template_update_status: "pending",
+            template_update_failure_reason: parsed.data.reason,
+            template_update_attempt_count: attempts,
+          }
+    )
+    .where("id", "=", req.scannerAgentId!)
+    .execute();
+
+  logger.info({
+    event: "scanner.template_update_failed",
+    scanner_agent_id: req.scannerAgentId,
+    scanner_agent_name: req.scannerAgentName,
+    attempt: attempts,
+    reason: parsed.data.reason,
+    gave_up: attempts >= MAX_UPDATE_ATTEMPTS,
+  });
+  res.status(204).end();
+}));
+
 const progressLogLineSchema = z.object({
   time: z.string(),
   stage: z.string(),

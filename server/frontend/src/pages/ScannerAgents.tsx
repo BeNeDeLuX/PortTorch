@@ -247,6 +247,18 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
     await load();
   }
 
+  async function handleRequestTemplateUpdate(a: ScannerAgent) {
+    if (
+      !window.confirm(
+        `Refresh nuclei templates on "${a.name}"? It runs "nuclei -update-templates" on its own next poll, as the user the scanner service runs as - which is what makes the refresh actually apply to the templates its scans read.`
+      )
+    ) {
+      return;
+    }
+    await api.requestTemplateUpdate(a.id);
+    await load();
+  }
+
   // Same single-agent request-update endpoint, just looped - pure
   // frontend reuse (Promise.allSettled) rather than a new bulk API
   // surface, same pattern as the Dashboard's own bulk tag/rescan actions.
@@ -350,7 +362,7 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
           {templateAgeDays(a) !== null && templateAgeDays(a)! >= NUCLEI_TEMPLATES_WARN_DAYS && (
             <span
               className="stale-badge"
-              title={`nuclei templates last updated ${templateAgeDays(a)} days ago. They are fetched once at install and never refreshed automatically, so this scanner is likely missing newer checks - run "nuclei -update-templates" on that host.`}
+              title={`nuclei templates last updated ${templateAgeDays(a)} days ago. They are fetched once at install and never refreshed automatically, so this scanner is likely missing newer checks. Use the "Update templates" action, or on the host itself run "sudo -u porttorch nuclei -update-templates" - the template tree is per-user, so a plain root-run update writes root's home instead and this scanner would never see it.`}
             >
               templates {templateAgeDays(a)}d old
             </span>
@@ -372,6 +384,21 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
             <IconRocket /> Update
           </button>
         )}
+        {/* Without this, an agent that's behind but hasn't polled recently
+            renders nothing at all here - while Fleet Health's own "Scanner
+            Updates" card still counts it as "N behind" (it filters only on
+            revoked + version, deliberately, since being behind is a fleet
+            fact independent of whether an update can be triggered right
+            now). The two pages then legitimately disagree with no way to
+            tell why, which reads as a broken button rather than an
+            unmet precondition. */}
+        {behind && !looksLikeServeMode(a) && !a.update_requested_at && (
+          <span className="update-unavailable-note">
+            v{latestRelease?.latestVersion} available, but this scanner last checked in{" "}
+            {a.last_seen_at ? `${elapsedLabel(a.last_seen_at)} ago` : "never"} - only a scanner running in "serve" mode
+            polls often enough to ever pick up an update request. Start it there, then this button appears.
+          </span>
+        )}
         {a.update_requested_at && a.update_request_status !== "failed" && (
           <span className="stale-badge" title="Waiting for this scanner to pick up the update on its next poll">
             update pending
@@ -381,6 +408,30 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
           <>
             <span className="update-failed-badge">update failed</span>
             {a.update_failure_reason && <span className="update-failure-reason">{a.update_failure_reason}</span>}
+          </>
+        )}
+
+        {/* Unconditional for a serve-mode agent, unlike the binary update
+            above: templates carry no version, so there's no "is it behind"
+            to gate on - only an age, and refreshing an already-current
+            tree is a harmless no-op. Same serve-mode requirement though,
+            since the watcher that acts on the request only runs there. */}
+        {looksLikeServeMode(a) && a.template_update_status !== "pending" && (
+          <button className="btn-icon-label" onClick={() => handleRequestTemplateUpdate(a)}>
+            <IconRefresh /> Update templates
+          </button>
+        )}
+        {a.template_update_status === "pending" && (
+          <span className="stale-badge" title="Waiting for this scanner to refresh its nuclei templates on its next poll">
+            templates updating
+          </span>
+        )}
+        {a.template_update_status === "failed" && (
+          <>
+            <span className="update-failed-badge">template update failed</span>
+            {a.template_update_failure_reason && (
+              <span className="update-failure-reason">{a.template_update_failure_reason}</span>
+            )}
           </>
         )}
       </>

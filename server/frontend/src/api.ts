@@ -463,6 +463,14 @@ export interface ScannerAgent {
   // When this scanner last updated its nuclei templates. null = unknown
   // (nuclei not installed, or a scanner build that doesn't report it).
   nuclei_templates_updated_at: string | null;
+  // Admin-triggered nuclei template refresh (the "Update templates"
+  // button), independent of the binary self-update above - both can be
+  // outstanding at once. Unlike update_requested_at, this one stays set
+  // after a give-up, so 'pending' vs 'failed' is what distinguishes
+  // "still being attempted" from "gave up"; see ingest/routes.ts.
+  template_update_requested_at: string | null;
+  template_update_status: "pending" | "failed" | null;
+  template_update_failure_reason: string | null;
 }
 
 export interface ScannerReleaseInfo {
@@ -814,6 +822,8 @@ export const api = {
   latestScannerRelease: () => request<ScannerReleaseInfo>("/api/agents/latest-release"),
   refreshScannerRelease: () => request<ScannerReleaseInfo>("/api/agents/latest-release/refresh", { method: "POST" }),
   requestScannerUpdate: (id: string) => request<void>(`/api/agents/${id}/request-update`, { method: "POST" }),
+  requestTemplateUpdate: (id: string) =>
+    request<void>(`/api/agents/${id}/request-template-update`, { method: "POST" }),
   activeScanJobs: () => request<ActiveScanJob[]>("/api/scan-jobs/active"),
   scanJobProgress: (id: string) => request<ScanJobProgress>(`/api/scan-jobs/${id}/progress`),
   scanQueue: () => request<QueuedScanRequest[]>("/api/scan-jobs/queue"),

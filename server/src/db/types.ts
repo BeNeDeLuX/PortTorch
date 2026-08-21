@@ -70,6 +70,15 @@ export interface ScannerAgentsTable {
   // install and never refreshed automatically, so this is what makes
   // silent staleness visible (see Fleet Health's Nuclei Templates card).
   nuclei_templates_updated_at: Date | null;
+  // Admin-triggered nuclei template refresh - the same poll-a-flag shape
+  // as update_requested_at above, kept as its own independent set of
+  // columns rather than folded into those: refreshing templates and
+  // replacing the binary are unrelated actions that can be outstanding
+  // simultaneously, which one shared status column couldn't express.
+  template_update_requested_at: Date | null;
+  template_update_status: "pending" | "failed" | null;
+  template_update_failure_reason: string | null;
+  template_update_attempt_count: ColumnType<number, number | undefined, number>;
 }
 
 // Singleton (id always 1) cache of the latest published scanner-vX.Y.Z

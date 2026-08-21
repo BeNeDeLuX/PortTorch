@@ -454,8 +454,15 @@ button.export-link {
   margin-bottom: 0;
 }
 
+/* flex-wrap is load-bearing, not cosmetic: .update-failure-reason (and
+   .update-unavailable-note) rely on flex-basis: 100% to claim their own
+   line under the buttons, which a nowrap flex row silently ignores -
+   it just shrinks them inline instead. Without it, a row carrying both
+   update actions plus a failure reason squeezes every item until button
+   labels break mid-word. */
 .actions-cell {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
 }
@@ -1887,6 +1894,17 @@ th {
 .update-failure-reason {
   flex-basis: 100%;
   color: var(--danger);
+  font-size: 0.8rem;
+}
+
+/* Why the "Update" button isn't offered for an agent that IS behind -
+   same own-line flex trick as .update-failure-reason above, but --muted
+   rather than --danger: an agent not running in serve mode is a normal
+   state (a one-shot "scan"/"menu" host, or a stopped service), not a
+   failure, so it must not read as an error. */
+.update-unavailable-note {
+  flex-basis: 100%;
+  color: var(--muted);
   font-size: 0.8rem;
 }
 

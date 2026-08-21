@@ -9,6 +9,7 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { requestScannerUpdate } from "../scannerUpdate/requestUpdate";
+import { requestTemplateUpdate } from "../scannerUpdate/requestTemplateUpdate";
 import { syncScannerRelease } from "../scannerUpdate/githubSync";
 
 export const agentsRouter = Router();
@@ -79,6 +80,9 @@ agentsRouter.get("/", asyncHandler(async (req, res) => {
       "update_failure_reason",
       "submit_queue_pending",
       "nuclei_templates_updated_at",
+      "template_update_requested_at",
+      "template_update_status",
+      "template_update_failure_reason",
     ]);
   if (allowed) {
     query = query.where("id", "in", allowed);
@@ -173,6 +177,37 @@ agentsRouter.post("/:id/request-update", requireAdmin, asyncHandler(async (req, 
     source_ip: req.ip,
   });
   recordAudit("agent.update_requested", req.session.username, req.ip, { scanner_agent_id: req.params.id });
+
+  res.status(204).end();
+}));
+
+// Same polled-flag mechanism as request-update above, for the scanner's
+// nuclei template tree instead of its binary. This exists because the
+// templates are fetched exactly once by install.sh and never refreshed
+// afterwards, so the only way to update them used to be an SSH session on
+// the scanner host - and specifically one running as the service user,
+// since the tree location is per-user (see scanner/CLAUDE.md's installer
+// section). 409 if already revoked or a template update is already
+// outstanding, re-checked here rather than trusted from the frontend.
+agentsRouter.post("/:id/request-template-update", requireAdmin, asyncHandler(async (req, res) => {
+  if (!uuidSchema.safeParse(req.params.id).success) {
+    res.status(400).json({ error: "invalid scanner agent id" });
+    return;
+  }
+
+  const outcome = await requestTemplateUpdate(req.params.id as string);
+  if (!outcome.ok) {
+    res.status(outcome.status).json({ error: outcome.error });
+    return;
+  }
+
+  logger.info({
+    event: "agent.template_update_requested",
+    scanner_agent_id: req.params.id,
+    requested_by: req.session.username,
+    source_ip: req.ip,
+  });
+  recordAudit("agent.template_update_requested", req.session.username, req.ip, { scanner_agent_id: req.params.id });
 
   res.status(204).end();
 }));

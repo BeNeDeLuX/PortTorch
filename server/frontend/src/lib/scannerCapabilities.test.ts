@@ -16,6 +16,9 @@ function agent(version: string | null): ScannerAgent {
     update_failure_reason: null,
     submit_queue_pending: null,
     nuclei_templates_updated_at: null,
+    template_update_requested_at: null,
+    template_update_status: null,
+    template_update_failure_reason: null,
   };
 }
 

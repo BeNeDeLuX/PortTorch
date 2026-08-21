@@ -89,7 +89,14 @@ export async function apiKeyAuth(req: Request, res: Response, next: NextFunction
   const providedHash = hashApiKey(providedKey);
   const agent = await db
     .selectFrom("scanner_agents")
-    .select(["id", "name", "api_key_hash", "update_request_status"])
+    .select([
+      "id",
+      "name",
+      "api_key_hash",
+      "update_request_status",
+      "template_update_status",
+      "template_update_requested_at",
+    ])
     .where("api_key_hash", "=", providedHash)
     .where("revoked_at", "is", null)
     .executeTakeFirst();
@@ -137,6 +144,21 @@ export async function apiKeyAuth(req: Request, res: Response, next: NextFunction
     }
   }
 
+  // The same reconciliation for a stale template-update request, but with
+  // a different notion of "the goal was already reached": templates carry
+  // no version to compare against a canonical latest, only an mtime - so
+  // the evidence here is the reported tree being newer than the moment the
+  // refresh was requested. That covers exactly the case the binary
+  // update's own clear covers: an admin who ran `nuclei -update-templates`
+  // on the host by hand instead of re-triggering from the dashboard, whose
+  // scanner therefore never called PATCH /template-update-outcome. Needs
+  // no extra query, since both values are already in hand.
+  const clearStaleTemplateState =
+    agent.template_update_status !== null &&
+    agent.template_update_requested_at !== null &&
+    reportedTemplatesUpdated !== null &&
+    reportedTemplatesUpdated > agent.template_update_requested_at;
+
   await db
     .updateTable("scanner_agents")
     .set({
@@ -151,6 +173,14 @@ export async function apiKeyAuth(req: Request, res: Response, next: NextFunction
       ...(reportedTemplatesUpdated ? { nuclei_templates_updated_at: reportedTemplatesUpdated } : {}),
       ...(clearStaleUpdateState
         ? { update_requested_at: null, update_request_status: null, update_failure_reason: null, update_attempt_count: 0 }
+        : {}),
+      ...(clearStaleTemplateState
+        ? {
+            template_update_requested_at: null,
+            template_update_status: null,
+            template_update_failure_reason: null,
+            template_update_attempt_count: 0,
+          }
         : {}),
     })
     .where("id", "=", agent.id)

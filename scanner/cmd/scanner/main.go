@@ -225,6 +225,13 @@ func newServeCmd(configPath *string) *cobra.Command {
 			go updater.StartUpdateWatcher(context.Background(), c, server, pollInterval, log)
 			log.Info("scanner update watcher started", "event", "serve.update_watcher_started", "poll_interval", pollInterval.String())
 
+			// Its own watcher rather than another branch inside the one
+			// above: a template refresh and a binary self-update are
+			// independent actions that can both be outstanding at once,
+			// and neither should have to wait on the other's outcome.
+			go updater.StartTemplateUpdateWatcher(context.Background(), c, server, pollInterval, cfg.NucleiPath, log)
+			log.Info("nuclei template update watcher started", "event", "serve.template_update_watcher_started", "poll_interval", pollInterval.String())
+
 			retryInterval := time.Duration(cfg.RetryIntervalSeconds) * time.Second
 			go server.StartRetryWatcher(context.Background(), retryInterval)
 			log.Info("submit retry watcher started", "event", "serve.retry_watcher_started", "retry_interval", retryInterval.String())
