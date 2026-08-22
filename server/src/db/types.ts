@@ -621,6 +621,18 @@ export interface AppSettingsTable {
   // How many pending scan_requests rows before Fleet Health's "Scan
   // Queue" card escalates to "warning" - see useFleetHealth.ts.
   scan_queue_warning_threshold: ColumnType<number, number | undefined, number>;
+  // How long a finished scan's pushed logs (scan_job_full_log,
+  // scan_job_progress) are kept. Its own window rather than reusing
+  // host_retention_days: host records are the product, scan logs are
+  // diagnostics that age out far faster. 0 disables the purge.
+  scan_log_retention_days: ColumnType<number, number | undefined, number>;
+  // The last three alerting tunables to move out of config.ts - see
+  // migration 1743800000000. The digest hour in particular sat oddly once
+  // SMTP became dashboard-configurable: what we mail with was editable
+  // live, when we mail still needed a redeploy.
+  digest_email_hour_utc: ColumnType<number, number | undefined, number>;
+  epss_alert_threshold: ColumnType<number, number | undefined, number>;
+  queue_backlog_threshold_minutes: ColumnType<number, number | undefined, number>;
   // Was config.ts's SMTP_* env vars - moved here for the same reason as
   // the fields above, plus one specific to mail: it's the setting most
   // likely to be wrong on first setup and to need a few quick iterations,

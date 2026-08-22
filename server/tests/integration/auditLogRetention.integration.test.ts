@@ -60,7 +60,9 @@ describe("retention also purges audit_log entries older than host_retention_days
 
     const res = await client.post("/api/settings/retention/run-now");
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ purgedHosts: 0, purgedAuditLogEntries: 0 });
+    // Scan-log retention is its own independent window, so it reports
+    // separately here even when the host sweep is disabled.
+    expect(res.body).toMatchObject({ purgedHosts: 0, purgedAuditLogEntries: 0 });
 
     const survived = await db
       .selectFrom("audit_log")

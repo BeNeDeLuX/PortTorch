@@ -39,6 +39,17 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
   const [savingQueueThreshold, setSavingQueueThreshold] = useState(false);
   const [queueThresholdError, setQueueThresholdError] = useState<string | null>(null);
 
+  const [digestHourInput, setDigestHourInput] = useState("");
+  const [epssThresholdInput, setEpssThresholdInput] = useState("");
+  const [backlogMinutesInput, setBacklogMinutesInput] = useState("");
+  const [savingAlertTunables, setSavingAlertTunables] = useState(false);
+  const [alertTunablesError, setAlertTunablesError] = useState<string | null>(null);
+  const [alertTunablesSaved, setAlertTunablesSaved] = useState(false);
+
+  const [scanLogDaysInput, setScanLogDaysInput] = useState("");
+  const [savingScanLogDays, setSavingScanLogDays] = useState(false);
+  const [scanLogDaysError, setScanLogDaysError] = useState<string | null>(null);
+
   const [smtpHost, setSmtpHost] = useState("");
   const [smtpPort, setSmtpPort] = useState("587");
   const [smtpSecure, setSmtpSecure] = useState(false);
@@ -64,6 +75,10 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
         setRetentionDaysInput(String(s.hostRetentionDays));
         setStaleThresholdInput(String(s.staleScanThresholdMinutes));
         setQueueThresholdInput(String(s.scanQueueWarningThreshold));
+        setScanLogDaysInput(String(s.scanLogRetentionDays));
+        setDigestHourInput(String(s.digestEmailHourUtc));
+        setEpssThresholdInput(String(s.epssAlertThreshold));
+        setBacklogMinutesInput(String(s.queueBacklogThresholdMinutes));
         setSmtpHost(s.smtp.host ?? "");
         setSmtpPort(String(s.smtp.port));
         setSmtpSecure(s.smtp.secure);
@@ -132,6 +147,61 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       setStaleThresholdError(err instanceof Error ? err.message : "Failed to update setting");
     } finally {
       setSavingStaleThreshold(false);
+    }
+  }
+
+  async function handleSaveAlertTunables(e: FormEvent) {
+    e.preventDefault();
+    const hour = parseInt(digestHourInput, 10);
+    const epss = parseFloat(epssThresholdInput);
+    const backlog = parseInt(backlogMinutesInput, 10);
+    if (Number.isNaN(hour) || hour < 0 || hour > 23) {
+      setAlertTunablesError("Digest hour must be between 0 and 23 (UTC).");
+      return;
+    }
+    if (Number.isNaN(epss) || epss < 0 || epss > 1) {
+      setAlertTunablesError("EPSS threshold must be between 0 and 1.");
+      return;
+    }
+    if (Number.isNaN(backlog) || backlog < 1) {
+      setAlertTunablesError("Queue backlog minutes must be 1 or greater.");
+      return;
+    }
+    setAlertTunablesError(null);
+    setAlertTunablesSaved(false);
+    setSavingAlertTunables(true);
+    try {
+      const updated = await api.updateAppSettings({
+        digestEmailHourUtc: hour,
+        epssAlertThreshold: epss,
+        queueBacklogThresholdMinutes: backlog,
+      });
+      setAppSettings(updated);
+      setAlertTunablesSaved(true);
+    } catch (err) {
+      setAlertTunablesError(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSavingAlertTunables(false);
+    }
+  }
+
+  async function handleSaveScanLogDays(e: FormEvent) {
+    e.preventDefault();
+    const days = parseInt(scanLogDaysInput, 10);
+    if (Number.isNaN(days) || days < 0) {
+      setScanLogDaysError("Enter a whole number of days, 0 or greater (0 keeps logs forever).");
+      return;
+    }
+    setScanLogDaysError(null);
+    setSavingScanLogDays(true);
+    try {
+      const updated = await api.updateAppSettings({ scanLogRetentionDays: days });
+      setAppSettings(updated);
+      setScanLogDaysInput(String(updated.scanLogRetentionDays));
+    } catch (err) {
+      setScanLogDaysError(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSavingScanLogDays(false);
     }
   }
 
@@ -220,6 +290,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       const parts: string[] = [];
       parts.push(result.purgedHosts === 0 ? "no hosts" : `${result.purgedHosts} host(s)`);
       parts.push(result.purgedAuditLogEntries === 0 ? "no audit log entries" : `${result.purgedAuditLogEntries} audit log entry/entries`);
+      parts.push(result.purgedScanLogs === 0 ? "no scan logs" : `${result.purgedScanLogs} scan log(s)`);
       setCleanupResult(`Purged ${parts.join(" and ")}.`);
     } catch (err) {
       setRetentionError(err instanceof Error ? err.message : "Failed to run cleanup");
@@ -431,6 +502,83 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
           <span className="host-meta">pending requests</span>
           <button type="submit" className="btn-icon-label" disabled={savingQueueThreshold}>
             <IconSave /> Save
+          </button>
+        </form>
+      )}
+
+      <h3>Scan Log Retention</h3>
+      <p className="host-meta">
+        A finished scan's pushed log output (the "Details" popup on Scan History) is deleted after this many days. The
+        scan itself stays in Scan History with its target, duration and result counts - only the per-line log goes.
+        These logs are by far the largest rows in the database and nothing else prunes them, so 0 ("keep forever")
+        means unbounded growth: a busy fleet can add several GB a year. A running scan's live log is never touched.
+      </p>
+
+      {scanLogDaysError && <p className="error">{scanLogDaysError}</p>}
+
+      {appSettings && (
+        <form className="inline-form" onSubmit={handleSaveScanLogDays}>
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={scanLogDaysInput}
+            onChange={(e) => setScanLogDaysInput(e.target.value)}
+            aria-label="Scan log retention days"
+          />
+          <span className="host-meta">days</span>
+          <button type="submit" className="btn-icon-label" disabled={savingScanLogDays}>
+            <IconSave /> Save
+          </button>
+        </form>
+      )}
+
+      <h3>Alerting</h3>
+      <p className="host-meta">
+        When the daily digest email goes out, how likely a CVE has to be to exploit before it raises a
+        vulnerability.high_epss alert, and how long a scan request may sit unclaimed before a scan_queue.backlog alert
+        fires. All three used to be .env variables needing a redeploy; editing those now has no effect.
+      </p>
+
+      {alertTunablesError && <p className="error">{alertTunablesError}</p>}
+      {alertTunablesSaved && <p className="callout-success">Alerting settings saved.</p>}
+
+      {appSettings && (
+        <form className="settings-form" onSubmit={handleSaveAlertTunables}>
+          <label>
+            Daily digest hour (UTC)
+            <input
+              type="number"
+              min={0}
+              max={23}
+              step={1}
+              value={digestHourInput}
+              onChange={(e) => setDigestHourInput(e.target.value)}
+            />
+          </label>
+          <label>
+            EPSS alert threshold (0-1)
+            <input
+              type="number"
+              min={0}
+              max={1}
+              step={0.05}
+              value={epssThresholdInput}
+              onChange={(e) => setEpssThresholdInput(e.target.value)}
+            />
+          </label>
+          <label>
+            Scan queue backlog alert after (minutes)
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={backlogMinutesInput}
+              onChange={(e) => setBacklogMinutesInput(e.target.value)}
+            />
+          </label>
+          <button type="submit" className="btn-icon-label" disabled={savingAlertTunables}>
+            <IconSave /> Save alerting settings
           </button>
         </form>
       )}

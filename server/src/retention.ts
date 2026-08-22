@@ -46,9 +46,20 @@ export function startRetention(): void {
  * implementation so an on-demand cleanup can never behave differently
  * from what the scheduled sweep would have done.
  */
-export async function runRetentionSweep(): Promise<{ purgedHosts: number; purgedAuditLogEntries: number }> {
-  const { hostRetentionDays } = await getAppSettings();
-  if (hostRetentionDays <= 0) return { purgedHosts: 0, purgedAuditLogEntries: 0 };
+export async function runRetentionSweep(): Promise<{
+  purgedHosts: number;
+  purgedAuditLogEntries: number;
+  purgedScanLogs: number;
+}> {
+  const { hostRetentionDays, scanLogRetentionDays } = await getAppSettings();
+
+  // The two windows are independent, so a deployment with the host sweep
+  // disabled (hostRetentionDays 0, a supported configuration) still gets
+  // its scan logs bounded - folding them under the same early return
+  // would quietly reintroduce the unbounded growth this fixes.
+  const purgedScanLogs = await purgeScanLogs(scanLogRetentionDays);
+
+  if (hostRetentionDays <= 0) return { purgedHosts: 0, purgedAuditLogEntries: 0, purgedScanLogs };
 
   const threshold = new Date(Date.now() - hostRetentionDays * 24 * 60 * 60_000);
 
@@ -94,5 +105,79 @@ export async function runRetentionSweep(): Promise<{ purgedHosts: number; purged
     });
   }
 
-  return { purgedHosts: stale.length, purgedAuditLogEntries };
+  return { purgedHosts: stale.length, purgedAuditLogEntries, purgedScanLogs };
+}
+
+/**
+ * Drops the pushed log output of finished scans past the window, while
+ * deliberately keeping the scan_jobs row itself - Scan History stays
+ * complete (target, duration, host/port counts, status), only the bulky
+ * per-line log goes. That split is the point: the history is the record,
+ * the log is a diagnostic.
+ *
+ * Both tables were previously unbounded. Nothing has ever deleted a
+ * scan_jobs row, so their ON DELETE CASCADE never fired, and the
+ * retention sweep only knew about hosts and audit_log. scan_job_progress
+ * in particular is documented as holding "nothing worth keeping once the
+ * job finishes" while being kept forever.
+ *
+ * Keyed on each row's own timestamp rather than a join to scan_jobs, plus
+ * an explicit guard against jobs still running: scan_job_progress is
+ * rewritten every few seconds for the whole duration of a scan, so a
+ * stale updated_at already implies the scan is over, and
+ * scan_job_full_log is only ever written once at the very end - but a
+ * scan that outlives the window (a very large range) would otherwise
+ * have its live progress deleted out from under the Details popup.
+ */
+async function purgeScanLogs(retentionDays: number): Promise<number> {
+  if (retentionDays <= 0) return 0;
+  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60_000);
+
+  const notRunning = (eb: any) =>
+    eb.not(
+      eb.exists(
+        eb
+          .selectFrom("scan_jobs")
+          .select("scan_jobs.id")
+          .whereRef("scan_jobs.id", "=", "scan_job_progress.scan_job_id")
+          .where("scan_jobs.status", "=", "running")
+      )
+    );
+
+  const progress = await db
+    .deleteFrom("scan_job_progress")
+    .where("updated_at", "<", cutoff)
+    .where(notRunning)
+    .executeTakeFirst();
+
+  const full = await db
+    .deleteFrom("scan_job_full_log")
+    .where("created_at", "<", cutoff)
+    .where((eb) =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom("scan_jobs")
+            .select("scan_jobs.id")
+            .whereRef("scan_jobs.id", "=", "scan_job_full_log.scan_job_id")
+            .where("scan_jobs.status", "=", "running")
+        )
+      )
+    )
+    .executeTakeFirst();
+
+  const purged = Number(progress.numDeletedRows) + Number(full.numDeletedRows);
+  if (purged > 0) {
+    logger.info({
+      event: "retention.scan_logs_purged",
+      purged_progress_rows: Number(progress.numDeletedRows),
+      purged_full_log_rows: Number(full.numDeletedRows),
+      retention_days: retentionDays,
+    });
+    await recordAudit("retention.scan_logs_purged", "retention", undefined, {
+      purged_count: purged,
+      retention_days: retentionDays,
+    });
+  }
+  return purged;
 }

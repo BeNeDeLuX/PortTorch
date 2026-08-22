@@ -1,4 +1,5 @@
 import { db } from "../db";
+import { getAppSettings } from "../settings/appSettings";
 import { config } from "../config";
 import { logger } from "../logger";
 import { dispatchWebhook } from "../webhooks/dispatch";
@@ -22,7 +23,11 @@ export function startDailyDigestEmail(): void {
 // digestEmail.integration.test.ts).
 export async function tick(): Promise<void> {
   const now = new Date();
-  if (now.getUTCHours() !== config.digestEmailHourUtc) return;
+  // Read fresh on every tick rather than captured at startup, so an
+  // admin changing the hour takes effect on the very next one - same
+  // reasoning as retention.ts reading its window per sweep.
+  const { digestEmailHourUtc } = await getAppSettings();
+  if (now.getUTCHours() !== digestEmailHourUtc) return;
 
   const todayUtc = now.toISOString().slice(0, 10);
   const state = await db.selectFrom("digest_email_state").select(["last_sent_date"]).where("id", "=", 1).executeTakeFirst();

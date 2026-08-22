@@ -12,6 +12,10 @@ import {
   getAppSettings,
   setHostRetentionDays,
   setRequireAdminTotp,
+  setDigestEmailHourUtc,
+  setEpssAlertThreshold,
+  setQueueBacklogThresholdMinutes,
+  setScanLogRetentionDays,
   setScanQueueWarningThreshold,
   setSmtpSettings,
   setStaleScanThresholdMinutes,
@@ -118,6 +122,10 @@ const appSettingsSchema = z.object({
   hostRetentionDays: z.number().int().min(0).optional(),
   staleScanThresholdMinutes: z.number().int().min(1).optional(),
   scanQueueWarningThreshold: z.number().int().min(1).optional(),
+  scanLogRetentionDays: z.number().int().min(0).optional(),
+  digestEmailHourUtc: z.number().int().min(0).max(23).optional(),
+  epssAlertThreshold: z.number().min(0).max(1).optional(),
+  queueBacklogThresholdMinutes: z.number().int().min(1).optional(),
   // Saved as one object rather than field-by-field: these only make sense
   // together (a host without its port/auth is not a usable half-state),
   // and the form submits them as one section. password is the exception -
@@ -198,6 +206,40 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
     recordAudit("settings.scan_queue_warning_threshold_updated", req.session.username, req.ip, {
       scan_queue_warning_threshold: parsed.data.scanQueueWarningThreshold,
     });
+  }
+
+  if ("scanLogRetentionDays" in req.body && parsed.data.scanLogRetentionDays !== undefined) {
+    await setScanLogRetentionDays(parsed.data.scanLogRetentionDays);
+    logger.info({
+      event: "settings.scan_log_retention_updated",
+      scan_log_retention_days: parsed.data.scanLogRetentionDays,
+      updated_by: req.session.username,
+      source_ip: req.ip,
+    });
+    recordAudit("settings.scan_log_retention_updated", req.session.username, req.ip, {
+      scan_log_retention_days: parsed.data.scanLogRetentionDays,
+    });
+  }
+
+  // These three share one shape, so they share one loop rather than three
+  // near-identical blocks - each still gets its own log line and audit
+  // entry, which is what actually matters for traceability.
+  const simpleSettings: Array<[keyof typeof parsed.data, string, (v: never) => Promise<void>]> = [
+    ["digestEmailHourUtc", "settings.digest_hour_updated", setDigestEmailHourUtc as (v: never) => Promise<void>],
+    ["epssAlertThreshold", "settings.epss_threshold_updated", setEpssAlertThreshold as (v: never) => Promise<void>],
+    [
+      "queueBacklogThresholdMinutes",
+      "settings.queue_backlog_threshold_updated",
+      setQueueBacklogThresholdMinutes as (v: never) => Promise<void>,
+    ],
+  ];
+  for (const [key, event, setter] of simpleSettings) {
+    const value = parsed.data[key];
+    if (key in req.body && value !== undefined) {
+      await setter(value as never);
+      logger.info({ event, value, updated_by: req.session.username, source_ip: req.ip });
+      recordAudit(event, req.session.username, req.ip, { [key]: value });
+    }
   }
 
   if ("smtp" in req.body && parsed.data.smtp !== undefined) {

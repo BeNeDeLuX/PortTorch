@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, DashboardUser, Me, ScannerAgent } from "../api";
-import { IconEdit, IconKey, IconPlus, IconRefresh, IconSave, IconTrash, IconX } from "../components/icons";
+import { IconEdit, IconKey, IconLogOut, IconPlus, IconRefresh, IconSave, IconTrash, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import { formatDateTime } from "../lib/formatDate";
@@ -89,6 +89,23 @@ export default function Users({ me, onLogout }: { me: Me; onLogout: () => void }
   // "Reset 2FA" above is its own separately-audited action, so an admin
   // resetting a password doesn't silently gain the ability to log in as
   // that user.
+  async function handleRevokeSessions(u: DashboardUser) {
+    if (
+      !window.confirm(
+        `End all ${u.activeSessions} active session(s) for "${u.username}"? They'll be signed out everywhere and have to log in again. Their password and 2FA are unchanged.`
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    try {
+      await api.revokeUserSessions(u.id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to end sessions");
+    }
+  }
+
   async function handleResetPassword(u: DashboardUser) {
     const next = window.prompt(
       `Set a new password for "${u.username}" (at least 8 characters).\n\nTheir 2FA, if enabled, stays on - reset that separately if the device was lost too. Tell them to change it from their Account page after signing in.`
@@ -202,6 +219,11 @@ export default function Users({ me, onLogout }: { me: Me; onLogout: () => void }
                     {u.role !== "admin" && editingUserId !== u.id && (
                       <button className="btn-icon-label" onClick={() => startEditAccess(u)}>
                         <IconEdit /> Edit access
+                      </button>
+                    )}
+                    {u.activeSessions > 0 && (
+                      <button className="btn-icon-label" onClick={() => handleRevokeSessions(u)}>
+                        <IconLogOut /> End sessions ({u.activeSessions})
                       </button>
                     )}
                     <button className="btn-icon-label" onClick={() => handleResetPassword(u)}>

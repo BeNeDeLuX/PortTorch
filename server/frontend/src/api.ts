@@ -48,6 +48,10 @@ export interface AppSettings {
   hostRetentionDays: number;
   staleScanThresholdMinutes: number;
   scanQueueWarningThreshold: number;
+  scanLogRetentionDays: number;
+  digestEmailHourUtc: number;
+  epssAlertThreshold: number;
+  queueBacklogThresholdMinutes: number;
   smtp: SmtpSettingsView;
 }
 
@@ -84,6 +88,8 @@ export interface DashboardUser {
   // Which scanner agents' results this user may see - empty means
   // unrestricted (sees everything), always empty for role "admin".
   scannerAgentIds: string[];
+  // Unexpired sessions currently signed in as this account.
+  activeSessions: number;
 }
 
 export type LoginResult = Me | { requiresTotp: true };
@@ -782,6 +788,7 @@ export const api = {
   updatePreferences: (patch: Partial<UserPreferences>) =>
     request<UserPreferences>("/auth/preferences", { method: "PATCH", body: JSON.stringify(patch) }),
   twoFactorStatus: () => request<{ enabled: boolean }>("/auth/2fa/status"),
+  revokeOtherSessions: () => request<{ revoked: number }>("/auth/sessions/revoke-others", { method: "POST" }),
   changePassword: (currentPassword: string, newPassword: string) =>
     request<void>("/auth/password", { method: "POST", body: JSON.stringify({ currentPassword, newPassword }) }),
   twoFactorSetup: () => request<TwoFactorSetup>("/auth/2fa/setup", { method: "POST" }),
@@ -986,7 +993,7 @@ export const api = {
       body: JSON.stringify({ to }),
     }),
   runRetentionSweepNow: () =>
-    request<{ purgedHosts: number; purgedAuditLogEntries: number }>("/api/settings/retention/run-now", {
+    request<{ purgedHosts: number; purgedAuditLogEntries: number; purgedScanLogs: number }>("/api/settings/retention/run-now", {
       method: "POST",
     }),
 
@@ -994,6 +1001,8 @@ export const api = {
   createUser: (input: { username: string; password: string; role: string; scannerAgentIds?: string[] }) =>
     request<DashboardUser>("/api/users", { method: "POST", body: JSON.stringify(input) }),
   deleteUser: (id: number) => request<void>(`/api/users/${id}`, { method: "DELETE" }),
+  revokeUserSessions: (id: number) =>
+    request<{ revoked: number }>(`/api/users/${id}/revoke-sessions`, { method: "POST" }),
   setUserPassword: (id: number, password: string) =>
     request<void>(`/api/users/${id}/password`, { method: "POST", body: JSON.stringify({ password }) }),
   setUserScannerAgents: (id: number, scannerAgentIds: string[]) =>

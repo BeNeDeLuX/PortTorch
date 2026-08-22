@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "../db";
 import { requireAdmin } from "../auth/middleware";
 import { hashPassword } from "../auth/password";
-import { revokeUserSessions } from "../auth/sessions";
+import { countSessionsByUser, revokeUserSessions } from "../auth/sessions";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
@@ -27,7 +27,15 @@ usersRouter.get("/", asyncHandler(async (_req, res) => {
     scannerIdsByUser.set(a.user_id, [...(scannerIdsByUser.get(a.user_id) ?? []), a.scanner_agent_id]);
   }
 
-  res.json(users.map((u) => ({ ...u, scannerAgentIds: scannerIdsByUser.get(u.id) ?? [] })));
+  const sessionCounts = await countSessionsByUser();
+
+  res.json(
+    users.map((u) => ({
+      ...u,
+      scannerAgentIds: scannerIdsByUser.get(u.id) ?? [],
+      activeSessions: sessionCounts.get(u.id) ?? 0,
+    }))
+  );
 }));
 
 const createUserSchema = z.object({
@@ -270,6 +278,42 @@ usersRouter.post("/:id/password", asyncHandler(async (req, res) => {
   recordAudit("user.password_reset", req.session.username, req.ip, { user_id: id, username: target.username });
 
   res.status(204).end();
+}));
+
+// Ending someone else's sessions without touching their credentials -
+// the proportionate response to "this account may be signed in somewhere
+// it shouldn't be", where a password reset would be both heavier and
+// beside the point. Doesn't stop them signing back in; that's what
+// revoking or resetting is for.
+usersRouter.post("/:id/revoke-sessions", asyncHandler(async (req, res) => {
+  const id = parseInt(singleParam(req.params.id), 10);
+  if (Number.isNaN(id)) {
+    res.status(400).json({ error: "invalid user id" });
+    return;
+  }
+
+  const target = await db.selectFrom("users").select(["username"]).where("id", "=", id).executeTakeFirst();
+  if (!target) {
+    res.status(404).json({ error: "user not found" });
+    return;
+  }
+
+  const revoked = await revokeUserSessions(id);
+  logger.info({
+    event: "user.sessions_revoked",
+    user_id: id,
+    username: target.username,
+    count: revoked,
+    revoked_by: req.session.username,
+    source_ip: req.ip,
+  });
+  recordAudit("user.sessions_revoked", req.session.username, req.ip, {
+    user_id: id,
+    username: target.username,
+    count: revoked,
+  });
+
+  res.json({ revoked });
 }));
 
 usersRouter.post("/:id/reset-2fa", asyncHandler(async (req, res) => {

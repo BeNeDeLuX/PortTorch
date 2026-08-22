@@ -45,3 +45,29 @@ export async function revokeUserSessions(userId: number, exceptSid?: string): Pr
     return 0;
   }
 }
+
+// How many sessions each of these users currently has. Used by the Users
+// page so "end all sessions" is an informed action rather than a shot in
+// the dark - an admin can see whether the account they're worried about
+// is actually signed in anywhere. Batched into one query rather than one
+// per user, same idiom as the scanner-assignment lookup beside it.
+//
+// Counts only unexpired rows: connect-pg-simple prunes lazily, so an
+// already-dead session can still be sitting in the table.
+export async function countSessionsByUser(): Promise<Map<number, number>> {
+  const out = new Map<number, number>();
+  try {
+    const result = await sql<{ user_id: number; count: string }>`
+      SELECT (sess->>'userId')::int AS user_id, count(*) AS count
+      FROM session
+      WHERE sess->>'userId' IS NOT NULL AND expire > now()
+      GROUP BY 1
+    `.execute(db);
+    for (const row of result.rows) out.set(row.user_id, Number(row.count));
+  } catch (err) {
+    // Same best-effort posture as revokeUserSessions: this only decorates
+    // a list, and failing to decorate it must not break the page.
+    logger.error({ event: "auth.session_count_failed", err: err instanceof Error ? err.message : String(err) });
+  }
+  return out;
+}

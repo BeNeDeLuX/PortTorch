@@ -1,4 +1,5 @@
 import { sql } from "kysely";
+import { getAppSettings } from "../settings/appSettings";
 import { db } from "../db";
 import { config } from "../config";
 import { logger } from "../logger";
@@ -112,7 +113,7 @@ export async function checkHighEpssAlerts(): Promise<void> {
   const highScoring = await db
     .selectFrom("epss_cache")
     .select(["cve_id", "epss", "percentile"])
-    .where("epss", ">=", config.epssAlertThreshold)
+    .where("epss", ">=", (await getAppSettings()).epssAlertThreshold)
     .where("alert_sent_at", "is", null)
     .execute();
   if (highScoring.length === 0) return;

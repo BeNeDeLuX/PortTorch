@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, Me, ScannerAgent, TwoFactorSetup } from "../api";
-import { IconCheck, IconRefresh, IconSave, IconWarning, IconX } from "../components/icons";
+import { IconCheck, IconLogOut, IconRefresh, IconSave, IconWarning, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { applyTheme } from "../lib/theme";
 import { applyAccent } from "../lib/accent";
@@ -51,6 +51,8 @@ export default function Account({
   const [pwError, setPwError] = useState<string | null>(null);
   const [pwDone, setPwDone] = useState(false);
   const [pwBusy, setPwBusy] = useState(false);
+  const [revokeBusy, setRevokeBusy] = useState(false);
+  const [revokeResult, setRevokeResult] = useState<string | null>(null);
 
   const [agents, setAgents] = useState<ScannerAgent[]>([]);
   // "" stands in for "no override" throughout this form (theme, page size,
@@ -128,6 +130,25 @@ export default function Account({
       setPwError(err instanceof Error ? err.message : "Failed to change password");
     } finally {
       setPwBusy(false);
+    }
+  }
+
+  // Wanted separately from the password change that already does this as
+  // a side effect: the usual trigger (a laptop left signed in, a shared
+  // browser) isn't a reason to change a password, and forcing one to get
+  // the effect is how people end up with worse passwords.
+  async function handleRevokeOthers() {
+    setRevokeResult(null);
+    setRevokeBusy(true);
+    try {
+      const { revoked } = await api.revokeOtherSessions();
+      setRevokeResult(
+        revoked === 0 ? "No other sessions were signed in." : `Signed out ${revoked} other session(s).`
+      );
+    } catch (err) {
+      setRevokeResult(err instanceof Error ? err.message : "Failed to sign out other sessions");
+    } finally {
+      setRevokeBusy(false);
     }
   }
 
@@ -276,7 +297,7 @@ export default function Account({
       <h3>Password</h3>
       <p className="host-meta">
         Changing your password requires your current one - being signed in isn't on its own proof of who's at the
-        keyboard. Other sessions you may have open elsewhere stay signed in; sign out there separately if that matters.
+        keyboard. Any other session signed in as you, anywhere, is ended; this one stays.
       </p>
       {pwError && <p className="error">{pwError}</p>}
       {pwDone && <p className="callout-success">Password changed.</p>}
@@ -306,6 +327,17 @@ export default function Account({
           <IconSave /> Change password
         </button>
       </form>
+
+      <h3>Sessions</h3>
+      <p className="host-meta">
+        Signs out every other browser or device currently signed in as you, keeping this one. Your password and 2FA
+        are unchanged - use this when you've left a session open somewhere, rather than changing your password to get
+        the same effect.
+      </p>
+      <button className="btn-icon-label" onClick={handleRevokeOthers} disabled={revokeBusy}>
+        <IconLogOut /> Sign out other sessions
+      </button>
+      {revokeResult && <p className="host-meta">{revokeResult}</p>}
 
       <h3>Two-Factor Authentication</h3>
       {error && <p className="error">{error}</p>}

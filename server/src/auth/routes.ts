@@ -599,6 +599,18 @@ authRouter.post("/password", requireAuth, asyncHandler(async (req, res) => {
   res.status(204).end();
 }));
 
+// "Sign out everywhere else" - the standalone counterpart to the implicit
+// revocation a password change already performs. Wanted on its own
+// because the usual trigger (a laptop left signed in somewhere, a shared
+// browser) is not a reason to change a password, and making people change
+// one to get the side effect is how you end up with worse passwords.
+authRouter.post("/sessions/revoke-others", requireAuth, asyncHandler(async (req, res) => {
+  const revoked = await revokeUserSessions(req.session.userId!, req.sessionID);
+  logger.info({ event: "auth.sessions_revoked", username: req.session.username, count: revoked, source_ip: req.ip });
+  recordAudit("auth.sessions_revoked", req.session.username, req.ip, { count: revoked });
+  res.json({ revoked });
+}));
+
 authRouter.post("/2fa/recovery-codes/regenerate", requireAuth, asyncHandler(async (req, res) => {
   const parsed = verifyTotpSchema.safeParse(req.body);
   if (!parsed.success) {

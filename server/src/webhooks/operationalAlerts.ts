@@ -88,7 +88,8 @@ async function checkStaleScans(): Promise<void> {
 // longer has an aged backlog - letting a future backlog alert again
 // instead of being permanently silenced by one past incident.
 async function checkQueueBacklog(): Promise<void> {
-  const threshold = new Date(Date.now() - config.queueBacklogThresholdMinutes * 60_000);
+  const { queueBacklogThresholdMinutes } = await getAppSettings();
+  const threshold = new Date(Date.now() - queueBacklogThresholdMinutes * 60_000);
 
   const backlogged = await db
     .selectFrom("scan_requests")

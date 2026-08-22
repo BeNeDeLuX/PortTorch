@@ -5,6 +5,10 @@ export interface AppSettings {
   hostRetentionDays: number;
   staleScanThresholdMinutes: number;
   scanQueueWarningThreshold: number;
+  scanLogRetentionDays: number;
+  digestEmailHourUtc: number;
+  epssAlertThreshold: number;
+  queueBacklogThresholdMinutes: number;
   smtp: SmtpSettings;
 }
 
@@ -41,6 +45,10 @@ export async function getAppSettings(): Promise<AppSettings> {
       "host_retention_days",
       "stale_scan_threshold_minutes",
       "scan_queue_warning_threshold",
+      "scan_log_retention_days",
+      "digest_email_hour_utc",
+      "epss_alert_threshold",
+      "queue_backlog_threshold_minutes",
       "smtp_host",
       "smtp_port",
       "smtp_secure",
@@ -55,6 +63,10 @@ export async function getAppSettings(): Promise<AppSettings> {
     hostRetentionDays: row.host_retention_days,
     staleScanThresholdMinutes: row.stale_scan_threshold_minutes,
     scanQueueWarningThreshold: row.scan_queue_warning_threshold,
+    scanLogRetentionDays: row.scan_log_retention_days,
+    digestEmailHourUtc: row.digest_email_hour_utc,
+    epssAlertThreshold: row.epss_alert_threshold,
+    queueBacklogThresholdMinutes: row.queue_backlog_threshold_minutes,
     smtp: {
       host: row.smtp_host,
       port: row.smtp_port,
@@ -71,6 +83,22 @@ export async function getAppSettings(): Promise<AppSettings> {
 // as "clear the password" would silently break working auth every time
 // an admin edited, say, the sender address. Clearing is still possible,
 // explicitly, by sending null.
+export async function setScanLogRetentionDays(value: number): Promise<void> {
+  await db.updateTable("app_settings").set({ scan_log_retention_days: value }).where("id", "=", 1).execute();
+}
+
+export async function setDigestEmailHourUtc(value: number): Promise<void> {
+  await db.updateTable("app_settings").set({ digest_email_hour_utc: value }).where("id", "=", 1).execute();
+}
+
+export async function setEpssAlertThreshold(value: number): Promise<void> {
+  await db.updateTable("app_settings").set({ epss_alert_threshold: value }).where("id", "=", 1).execute();
+}
+
+export async function setQueueBacklogThresholdMinutes(value: number): Promise<void> {
+  await db.updateTable("app_settings").set({ queue_backlog_threshold_minutes: value }).where("id", "=", 1).execute();
+}
+
 export async function setSmtpSettings(input: SmtpSettingsInput): Promise<void> {
   await db
     .updateTable("app_settings")
