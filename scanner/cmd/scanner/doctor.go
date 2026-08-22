@@ -14,6 +14,7 @@ import (
 
 	"porttorch/scanner/internal/client"
 	"porttorch/scanner/internal/config"
+	"porttorch/scanner/internal/pipeline"
 	"porttorch/scanner/internal/version"
 )
 
@@ -88,6 +89,7 @@ func runDoctor(configPath string) error {
 	checks = append(checks, checkBinary("ImageMagick import (RDP screenshots)", cfg.ImportPath, false))
 	checks = append(checks, checkBinary("tesseract (screenshot OCR)", cfg.TesseractPath, false))
 	checks = append(checks, checkBinary("nuclei (web vulnerability scanning)", cfg.NucleiPath, false))
+	checks = append(checks, checkNucleiTemplates())
 
 	checks = append(checks, checkWebserver(cfg))
 
@@ -199,4 +201,41 @@ func checkWebserver(cfg *config.Config) check {
 		return check{"webserver connectivity (" + cfg.WebserverURL + ")", statusFail, err.Error()}
 	}
 	return check{"webserver connectivity (" + cfg.WebserverURL + ")", statusOK, "reachable, api key valid"}
+}
+
+// nucleiTemplatesWarnDays mirrors the webserver's own Fleet Health
+// threshold (NUCLEI_TEMPLATES_WARN_DAYS) - kept as its own small copy for
+// the same reason compareSemver is duplicated across the two languages.
+const nucleiTemplatesWarnDays = 30
+
+// checkNucleiTemplates is deliberately separate from the nuclei binary
+// check above: a resolvable binary says nothing about whether it has any
+// templates to run, and the two fail independently. Worth its own line
+// because the way this breaks is invisible otherwise - nuclei resolves
+// its tree against the *invoking user's* home, so a `sudo
+// nuclei-update-templates` run by an admin populates root's copy while
+// the service, running as its own user, keeps finding nothing. That
+// looks identical to "no findings on this fleet".
+//
+// Warning-only, never a failure: running without nuclei at all is a
+// supported configuration (the whole stage is opt-in per scan), same as
+// gowitness/RDP/tesseract above.
+func checkNucleiTemplates() check {
+	dir := pipeline.DefaultNucleiTemplatesDir()
+	if dir == "" {
+		return check{"nuclei templates", statusWarn, "could not determine this user's home directory"}
+	}
+	name := "nuclei templates (" + dir + ")"
+
+	updated, err := pipeline.NucleiTemplatesUpdatedAt(dir)
+	if err != nil {
+		return check{name, statusWarn, "not found - run 'nuclei -update-templates' as this user, or trigger it from the dashboard (Scanner Agents -> Update templates)"}
+	}
+
+	days := int(time.Since(updated).Hours() / 24)
+	detail := fmt.Sprintf("last updated %s (%dd ago)", updated.Format("2006-01-02"), days)
+	if days >= nucleiTemplatesWarnDays {
+		return check{name, statusWarn, detail + " - likely missing newer checks; refresh from the dashboard (Scanner Agents -> Update templates)"}
+	}
+	return check{name, statusOK, detail}
 }

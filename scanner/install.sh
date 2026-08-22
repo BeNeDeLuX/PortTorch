@@ -395,11 +395,6 @@ else
       warn "nuclei build failed - web vulnerability scanning will be skipped (best-effort, see doctor output at the end)"
     fi
   fi
-  if command -v nuclei >/dev/null 2>&1; then
-    log "Fetching nuclei templates (one-time - not kept up to date automatically, see CLAUDE.md)"
-    nuclei -update-templates || warn "nuclei template update failed - web vulnerability scanning may find nothing until 'nuclei -update-templates' is run manually"
-  fi
-
   # --- raw socket capabilities for masscan/nmap ---------------------------
   log "Granting cap_net_raw,cap_net_admin to masscan/nmap"
   setcap cap_net_raw,cap_net_admin+eip "$(command -v masscan)"
@@ -435,6 +430,23 @@ else
   # no-op re-application on every other path that reaches here).
   chown "$SERVICE_USER:$SERVICE_USER" "$BIN_PATH"
   grant_bin_dir_access
+
+  # --- nuclei templates ---------------------------------------------------
+  # Deliberately here, after the service user exists, and deliberately run
+  # AS that user: nuclei resolves its template tree against the invoking
+  # user's home (see pipeline.DefaultNucleiTemplatesDir). This script runs
+  # as root, so fetching them here without dropping privileges would write
+  # /root/nuclei-templates - a tree the service, running as $SERVICE_USER,
+  # never reads. That was a real bug: scans found nothing and the reported
+  # template age stayed empty, with nothing anywhere indicating why.
+  # HOME is set explicitly rather than relying on sudo's own handling,
+  # since whether sudo resets it depends on the host's sudoers policy
+  # (always_set_home / env_keep), which this script can't assume.
+  if command -v nuclei >/dev/null 2>&1; then
+    log "Fetching nuclei templates as $SERVICE_USER (one-time - refresh later from the dashboard's Scanner Agents page)"
+    sudo -u "$SERVICE_USER" env HOME="$SERVICE_HOME" nuclei -update-templates \
+      || warn "nuclei template update failed - web vulnerability scanning may find nothing until it is refreshed (dashboard: Scanner Agents -> Update templates)"
+  fi
 
   # --- config.yaml ----------------------------------------------------------
   # sed replacement values come from the operator running this installer as
