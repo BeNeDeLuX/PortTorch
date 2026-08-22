@@ -17,6 +17,7 @@ import { NOT_A_LIVE_RISK_STATES, cveNotTriaged } from "../findingTriage/sqlFilte
 import { NSEProfileSelection } from "../scanProfiles/resolve";
 import { NucleiProfileSelection } from "../nucleiProfiles/resolve";
 import { singleParam } from "../lib/reqParams";
+import { deleteScreenshotFiles, screenshotPathsForHosts } from "../screenshots/files";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -1305,6 +1306,11 @@ hostsRouter.delete("/:id", requireAdmin, asyncHandler(async (req, res) => {
     return;
   }
 
+  // Before the delete - the cascade takes the screenshot rows with it,
+  // and with them the record of which files to remove. Without this the
+  // PNGs stay on disk forever, referenced by nothing.
+  const screenshotPaths = await screenshotPathsForHosts([req.params.id as string]);
+
   const result = await db.deleteFrom("hosts").where("id", "=", req.params.id).returning(["ip"]).executeTakeFirst();
 
   if (!result) {
@@ -1312,7 +1318,9 @@ hostsRouter.delete("/:id", requireAdmin, asyncHandler(async (req, res) => {
     return;
   }
 
-  logger.info({ event: "host.deleted", host_id: req.params.id, ip: result.ip, deleted_by: req.session.username, source_ip: req.ip });
+  const deletedFiles = deleteScreenshotFiles(screenshotPaths);
+
+  logger.info({ event: "host.deleted", host_id: req.params.id, ip: result.ip, deleted_screenshots: deletedFiles, deleted_by: req.session.username, source_ip: req.ip });
   recordAudit("host.deleted", req.session.username, req.ip, { host_id: req.params.id, ip: result.ip });
 
   res.status(204).end();

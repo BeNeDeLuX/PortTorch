@@ -43,6 +43,15 @@ export interface Me {
   totpSetupRequired: boolean;
 }
 
+export interface StorageUsage {
+  databaseBytes: number;
+  tables: Array<{ table: string; bytes: number; rows: number }>;
+  // Counted from the directory itself rather than the screenshots tables,
+  // so far more files than rows is visible as exactly what it is - files
+  // left behind by deletes that never unlinked them.
+  screenshots: { files: number; bytes: number };
+}
+
 export interface AppSettings {
   requireAdminTotp: boolean;
   hostRetentionDays: number;
@@ -992,8 +1001,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ to }),
     }),
+  storageUsage: () => request<StorageUsage>("/api/settings/storage"),
   runRetentionSweepNow: () =>
-    request<{ purgedHosts: number; purgedAuditLogEntries: number; purgedScanLogs: number }>("/api/settings/retention/run-now", {
+    request<{
+      purgedHosts: number;
+      purgedAuditLogEntries: number;
+      purgedScanLogs: number;
+      purgedScreenshots: number;
+    }>("/api/settings/retention/run-now", {
       method: "POST",
     }),
 

@@ -29,7 +29,21 @@ observabilityRouter.get("/healthz", asyncHandler(async (_req, res) => {
 }));
 
 function metric(name: string, help: string, type: "gauge" | "counter", value: number, labels = ""): string {
-  return `# HELP ${name} ${help}\n# TYPE ${name} ${type}\n${name}${labels} ${value}\n`;
+  return metricFamily(name, help, type, [{ labels, value }]);
+}
+
+// One HELP/TYPE header followed by every labelled sample. Prometheus
+// rejects a metric name whose HELP/TYPE is declared more than once, so a
+// multi-series metric cannot just be two metric() calls - which is
+// exactly what porttorch_table_bytes would have been.
+function metricFamily(
+  name: string,
+  help: string,
+  type: "gauge" | "counter",
+  samples: Array<{ labels?: string; value: number }>
+): string {
+  const header = `# HELP ${name} ${help}\n# TYPE ${name} ${type}\n`;
+  return header + samples.map((s) => `${name}${s.labels ?? ""} ${s.value}\n`).join("");
 }
 
 // Prometheus exposition, hand-written rather than pulling in
@@ -72,6 +86,12 @@ observabilityRouter.get("/metrics", asyncHandler(async (req, res) => {
     retry_backlog: string;
     submit_queue_pending: string;
     triaged_findings: string;
+    port_observations: string;
+    nuclei_findings: string;
+    screenshots: string;
+    port_observations_bytes: string;
+    nuclei_findings_bytes: string;
+    database_bytes: string;
   }>`
     SELECT
       (SELECT count(*) FROM hosts) AS hosts,
@@ -81,7 +101,18 @@ observabilityRouter.get("/metrics", asyncHandler(async (req, res) => {
       (SELECT count(*) FROM scan_requests WHERE status = 'pending') AS requests_pending,
       (SELECT count(*) FROM webhook_retry_queue) AS retry_backlog,
       (SELECT coalesce(sum(submit_queue_pending), 0) FROM scanner_agents WHERE revoked_at IS NULL) AS submit_queue_pending,
-      (SELECT count(*) FROM finding_triage) AS triaged_findings
+      (SELECT count(*) FROM finding_triage) AS triaged_findings,
+      (SELECT count(*) FROM host_port_observations) AS port_observations,
+      (SELECT count(*) FROM nuclei_findings) AS nuclei_findings,
+      (SELECT count(*) FROM screenshots) + (SELECT count(*) FROM rdp_screenshots) AS screenshots,
+      -- pg_total_relation_size is a catalog lookup, not a scan, so this
+      -- stays cheap enough for a 15s scrape. These are the append-only
+      -- tables that grow with every scan and are only ever reclaimed when
+      -- their host is - the ones worth watching before they become a
+      -- problem rather than after.
+      pg_total_relation_size('host_port_observations') AS port_observations_bytes,
+      pg_total_relation_size('nuclei_findings') AS nuclei_findings_bytes,
+      pg_database_size(current_database()) AS database_bytes
   `.execute(db);
 
   const r = row.rows[0];
@@ -100,7 +131,15 @@ observabilityRouter.get("/metrics", asyncHandler(async (req, res) => {
     metric("porttorch_scan_requests_pending", "Queued scan requests not yet claimed by a scanner", "gauge", n(r.requests_pending)) +
     metric("porttorch_webhook_retry_backlog", "Alert deliveries waiting to be retried", "gauge", n(r.retry_backlog)) +
     metric("porttorch_submit_queue_pending", "Host submissions queued for retry across all scanners", "gauge", n(r.submit_queue_pending)) +
-    metric("porttorch_triaged_findings", "Findings with an explicit triage decision", "gauge", n(r.triaged_findings));
+    metric("porttorch_triaged_findings", "Findings with an explicit triage decision", "gauge", n(r.triaged_findings)) +
+    metric("porttorch_port_observations_total", "Rows in host_port_observations (append-only, one per port per scan)", "gauge", n(r.port_observations)) +
+    metric("porttorch_nuclei_findings_total", "Rows in nuclei_findings (append-only, one per match per scan)", "gauge", n(r.nuclei_findings)) +
+    metric("porttorch_screenshots_total", "Stored screenshots across both capture types", "gauge", n(r.screenshots)) +
+    metricFamily("porttorch_table_bytes", "Total on-disk size including indexes", "gauge", [
+      { labels: '{table="host_port_observations"}', value: n(r.port_observations_bytes) },
+      { labels: '{table="nuclei_findings"}', value: n(r.nuclei_findings_bytes) },
+    ]) +
+    metric("porttorch_database_bytes", "Total size of the PortTorch database", "gauge", n(r.database_bytes));
 
   res.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
   res.send(body);

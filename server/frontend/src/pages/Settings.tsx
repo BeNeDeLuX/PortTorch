@@ -1,9 +1,10 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, AppSettings, Me, TlsCertificateInfo } from "../api";
-import { IconSave, IconSend, IconTrash, IconUpload } from "../components/icons";
+import { api, AppSettings, Me, StorageUsage, TlsCertificateInfo } from "../api";
+import { IconRefresh, IconSave, IconSend, IconTrash, IconUpload } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime } from "../lib/formatDate";
 import { certExpiryDaysLeft, certExpiryLabel, certExpiryStatus } from "../lib/certExpiry";
+import { formatBytes } from "../lib/formatBytes";
 
 // Admin-only, like every other Admin-group page. Lets an admin replace
 // the webserver's own TLS listener certificate (the one every browser/
@@ -38,6 +39,9 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
   const [queueThresholdInput, setQueueThresholdInput] = useState("");
   const [savingQueueThreshold, setSavingQueueThreshold] = useState(false);
   const [queueThresholdError, setQueueThresholdError] = useState<string | null>(null);
+
+  const [storage, setStorage] = useState<StorageUsage | null>(null);
+  const [loadingStorage, setLoadingStorage] = useState(false);
 
   const [digestHourInput, setDigestHourInput] = useState("");
   const [epssThresholdInput, setEpssThresholdInput] = useState("");
@@ -147,6 +151,21 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       setStaleThresholdError(err instanceof Error ? err.message : "Failed to update setting");
     } finally {
       setSavingStaleThreshold(false);
+    }
+  }
+
+  // On demand, not on page load: the screenshot figure is a real
+  // directory scan, and a fleet with tens of thousands of captures
+  // shouldn't pay for it every time someone opens Settings for an
+  // unrelated reason.
+  async function loadStorage() {
+    setLoadingStorage(true);
+    try {
+      setStorage(await api.storageUsage());
+    } catch {
+      setStorage(null);
+    } finally {
+      setLoadingStorage(false);
     }
   }
 
@@ -291,6 +310,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       parts.push(result.purgedHosts === 0 ? "no hosts" : `${result.purgedHosts} host(s)`);
       parts.push(result.purgedAuditLogEntries === 0 ? "no audit log entries" : `${result.purgedAuditLogEntries} audit log entry/entries`);
       parts.push(result.purgedScanLogs === 0 ? "no scan logs" : `${result.purgedScanLogs} scan log(s)`);
+      parts.push(result.purgedScreenshots === 0 ? "no screenshots" : `${result.purgedScreenshots} screenshot(s)`);
       setCleanupResult(`Purged ${parts.join(" and ")}.`);
     } catch (err) {
       setRetentionError(err instanceof Error ? err.message : "Failed to run cleanup");
@@ -531,6 +551,51 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
             <IconSave /> Save
           </button>
         </form>
+      )}
+
+      <h3>Storage</h3>
+      <p className="host-meta">
+        Where the database is actually going. The tables listed are append-only - each scan adds rows and they're only
+        reclaimed when their host ages out of the retention window above. Screenshot files are counted from disk rather
+        than from the database, so noticeably more files than screenshot rows means captures left behind by deletes
+        that didn't remove them; the retention sweep now cleans those up.
+      </p>
+      <button className="btn-icon-label" onClick={loadStorage} disabled={loadingStorage}>
+        <IconRefresh /> {storage ? "Refresh" : "Show storage usage"}
+      </button>
+      {storage && (
+        <table className="sortable storage-table">
+          <thead>
+            <tr>
+              <th>Table</th>
+              <th>Rows</th>
+              <th>Size</th>
+            </tr>
+          </thead>
+          <tbody>
+            {storage.tables.map((t) => (
+              <tr key={t.table}>
+                <td>{t.table}</td>
+                <td>{t.rows.toLocaleString()}</td>
+                <td>{formatBytes(t.bytes)}</td>
+              </tr>
+            ))}
+            <tr>
+              <td>screenshot files on disk</td>
+              <td>{storage.screenshots.files.toLocaleString()}</td>
+              <td>{formatBytes(storage.screenshots.bytes)}</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>database total</strong>
+              </td>
+              <td>-</td>
+              <td>
+                <strong>{formatBytes(storage.databaseBytes)}</strong>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       )}
 
       <h3>Alerting</h3>

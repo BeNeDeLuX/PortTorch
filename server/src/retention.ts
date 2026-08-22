@@ -2,6 +2,12 @@ import { db } from "./db";
 import { logger } from "./logger";
 import { recordAudit } from "./audit/log";
 import { getAppSettings } from "./settings/appSettings";
+import {
+  deleteScreenshotFiles,
+  purgeOldScreenshots,
+  purgeOrphanedScreenshotFiles,
+  screenshotPathsForHosts,
+} from "./screenshots/files";
 
 const CHECK_INTERVAL_MS = 60 * 60_000; // hourly, like the cert expiry check - retention doesn't need finer granularity
 
@@ -50,6 +56,7 @@ export async function runRetentionSweep(): Promise<{
   purgedHosts: number;
   purgedAuditLogEntries: number;
   purgedScanLogs: number;
+  purgedScreenshots: number;
 }> {
   const { hostRetentionDays, scanLogRetentionDays } = await getAppSettings();
 
@@ -59,7 +66,12 @@ export async function runRetentionSweep(): Promise<{
   // would quietly reintroduce the unbounded growth this fixes.
   const purgedScanLogs = await purgeScanLogs(scanLogRetentionDays);
 
-  if (hostRetentionDays <= 0) return { purgedHosts: 0, purgedAuditLogEntries: 0, purgedScanLogs };
+  // Runs regardless of the host window: these files are referenced by
+  // nothing, so there is no history to preserve and no reason to keep
+  // them even where retention is deliberately switched off.
+  let purgedScreenshots = await purgeOrphanedScreenshotFiles();
+
+  if (hostRetentionDays <= 0) return { purgedHosts: 0, purgedAuditLogEntries: 0, purgedScanLogs, purgedScreenshots };
 
   const threshold = new Date(Date.now() - hostRetentionDays * 24 * 60 * 60_000);
 
@@ -68,6 +80,11 @@ export async function runRetentionSweep(): Promise<{
     .select(["id", "ip", "hostname", "last_seen_at"])
     .where("last_seen_at", "<", threshold)
     .execute();
+
+  // Collected before the delete: the cascade removes the screenshot rows
+  // along with the host, and with them the only record of which files on
+  // disk belonged to it.
+  const staleScreenshotPaths = await screenshotPathsForHosts(stale.map((h) => h.id));
 
   for (const host of stale) {
     await db.deleteFrom("hosts").where("id", "=", host.id).execute();
@@ -80,6 +97,13 @@ export async function runRetentionSweep(): Promise<{
       last_seen_at: host.last_seen_at,
     });
   }
+
+  purgedScreenshots += deleteScreenshotFiles(staleScreenshotPaths);
+
+  // Age-based, for hosts that are still alive - otherwise only host
+  // deletion would ever reclaim anything and a long-lived host scanned on
+  // a schedule grows without limit. Same window as the host sweep.
+  purgedScreenshots += await purgeOldScreenshots(threshold);
 
   if (stale.length > 0) {
     logger.info({ event: "retention.sweep_completed", purged_count: stale.length, retention_days: hostRetentionDays });
@@ -105,7 +129,7 @@ export async function runRetentionSweep(): Promise<{
     });
   }
 
-  return { purgedHosts: stale.length, purgedAuditLogEntries, purgedScanLogs };
+  return { purgedHosts: stale.length, purgedAuditLogEntries, purgedScanLogs, purgedScreenshots };
 }
 
 /**

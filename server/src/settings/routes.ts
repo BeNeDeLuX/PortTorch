@@ -1,6 +1,10 @@
 import { Router } from "express";
+import fs from "fs";
+import path from "path";
 import multer from "multer";
 import { z } from "zod";
+import { sql } from "kysely";
+import { db } from "../db";
 import { requireAuth, requireAdmin } from "../auth/middleware";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
@@ -338,4 +342,56 @@ settingsRouter.post("/smtp/test", asyncHandler(async (req, res) => {
   logger.info({ event: "settings.smtp_test_sent", triggered_by: req.session.username, source_ip: req.ip });
   recordAudit("settings.smtp_test_sent", req.session.username, req.ip, { to: parsed.data.to });
   res.json({ ok: true });
+}));
+
+// Where the database and the screenshot directory are actually going.
+// Deliberately on Settings and loaded on demand rather than a Fleet
+// Health card: the screenshot figure needs a real directory scan, which
+// must not ride on a page that polls every few seconds. The tables listed
+// are the append-only ones that grow with every scan (see CLAUDE.md's
+// Database shape notes) - the point is to make growth visible before it
+// becomes a problem, since deciding what to cap without knowing the
+// numbers would just be guessing.
+settingsRouter.get("/storage", asyncHandler(async (_req, res) => {
+  const sizes = await sql<{ table_name: string; bytes: string; rows: string }>`
+    SELECT t.table_name, pg_total_relation_size(t.table_name)::text AS bytes, t.rows::text AS rows
+    FROM (
+      VALUES
+        ('host_port_observations', (SELECT count(*) FROM host_port_observations)),
+        ('nuclei_findings', (SELECT count(*) FROM nuclei_findings)),
+        ('screenshots', (SELECT count(*) FROM screenshots)),
+        ('rdp_screenshots', (SELECT count(*) FROM rdp_screenshots)),
+        ('scan_job_full_log', (SELECT count(*) FROM scan_job_full_log)),
+        ('audit_log', (SELECT count(*) FROM audit_log))
+    ) AS t(table_name, rows)
+  `.execute(db);
+
+  const databaseBytes = await sql<{ bytes: string }>`SELECT pg_database_size(current_database())::text AS bytes`.execute(db);
+
+  // Counted here rather than inferred from the screenshots tables,
+  // precisely so a mismatch between the two is visible: a directory
+  // holding far more files than there are rows is the orphan leak the
+  // retention sweep now cleans up.
+  let screenshotFiles = 0;
+  let screenshotBytes = 0;
+  try {
+    for (const entry of fs.readdirSync(path.resolve(config.screenshotDir))) {
+      try {
+        const stat = fs.statSync(path.join(path.resolve(config.screenshotDir), entry));
+        if (!stat.isFile()) continue;
+        screenshotFiles++;
+        screenshotBytes += stat.size;
+      } catch {
+        // Raced with a delete - skip it.
+      }
+    }
+  } catch {
+    // Directory doesn't exist yet (nothing has ever been captured).
+  }
+
+  res.json({
+    databaseBytes: Number(databaseBytes.rows[0].bytes),
+    tables: sizes.rows.map((r) => ({ table: r.table_name, bytes: Number(r.bytes), rows: Number(r.rows) })),
+    screenshots: { files: screenshotFiles, bytes: screenshotBytes },
+  });
 }));
