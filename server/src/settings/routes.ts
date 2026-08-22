@@ -13,8 +13,10 @@ import {
   setHostRetentionDays,
   setRequireAdminTotp,
   setScanQueueWarningThreshold,
+  setSmtpSettings,
   setStaleScanThresholdMinutes,
 } from "./appSettings";
+import { buildTransporter, resetSmtpTransporter, senderAddress } from "../webhooks/email";
 import { runRetentionSweep } from "../retention";
 
 // Everything here is admin-only, like scanner agents/schedules/webhooks/
@@ -92,8 +94,19 @@ settingsRouter.post(
   })
 );
 
+// The stored SMTP password must never leave the server - it's the one
+// app_settings value that's a live credential rather than a preference.
+// Replaced with a boolean so the Settings form can still show whether one
+// is set (and therefore whether leaving its field blank means "keep" or
+// "none") without ever transmitting it.
+async function clientAppSettings() {
+  const settings = await getAppSettings();
+  const { password, ...smtp } = settings.smtp;
+  return { ...settings, smtp: { ...smtp, passwordSet: Boolean(password) } };
+}
+
 settingsRouter.get("/app", asyncHandler(async (_req, res) => {
-  res.json(await getAppSettings());
+  res.json(await clientAppSettings());
 }));
 
 // Both fields optional - a genuine partial update, same "distinguish
@@ -105,6 +118,21 @@ const appSettingsSchema = z.object({
   hostRetentionDays: z.number().int().min(0).optional(),
   staleScanThresholdMinutes: z.number().int().min(1).optional(),
   scanQueueWarningThreshold: z.number().int().min(1).optional(),
+  // Saved as one object rather than field-by-field: these only make sense
+  // together (a host without its port/auth is not a usable half-state),
+  // and the form submits them as one section. password is the exception -
+  // optional even within the object, since the form can't prefill what
+  // the API never returns, so omitting it means "keep the stored one".
+  smtp: z
+    .object({
+      host: z.string().trim().min(1).nullable(),
+      port: z.number().int().min(1).max(65535),
+      secure: z.boolean(),
+      user: z.string().trim().min(1).nullable(),
+      password: z.string().min(1).nullable().optional(),
+      from: z.string().trim().min(1).nullable(),
+    })
+    .optional(),
 });
 
 // The first admin to flip this on effectively binds every admin account
@@ -172,7 +200,31 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
     });
   }
 
-  res.json(await getAppSettings());
+  if ("smtp" in req.body && parsed.data.smtp !== undefined) {
+    await setSmtpSettings(parsed.data.smtp);
+    // The transporter is cached for the process lifetime, so without this
+    // an admin fixing a mail server here would keep hitting the old one
+    // until the next restart - precisely the loop moving these settings
+    // into the database was meant to end.
+    resetSmtpTransporter();
+    logger.info({
+      event: "settings.smtp_updated",
+      smtp_host: parsed.data.smtp.host,
+      smtp_port: parsed.data.smtp.port,
+      smtp_secure: parsed.data.smtp.secure,
+      // Never the password, and never even whether it changed - only that
+      // the settings were saved, same discipline as every other log line
+      // in this codebase (see CLAUDE.md's logging section).
+      updated_by: req.session.username,
+      source_ip: req.ip,
+    });
+    recordAudit("settings.smtp_updated", req.session.username, req.ip, {
+      smtp_host: parsed.data.smtp.host,
+      smtp_port: parsed.data.smtp.port,
+    });
+  }
+
+  res.json(await clientAppSettings());
 }));
 
 // Runs the exact same sweep the hourly ticker does (see retention.ts's
@@ -195,4 +247,53 @@ settingsRouter.post("/retention/run-now", asyncHandler(async (req, res) => {
   });
 
   res.json(result);
+}));
+
+const smtpTestSchema = z.object({ to: z.string().trim().email() });
+
+// Sends a real message through the *saved* settings, rather than
+// nodemailer's verify() - verify only proves the connection and auth
+// work, and the failures people actually hit when configuring mail are
+// further along than that: a sender address the server refuses to relay
+// for, a recipient domain it won't accept, a silently-dropped message.
+// Only a delivered test email answers "is this actually working".
+//
+// Deliberately tests what's stored, not what's in the form: an admin
+// saves, then tests, and the result describes the configuration that
+// alerts will really use. Same shape as the Webhooks page's own per-
+// channel Test button.
+settingsRouter.post("/smtp/test", asyncHandler(async (req, res) => {
+  const parsed = smtpTestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "a valid recipient email address is required" });
+    return;
+  }
+
+  const { smtp } = await getAppSettings();
+  const transport = buildTransporter(smtp);
+  if (!transport) {
+    res.status(400).json({ error: "no mail server is configured - set a host first" });
+    return;
+  }
+
+  try {
+    await transport.sendMail({
+      from: senderAddress(smtp),
+      to: parsed.data.to,
+      subject: "PortTorch: SMTP test",
+      text: "This is a test message from PortTorch. If you received it, alert emails will work.",
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn({ event: "settings.smtp_test_failed", error: message, triggered_by: req.session.username });
+    // 200 with ok:false, not a 5xx: the request itself succeeded, and the
+    // delivery failure is the answer the admin asked for - same
+    // convention as the webhook /test endpoint.
+    res.json({ ok: false, error: message });
+    return;
+  }
+
+  logger.info({ event: "settings.smtp_test_sent", triggered_by: req.session.username, source_ip: req.ip });
+  recordAudit("settings.smtp_test_sent", req.session.username, req.ip, { to: parsed.data.to });
+  res.json({ ok: true });
 }));

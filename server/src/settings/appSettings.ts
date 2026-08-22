@@ -5,6 +5,28 @@ export interface AppSettings {
   hostRetentionDays: number;
   staleScanThresholdMinutes: number;
   scanQueueWarningThreshold: number;
+  smtp: SmtpSettings;
+}
+
+export interface SmtpSettings {
+  host: string | null;
+  port: number;
+  secure: boolean;
+  user: string | null;
+  password: string | null;
+  from: string | null;
+}
+
+// Everything an admin can change from the Settings page. password is
+// optional on the way in specifically so "save without retyping the
+// password" is expressible - see setSmtpSettings.
+export interface SmtpSettingsInput {
+  host: string | null;
+  port: number;
+  secure: boolean;
+  user: string | null;
+  password?: string | null;
+  from: string | null;
 }
 
 // Singleton row (id always 1), same idiom as digest_email_state /
@@ -19,6 +41,12 @@ export async function getAppSettings(): Promise<AppSettings> {
       "host_retention_days",
       "stale_scan_threshold_minutes",
       "scan_queue_warning_threshold",
+      "smtp_host",
+      "smtp_port",
+      "smtp_secure",
+      "smtp_user",
+      "smtp_password",
+      "smtp_from",
     ])
     .where("id", "=", 1)
     .executeTakeFirstOrThrow();
@@ -27,7 +55,35 @@ export async function getAppSettings(): Promise<AppSettings> {
     hostRetentionDays: row.host_retention_days,
     staleScanThresholdMinutes: row.stale_scan_threshold_minutes,
     scanQueueWarningThreshold: row.scan_queue_warning_threshold,
+    smtp: {
+      host: row.smtp_host,
+      port: row.smtp_port,
+      secure: row.smtp_secure,
+      user: row.smtp_user,
+      password: row.smtp_password,
+      from: row.smtp_from,
+    },
   };
+}
+
+// An omitted password means "keep the stored one" - the Settings form
+// can't prefill it (the API never returns it), so treating a blank field
+// as "clear the password" would silently break working auth every time
+// an admin edited, say, the sender address. Clearing is still possible,
+// explicitly, by sending null.
+export async function setSmtpSettings(input: SmtpSettingsInput): Promise<void> {
+  await db
+    .updateTable("app_settings")
+    .set({
+      smtp_host: input.host,
+      smtp_port: input.port,
+      smtp_secure: input.secure,
+      smtp_user: input.user,
+      smtp_from: input.from,
+      ...(input.password === undefined ? {} : { smtp_password: input.password }),
+    })
+    .where("id", "=", 1)
+    .execute();
 }
 
 export async function setRequireAdminTotp(value: boolean): Promise<void> {

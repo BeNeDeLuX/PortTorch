@@ -335,6 +335,38 @@ header h1 {
   width: auto;
 }
 
+/* Multi-field settings form (the SMTP section) - a vertical stack of
+   labelled inputs rather than the single-row .inline-form the other
+   settings use, since six fields don't fit one line legibly. Bounded
+   width so a host name field doesn't stretch to 1600px on a wide
+   viewport. */
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 480px;
+  margin-bottom: 1rem;
+}
+
+.settings-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* The TLS-style checkbox row inside that stack still wants its label
+   beside the box, not above it. */
+.settings-form label.hide-empty-toggle {
+  flex-direction: row;
+  align-items: center;
+}
+
+.settings-form button {
+  align-self: flex-start;
+}
+
 /* Bulk-selection column on the findings tables - narrow, and the
    checkbox must not inherit the full-width input styling the forms use. */
 .select-col {

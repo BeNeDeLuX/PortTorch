@@ -48,6 +48,30 @@ export interface AppSettings {
   hostRetentionDays: number;
   staleScanThresholdMinutes: number;
   scanQueueWarningThreshold: number;
+  smtp: SmtpSettingsView;
+}
+
+// What the server actually returns for SMTP: never the password itself,
+// only whether one is stored - which is what the form needs in order to
+// know whether a blank password field means "keep" or "none".
+export interface SmtpSettingsView {
+  host: string | null;
+  port: number;
+  secure: boolean;
+  user: string | null;
+  from: string | null;
+  passwordSet: boolean;
+}
+
+// What the form sends back. An omitted password keeps the stored one;
+// an explicit null clears it.
+export interface SmtpSettingsInput {
+  host: string | null;
+  port: number;
+  secure: boolean;
+  user: string | null;
+  from: string | null;
+  password?: string | null;
 }
 
 export interface DashboardUser {
@@ -954,8 +978,13 @@ export const api = {
     return res.json() as Promise<TlsCertificateInfo>;
   },
   appSettings: () => request<AppSettings>("/api/settings/app"),
-  updateAppSettings: (patch: Partial<AppSettings>) =>
+  updateAppSettings: (patch: Partial<Omit<AppSettings, "smtp">> & { smtp?: SmtpSettingsInput }) =>
     request<AppSettings>("/api/settings/app", { method: "PATCH", body: JSON.stringify(patch) }),
+  testSmtp: (to: string) =>
+    request<{ ok: boolean; error?: string }>("/api/settings/smtp/test", {
+      method: "POST",
+      body: JSON.stringify({ to }),
+    }),
   runRetentionSweepNow: () =>
     request<{ purgedHosts: number; purgedAuditLogEntries: number }>("/api/settings/retention/run-now", {
       method: "POST",

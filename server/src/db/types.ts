@@ -621,6 +621,18 @@ export interface AppSettingsTable {
   // How many pending scan_requests rows before Fleet Health's "Scan
   // Queue" card escalates to "warning" - see useFleetHealth.ts.
   scan_queue_warning_threshold: ColumnType<number, number | undefined, number>;
+  // Was config.ts's SMTP_* env vars - moved here for the same reason as
+  // the fields above, plus one specific to mail: it's the setting most
+  // likely to be wrong on first setup and to need a few quick iterations,
+  // which a redeploy loop makes miserable. smtp_password is necessarily
+  // plaintext (SMTP AUTH needs the credential itself, so there's nothing
+  // to hash it into) and is never returned by the API.
+  smtp_host: string | null;
+  smtp_port: ColumnType<number, number | undefined, number>;
+  smtp_secure: ColumnType<boolean, boolean | undefined, boolean>;
+  smtp_user: string | null;
+  smtp_password: string | null;
+  smtp_from: string | null;
 }
 
 export interface AuditLogTable {

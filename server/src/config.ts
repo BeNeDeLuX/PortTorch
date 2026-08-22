@@ -22,17 +22,6 @@ export const config = {
   // databaseUrl/sessionSecret: a deployment that only ever uses webhook
   // channels (the pre-existing default) shouldn't be forced to configure
   // SMTP it'll never use.
-  smtp: {
-    host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT ?? "587", 10),
-    // STARTTLS (the common case on port 587) is negotiated after connect
-    // regardless of this flag; `secure: true` is only for implicit-TLS
-    // ports like 465 - matches nodemailer's own documented behavior.
-    secure: process.env.SMTP_SECURE === "true",
-    user: process.env.SMTP_USER,
-    password: process.env.SMTP_PASSWORD,
-    from: process.env.SMTP_FROM,
-  },
   // A CVE's EPSS score (see src/cve/epssSync.ts) at or above this fires a
   // "vulnerability.high_epss" webhook once. 0.5 = 50% predicted exploit
   // probability in the next 30 days - FIRST.org's own docs note the

@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, AppSettings, Me, TlsCertificateInfo } from "../api";
-import { IconSave, IconTrash, IconUpload } from "../components/icons";
+import { IconSave, IconSend, IconTrash, IconUpload } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime } from "../lib/formatDate";
 import { certExpiryDaysLeft, certExpiryLabel, certExpiryStatus } from "../lib/certExpiry";
@@ -39,6 +39,22 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
   const [savingQueueThreshold, setSavingQueueThreshold] = useState(false);
   const [queueThresholdError, setQueueThresholdError] = useState<string | null>(null);
 
+  const [smtpHost, setSmtpHost] = useState("");
+  const [smtpPort, setSmtpPort] = useState("587");
+  const [smtpSecure, setSmtpSecure] = useState(false);
+  const [smtpUser, setSmtpUser] = useState("");
+  const [smtpFrom, setSmtpFrom] = useState("");
+  // Never prefilled - the API doesn't return the stored password. Blank
+  // therefore means "keep whatever is stored", which is why the form
+  // needs passwordSet from the server to say so honestly.
+  const [smtpPassword, setSmtpPassword] = useState("");
+  const [savingSmtp, setSavingSmtp] = useState(false);
+  const [smtpError, setSmtpError] = useState<string | null>(null);
+  const [smtpSaved, setSmtpSaved] = useState(false);
+  const [smtpTestTo, setSmtpTestTo] = useState("");
+  const [testingSmtp, setTestingSmtp] = useState(false);
+  const [smtpTestResult, setSmtpTestResult] = useState<string | null>(null);
+
   useEffect(() => {
     load();
     api
@@ -48,6 +64,11 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
         setRetentionDaysInput(String(s.hostRetentionDays));
         setStaleThresholdInput(String(s.staleScanThresholdMinutes));
         setQueueThresholdInput(String(s.scanQueueWarningThreshold));
+        setSmtpHost(s.smtp.host ?? "");
+        setSmtpPort(String(s.smtp.port));
+        setSmtpSecure(s.smtp.secure);
+        setSmtpUser(s.smtp.user ?? "");
+        setSmtpFrom(s.smtp.from ?? "");
       })
       .catch(() => setAppSettings(null));
   }, []);
@@ -111,6 +132,55 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       setStaleThresholdError(err instanceof Error ? err.message : "Failed to update setting");
     } finally {
       setSavingStaleThreshold(false);
+    }
+  }
+
+  async function handleSaveSmtp(e: FormEvent) {
+    e.preventDefault();
+    const port = parseInt(smtpPort, 10);
+    if (Number.isNaN(port) || port < 1 || port > 65535) {
+      setSmtpError("Enter a valid port between 1 and 65535.");
+      return;
+    }
+    setSmtpError(null);
+    setSmtpSaved(false);
+    setSavingSmtp(true);
+    try {
+      const updated = await api.updateAppSettings({
+        smtp: {
+          host: smtpHost.trim() || null,
+          port,
+          secure: smtpSecure,
+          user: smtpUser.trim() || null,
+          from: smtpFrom.trim() || null,
+          // Omitted when left blank so saving an unrelated field can't
+          // silently wipe working credentials; sent as null only when the
+          // admin explicitly clears the username too, which is the one
+          // case where keeping a password makes no sense.
+          ...(smtpPassword ? { password: smtpPassword } : smtpUser.trim() ? {} : { password: null }),
+        },
+      });
+      setAppSettings(updated);
+      setSmtpPassword("");
+      setSmtpSaved(true);
+    } catch (err) {
+      setSmtpError(err instanceof Error ? err.message : "Failed to save mail settings");
+    } finally {
+      setSavingSmtp(false);
+    }
+  }
+
+  async function handleTestSmtp(e: FormEvent) {
+    e.preventDefault();
+    setSmtpTestResult(null);
+    setTestingSmtp(true);
+    try {
+      const result = await api.testSmtp(smtpTestTo.trim());
+      setSmtpTestResult(result.ok ? `Test email sent to ${smtpTestTo.trim()}.` : `Failed: ${result.error}`);
+    } catch (err) {
+      setSmtpTestResult(err instanceof Error ? err.message : "Test failed");
+    } finally {
+      setTestingSmtp(false);
     }
   }
 
@@ -363,6 +433,93 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
             <IconSave /> Save
           </button>
         </form>
+      )}
+
+      <h3>Mail Server (SMTP)</h3>
+      <p className="host-meta">
+        Used by "email" alert channels on the Webhooks page and by the daily digest email. Leave the host blank if you
+        only use webhook channels - nothing here is required otherwise. These settings used to live in the .env file
+        and needed a redeploy to change; editing those variables now has no effect.
+      </p>
+
+      {smtpError && <p className="error">{smtpError}</p>}
+      {smtpSaved && <p className="callout-success">Mail settings saved.</p>}
+
+      {appSettings && (
+        <>
+          <form className="settings-form" onSubmit={handleSaveSmtp}>
+            <label>
+              Host
+              <input
+                placeholder="smtp.example.com"
+                value={smtpHost}
+                onChange={(e) => setSmtpHost(e.target.value)}
+              />
+            </label>
+            <label>
+              Port
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                step={1}
+                value={smtpPort}
+                onChange={(e) => setSmtpPort(e.target.value)}
+              />
+            </label>
+            <label className="hide-empty-toggle">
+              <input type="checkbox" checked={smtpSecure} onChange={(e) => setSmtpSecure(e.target.checked)} />
+              Implicit TLS (port 465). Leave off for STARTTLS on 587.
+            </label>
+            <label>
+              Username
+              <input
+                autoComplete="off"
+                placeholder="optional - leave blank for an unauthenticated relay"
+                value={smtpUser}
+                onChange={(e) => setSmtpUser(e.target.value)}
+              />
+            </label>
+            <label>
+              Password
+              <input
+                type="password"
+                autoComplete="new-password"
+                placeholder={appSettings.smtp.passwordSet ? "unchanged - type to replace" : "no password stored"}
+                value={smtpPassword}
+                onChange={(e) => setSmtpPassword(e.target.value)}
+              />
+            </label>
+            <label>
+              Sender address
+              <input
+                placeholder="porttorch@example.com - defaults to the username"
+                value={smtpFrom}
+                onChange={(e) => setSmtpFrom(e.target.value)}
+              />
+            </label>
+            <button type="submit" className="btn-icon-label" disabled={savingSmtp}>
+              <IconSave /> Save mail settings
+            </button>
+          </form>
+
+          <p className="host-meta">
+            Sends a real message using the <em>saved</em> settings - save first, then test. A connection check alone
+            wouldn't catch the failures that actually bite here, like a sender address the server refuses to relay for.
+          </p>
+          <form className="inline-form" onSubmit={handleTestSmtp}>
+            <input
+              type="email"
+              placeholder="Send a test email to..."
+              value={smtpTestTo}
+              onChange={(e) => setSmtpTestTo(e.target.value)}
+            />
+            <button type="submit" className="btn-icon-label" disabled={testingSmtp || !smtpTestTo.trim()}>
+              <IconSend /> Send test
+            </button>
+          </form>
+          {smtpTestResult && <p className="host-meta">{smtpTestResult}</p>}
+        </>
       )}
     </div>
   );
