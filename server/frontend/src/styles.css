@@ -335,6 +335,21 @@ header h1 {
   width: auto;
 }
 
+/* Triage state filter on the Vulnerabilities/Web Findings pages - sits in
+   the same .list-controls row, and matches .hide-empty-toggle's muted
+   label treatment since it replaced a checkbox that lived exactly there. */
+.triage-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.triage-filter select {
+  width: auto;
+}
+
 .date-range-filter {
   display: flex;
   align-items: center;

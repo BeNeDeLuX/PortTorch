@@ -3,7 +3,9 @@ import { Link } from "react-router";
 import { api, FleetNucleiFinding, Me } from "../api";
 import PageHeader from "../components/PageHeader";
 import TriageControl from "../components/TriageControl";
+import TriageFilterSelect from "../components/TriageFilterSelect";
 import TableExport from "../components/TableExport";
+import { TriageFilter, matchesTriageFilter, triageCounts } from "../lib/triageFilter";
 
 type SortKey = "host" | "port" | "template_id" | "severity";
 type SortDirection = "asc" | "desc";
@@ -43,11 +45,12 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [query, setQuery] = useState("");
   const [severityFilter, setSeverityFilter] = useState<string | null>(null);
-  // Hiding triaged findings is the whole point of triage - default on, so
-  // the page shows what still needs attention rather than everything ever
-  // found. Toggleable, since "what did we already dismiss, and why" is a
-  // real question too (e.g. reviewing a previous analyst's calls).
-  const [hideTriaged, setHideTriaged] = useState(true);
+  // Defaults to "needs a decision" so the page opens on what still wants
+  // attention rather than everything ever found. The other options exist
+  // because "what did we already dismiss, and why" is a real question too
+  // (e.g. reviewing a previous analyst's calls). Same control and default
+  // as Vulnerabilities.tsx.
+  const [triageFilter, setTriageFilter] = useState<TriageFilter>("needs_decision");
   const canEdit = me.role === "admin" || me.role === "operator";
 
   useEffect(() => {
@@ -79,7 +82,7 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
 
   const trimmedQuery = query.trim().toLowerCase();
   const filtered = findings.filter((f) => {
-    if (hideTriaged && f.triage_state && !f.triage_expired) return false;
+    if (!matchesTriageFilter(triageFilter, f)) return false;
     if (severityFilter && f.severity !== severityFilter) return false;
     if (!trimmedQuery) return true;
     return (
@@ -90,7 +93,9 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
     );
   });
   const sorted = [...filtered].sort((a, b) => compareFindings(a, b, sortKey, sortDirection));
-  const triagedCount = findings.filter((f) => f.triage_state).length;
+  // Against the whole set, not the filtered view - a "what exists"
+  // summary that must not shift as the filter narrows.
+  const triageBreakdown = triageCounts(findings);
 
   return (
     <div className="dashboard">
@@ -125,10 +130,7 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
             ))}
           </div>
           <div className="list-controls">
-            <label className="hide-empty-toggle">
-              <input type="checkbox" checked={hideTriaged} onChange={(e) => setHideTriaged(e.target.checked)} />
-              Hide triaged findings
-            </label>
+            <TriageFilterSelect value={triageFilter} onChange={setTriageFilter} />
             <TableExport
               rows={sorted}
               filenameBase="porttorch-web-findings"
@@ -150,10 +152,10 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
             />
           </div>
           <p className="host-meta">
-            {query.trim() || severityFilter || hideTriaged
+            {query.trim() || severityFilter || triageFilter !== "all"
               ? `${sorted.length} of ${findings.length} shown`
               : `${findings.length} total`}
-            {triagedCount > 0 && ` · ${triagedCount} triaged`}
+            {triageBreakdown.map((t) => ` · ${t.count} ${t.label.toLowerCase()}`).join("")}
           </p>
         </>
       )}

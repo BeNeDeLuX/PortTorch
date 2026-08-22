@@ -4,7 +4,9 @@ import { api, FleetVulnerability, Me } from "../api";
 import { cveSeverityClass } from "../lib/cveSeverity";
 import PageHeader from "../components/PageHeader";
 import TriageControl from "../components/TriageControl";
+import TriageFilterSelect from "../components/TriageFilterSelect";
 import TableExport from "../components/TableExport";
+import { TriageFilter, matchesTriageFilter, triageCounts } from "../lib/triageFilter";
 
 type SortKey = "host" | "port" | "cve_id" | "cvss_score" | "epss_score" | "kev";
 type SortDirection = "asc" | "desc";
@@ -53,9 +55,10 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
   const [query, setQuery] = useState("");
   const [severityFilter, setSeverityFilter] = useState<string | null>(null);
   const [kevOnly, setKevOnly] = useState(false);
-  // Default on - see WebFindings.tsx for the same reasoning: the page
-  // should show what still needs a decision, not every CVE ever matched.
-  const [hideTriaged, setHideTriaged] = useState(true);
+  // Defaults to "needs a decision" - the page should open on what still
+  // wants attention, not every CVE ever matched. Same default and same
+  // control on WebFindings.tsx.
+  const [triageFilter, setTriageFilter] = useState<TriageFilter>("needs_decision");
   const canEdit = me.role === "admin" || me.role === "operator";
 
   useEffect(() => {
@@ -87,7 +90,7 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
 
   const trimmedQuery = query.trim().toLowerCase();
   const filteredVulns = vulns.filter((v) => {
-    if (hideTriaged && v.triage_state && !v.triage_expired) return false;
+    if (!matchesTriageFilter(triageFilter, v)) return false;
     if (severityFilter && severityOf(v) !== severityFilter) return false;
     if (kevOnly && !v.kev_date_added) return false;
     if (!trimmedQuery) return true;
@@ -99,7 +102,10 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
     );
   });
   const sortedVulns = [...filteredVulns].sort((a, b) => compareVulns(a, b, sortKey, sortDirection));
-  const triagedCount = vulns.filter((v) => v.triage_state).length;
+  // Computed against the whole fleet-wide set, not the filtered view -
+  // it's a "what exists" summary, so it must not change as the filter
+  // narrows (which would make it circular).
+  const triageBreakdown = triageCounts(vulns);
 
   return (
     <div className="dashboard">
@@ -143,10 +149,7 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
             </button>
           </div>
           <div className="list-controls">
-            <label className="hide-empty-toggle">
-              <input type="checkbox" checked={hideTriaged} onChange={(e) => setHideTriaged(e.target.checked)} />
-              Hide triaged findings
-            </label>
+            <TriageFilterSelect value={triageFilter} onChange={setTriageFilter} />
             <TableExport
               rows={sortedVulns}
               filenameBase="porttorch-vulnerabilities"
@@ -168,10 +171,10 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
             />
           </div>
           <p className="host-meta">
-            {query.trim() || severityFilter || kevOnly || hideTriaged
+            {query.trim() || severityFilter || kevOnly || triageFilter !== "all"
               ? `${sortedVulns.length} of ${vulns.length} shown`
               : `${vulns.length} total`}
-            {triagedCount > 0 && ` · ${triagedCount} triaged`}
+            {triageBreakdown.map((t) => ` · ${t.count} ${t.label.toLowerCase()}`).join("")}
           </p>
         </>
       )}
