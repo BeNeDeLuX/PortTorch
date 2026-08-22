@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
-import { afterAll, describe, expect, it } from "vitest";
+import os from "os";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 import { db } from "../../src/db";
 import { config } from "../../src/config";
@@ -24,12 +25,26 @@ import {
 // filesystem, because "the row is gone" was never the part that was
 // broken.
 describe("screenshot file cleanup", () => {
+  // Point the app at a throwaway directory for the duration. config is a
+  // plain object and the screenshot helpers read screenshotDir at call
+  // time, so this is enough - and it matters: relying on the default
+  // (/data/screenshots) made these pass locally with SCREENSHOT_DIR set
+  // and fail in CI, which provides no such directory. A test that needs
+  // the environment arranged for it isn't self-contained.
+  const originalScreenshotDir = config.screenshotDir;
+
+  beforeAll(() => {
+    config.screenshotDir = fs.mkdtempSync(path.join(os.tmpdir(), "porttorch-shots-"));
+  });
+
   let agent: TestAgent;
   let admin: TestUser;
   const hostIps: string[] = [];
   const created: number[] = [];
 
   afterAll(async () => {
+    fs.rmSync(config.screenshotDir, { recursive: true, force: true });
+    config.screenshotDir = originalScreenshotDir;
     for (const ip of hostIps) await db.deleteFrom("hosts").where("ip", "=", ip).execute();
     if (agent) await deleteTestAgent(agent.id);
     for (const id of created) await deleteTestUser(id);
