@@ -524,6 +524,80 @@ authRouter.post("/2fa/disable", requireAuth, asyncHandler(async (req, res) => {
   res.status(204).end();
 }));
 
+// Same minimum as createUserSchema's - deliberately not stricter here, so
+// a policy an admin could satisfy when creating the account can't become
+// unsatisfiable when the owner later tries to change it.
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8),
+});
+
+// Until this existed there was no way to change a password at all, at any
+// tier - password_hash was only ever written once, at account creation.
+// A shared or leaked credential could only be remediated by deleting the
+// account outright, which also threw away its 2FA enrolment and scanner
+// assignments.
+//
+// Self-service and requiring the current password (not merely a live
+// session), same reasoning as /2fa/disable directly above: a session
+// alone isn't proof the person at the keyboard is still the account
+// owner, which is exactly the case this endpoint has to defend against.
+authRouter.post("/password", requireAuth, asyncHandler(async (req, res) => {
+  const parsed = changePasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "current password and a new password of at least 8 characters are required" });
+    return;
+  }
+
+  const user = await db
+    .selectFrom("users")
+    .select(["username", "password_hash"])
+    .where("id", "=", req.session.userId!)
+    .executeTakeFirstOrThrow();
+
+  // Its own key prefix rather than sharing the login counter - guessing
+  // an already-authenticated session's current password is a different
+  // attack from guessing a login, and conflating them would let one lock
+  // out the other.
+  const ipKey = `ip:${req.ip}`;
+  const userKey = `changepw:${user.username}`;
+  if (isLockedOut(ipKey) || isLockedOut(userKey)) {
+    res.status(429).json({ error: "too many failed attempts, try again in 15 minutes" });
+    return;
+  }
+  if (!(await verifyPassword(parsed.data.currentPassword, user.password_hash))) {
+    recordFailure(ipKey);
+    recordFailure(userKey);
+    logger.warn({ event: "auth.password_change_failed", username: user.username, source_ip: req.ip });
+    res.status(401).json({ error: "current password is incorrect" });
+    return;
+  }
+  recordSuccess(ipKey);
+  recordSuccess(userKey);
+
+  if (parsed.data.newPassword === parsed.data.currentPassword) {
+    res.status(400).json({ error: "the new password must differ from the current one" });
+    return;
+  }
+
+  await db
+    .updateTable("users")
+    .set({ password_hash: await hashPassword(parsed.data.newPassword) })
+    .where("id", "=", req.session.userId!)
+    .execute();
+
+  // Deliberately keeps this session alive: express-session has no
+  // practical way to selectively invalidate an account's *other* sessions
+  // (they're independent store entries with no user index), so logging
+  // this one out would be security theatre - it would inconvenience the
+  // one person we know is legitimate while leaving any other session
+  // untouched. Documented rather than half-solved.
+  logger.info({ event: "auth.password_changed", username: user.username, source_ip: req.ip });
+  recordAudit("auth.password_changed", user.username, req.ip);
+
+  res.status(204).end();
+}));
+
 authRouter.post("/2fa/recovery-codes/regenerate", requireAuth, asyncHandler(async (req, res) => {
   const parsed = verifyTotpSchema.safeParse(req.body);
   if (!parsed.success) {

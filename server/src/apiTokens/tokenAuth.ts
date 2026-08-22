@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import { db } from "../db";
 import { logger } from "../logger";
 import { hashApiKey, parseBearerToken } from "../ingest/apiKeyAuth";
+import { checkApiTokenRateLimit } from "./rateLimit";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -42,6 +43,30 @@ export async function tokenAuth(req: Request, res: Response, next: NextFunction)
   if (!token) {
     logger.warn({ event: "auth.api_token_invalid", source_ip: req.ip, path: req.path }, "API request with invalid or revoked token");
     res.status(401).json({ error: "invalid or revoked api token" });
+    return;
+  }
+
+  // After authentication, so an unauthenticated caller can never consume
+  // a real token's budget, and before last_used_at/the route itself, so a
+  // throttled request costs nothing but the lookup.
+  const rate = checkApiTokenRateLimit(token.id);
+  if (rate.limit > 0) {
+    res.setHeader("X-RateLimit-Limit", String(rate.limit));
+    res.setHeader("X-RateLimit-Remaining", String(rate.remaining));
+    res.setHeader("X-RateLimit-Reset", String(Math.ceil(rate.resetAt / 1000)));
+  }
+  if (!rate.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
+    res.setHeader("Retry-After", String(retryAfter));
+    logger.warn({
+      event: "auth.api_token_rate_limited",
+      api_token_id: token.id,
+      api_token_name: token.name,
+      source_ip: req.ip,
+      path: req.path,
+      limit: rate.limit,
+    });
+    res.status(429).json({ error: `rate limit exceeded (${rate.limit} requests/minute), retry in ${retryAfter}s` });
     return;
   }
 

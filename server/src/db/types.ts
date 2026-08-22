@@ -590,6 +590,22 @@ export interface WebhookDeliveriesTable {
   created_at: ColumnType<Date, string | undefined, never>;
 }
 
+// What is still owed after a failed alert delivery - see
+// webhooks/retryQueue.ts. Distinct from webhook_deliveries above, which
+// is a trimmed diagnostic tail and would drop a pending retry on the
+// floor; a row here exists only while a delivery is still outstanding.
+export interface WebhookRetryQueueTable {
+  id: Generated<string>;
+  webhook_id: string;
+  event: string;
+  message: string;
+  data: ColumnType<Record<string, unknown>, string, string>;
+  attempt_count: ColumnType<number, number | undefined, number>;
+  next_attempt_at: ColumnType<Date, Date | string, Date | string>;
+  last_error: string | null;
+  created_at: ColumnType<Date, string | undefined, never>;
+}
+
 // Singleton row (id always 1) of global, admin-configurable toggles that
 // don't belong to any one user's account - see settings/appSettings.ts.
 export interface AppSettingsTable {
@@ -641,6 +657,7 @@ export interface Database {
   digest_email_state: DigestEmailStateTable;
   webhooks: WebhooksTable;
   webhook_deliveries: WebhookDeliveriesTable;
+  webhook_retry_queue: WebhookRetryQueueTable;
   audit_log: AuditLogTable;
   rdp_screenshots: RdpScreenshotsTable;
   scan_schedules: ScanSchedulesTable;

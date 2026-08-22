@@ -206,6 +206,56 @@ usersRouter.delete("/:id", asyncHandler(async (req, res) => {
 // necessarily self-service (see auth/routes.ts), but recovering from a lost
 // device isn't, so this is the one place an admin can act on another
 // user's 2FA at all: turning it back off, never turning it on for them.
+const setPasswordSchema = z.object({ password: z.string().min(8) });
+
+// The recovery path for a forgotten password, and the counterpart to
+// /auth/password's self-service change: without it, the only remedy was
+// deleting and recreating the account, which also discards its 2FA
+// enrolment and scanner assignments.
+//
+// Unlike the self-service route, no current password is required - the
+// whole point is that nobody has it. That makes this a genuine account
+// takeover primitive, which is why it's admin-only (the whole router is)
+// and audited with both actor and target. It deliberately does NOT clear
+// 2FA: an admin who resets a password shouldn't thereby gain the ability
+// to log in as that user, and reset-2fa right below is the separate,
+// separately-audited action for the genuinely-lost-device case.
+usersRouter.post("/:id/password", asyncHandler(async (req, res) => {
+  const id = parseInt(singleParam(req.params.id), 10);
+  if (Number.isNaN(id)) {
+    res.status(400).json({ error: "invalid user id" });
+    return;
+  }
+  const parsed = setPasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "a password of at least 8 characters is required" });
+    return;
+  }
+
+  const target = await db.selectFrom("users").select(["username"]).where("id", "=", id).executeTakeFirst();
+  if (!target) {
+    res.status(404).json({ error: "user not found" });
+    return;
+  }
+
+  await db
+    .updateTable("users")
+    .set({ password_hash: await hashPassword(parsed.data.password) })
+    .where("id", "=", id)
+    .execute();
+
+  logger.info({
+    event: "user.password_reset",
+    user_id: id,
+    username: target.username,
+    reset_by: req.session.username,
+    source_ip: req.ip,
+  });
+  recordAudit("user.password_reset", req.session.username, req.ip, { user_id: id, username: target.username });
+
+  res.status(204).end();
+}));
+
 usersRouter.post("/:id/reset-2fa", asyncHandler(async (req, res) => {
   const id = parseInt(singleParam(req.params.id), 10);
   if (Number.isNaN(id)) {

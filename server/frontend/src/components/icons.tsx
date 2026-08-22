@@ -205,6 +205,19 @@ export function IconEdit({ size = 15 }: { size?: number }) {
   );
 }
 
+// A key, for password reset actions - deliberately not IconRefresh,
+// which "Reset 2FA" right next to it already uses; two adjacent buttons
+// sharing an icon would read as two spellings of the same action.
+export function IconKey({ size = 15 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <circle cx="7.5" cy="15.5" r="4.5" />
+      <path d="M10.7 12.3 20 3" />
+      <path d="M17 6l2.5 2.5" />
+    </svg>
+  );
+}
+
 export function IconInfo({ size = 15 }: { size?: number }) {
   return (
     <svg {...iconProps(size)}>

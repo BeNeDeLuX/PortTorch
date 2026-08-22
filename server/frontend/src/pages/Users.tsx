@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, DashboardUser, Me, ScannerAgent } from "../api";
-import { IconEdit, IconPlus, IconRefresh, IconSave, IconTrash, IconX } from "../components/icons";
+import { IconEdit, IconKey, IconPlus, IconRefresh, IconSave, IconTrash, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import { formatDateTime } from "../lib/formatDate";
@@ -79,6 +79,27 @@ export default function Users({ me, onLogout }: { me: Me; onLogout: () => void }
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reset 2FA");
+    }
+  }
+
+  // window.prompt rather than a form row: resetting someone else's
+  // password is a rare, deliberate recovery action, and this page has no
+  // modal precedent (see server/CLAUDE.md on Schedules establishing
+  // reuse-the-create-form instead). Deliberately does not also clear 2FA -
+  // "Reset 2FA" above is its own separately-audited action, so an admin
+  // resetting a password doesn't silently gain the ability to log in as
+  // that user.
+  async function handleResetPassword(u: DashboardUser) {
+    const next = window.prompt(
+      `Set a new password for "${u.username}" (at least 8 characters).\n\nTheir 2FA, if enabled, stays on - reset that separately if the device was lost too. Tell them to change it from their Account page after signing in.`
+    );
+    if (next === null) return;
+    setError(null);
+    try {
+      await api.setUserPassword(u.id, next);
+      window.alert(`Password for "${u.username}" has been reset.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset password");
     }
   }
 
@@ -183,6 +204,9 @@ export default function Users({ me, onLogout }: { me: Me; onLogout: () => void }
                         <IconEdit /> Edit access
                       </button>
                     )}
+                    <button className="btn-icon-label" onClick={() => handleResetPassword(u)}>
+                      <IconKey /> Reset password
+                    </button>
                     {u.totp_enabled && (
                       <button className="btn-icon-label" onClick={() => handleResetTwoFactor(u)}>
                         <IconRefresh /> Reset 2FA

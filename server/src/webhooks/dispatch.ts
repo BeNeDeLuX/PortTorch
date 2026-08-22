@@ -1,6 +1,7 @@
 import { db } from "../db";
 import { logger } from "../logger";
 import { sendEmailAlert } from "./email";
+import { enqueueRetry } from "./retryQueue";
 
 // Most recent deliveries kept per webhook (webhook_deliveries table) -
 // a diagnostic tail for the Webhooks page's "History" view, not a
@@ -115,6 +116,86 @@ export function buildTeamsAdaptiveCardBody(title: string, message: string): stri
 // anything else consuming it directly. Fans out to all three channel types
 // (see db/types.ts's WebhooksTable) from one query and one events filter -
 // they share everything except how the message is actually delivered.
+// The outcome of one delivery attempt. "permanent" exists so a target
+// that definitively rejected this exact payload isn't retried forever -
+// same permanent/transient split internal/submitqueue already applies to
+// host submissions on the scanner side, and for the same reason: an
+// unchanged retry of something already refused can only ever fail again.
+export type DeliveryOutcome =
+  | { ok: true; statusCode: number | null }
+  | { ok: false; permanent: boolean; statusCode: number | null; error: string };
+
+export interface DeliveryTarget {
+  id: string;
+  channel_type: string;
+  url: string | null;
+  email_to: string | null;
+}
+
+// 4xx means the target understood us and refused; retrying byte-identical
+// content will not change that. The two exceptions are the ones HTTP
+// itself defines as "come back later" - 408 Request Timeout and 429 Too
+// Many Requests - which are transient by definition. Everything else (5xx,
+// DNS failure, connection refused, TLS error) is transient.
+function isPermanentStatus(status: number): boolean {
+  if (status === 408 || status === 429) return false;
+  return status >= 400 && status < 500;
+}
+
+// One delivery attempt against one channel, shared by the initial
+// dispatch below and the retry drainer (retryQueue.ts) so a retried alert
+// can never be built or sent differently from its first attempt.
+export async function attemptDelivery(
+  channel: DeliveryTarget,
+  event: WebhookEvent,
+  message: string,
+  data: Record<string, unknown>
+): Promise<DeliveryOutcome> {
+  if (channel.channel_type === "email") {
+    if (!channel.email_to) {
+      return { ok: false, permanent: true, statusCode: null, error: "email channel has no recipients" };
+    }
+    try {
+      await sendEmailAlert(channel.email_to, `PortTorch: ${EVENT_SUBJECTS[event]}`, message);
+      return { ok: true, statusCode: null };
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err);
+      // Unconfigured SMTP is a deployment decision, not a blip: retrying
+      // every alert against it would just build a backlog that can only
+      // drain after an unrelated config change. The failed delivery row
+      // still records it.
+      const permanent = errMessage.includes("SMTP is not configured");
+      return { ok: false, permanent, statusCode: null, error: errMessage };
+    }
+  }
+
+  if (!channel.url) {
+    return { ok: false, permanent: true, statusCode: null, error: "channel has no url" };
+  }
+
+  const body =
+    channel.channel_type === "teams"
+      ? buildTeamsAdaptiveCardBody(`PortTorch: ${EVENT_SUBJECTS[event]}`, message)
+      : JSON.stringify({ text: message, content: message, event, data, timestamp: new Date().toISOString() });
+
+  try {
+    const res = await fetch(channel.url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    if (res.ok) return { ok: true, statusCode: res.status };
+    return {
+      ok: false,
+      permanent: isPermanentStatus(res.status),
+      statusCode: res.status,
+      error: `target responded ${res.status}`,
+    };
+  } catch (err) {
+    return { ok: false, permanent: false, statusCode: null, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function dispatchWebhook(event: WebhookEvent, message: string, data: Record<string, unknown>): Promise<void> {
   let channels: Array<{ id: string; channel_type: string; url: string | null; email_to: string | null; events: string[] }>;
   try {
@@ -128,51 +209,25 @@ export async function dispatchWebhook(event: WebhookEvent, message: string, data
     return;
   }
 
-  const targets = channels.filter((c) => c.events.includes(event));
-  const slackDiscordBody = JSON.stringify({ text: message, content: message, event, data, timestamp: new Date().toISOString() });
-  const teamsBody = buildTeamsAdaptiveCardBody(`PortTorch: ${EVENT_SUBJECTS[event]}`, message);
-  const subject = `PortTorch: ${EVENT_SUBJECTS[event]}`;
+  for (const channel of channels.filter((c) => c.events.includes(event))) {
+    // Still deliberately not awaited: a slow or dead alert target must
+    // never hold up scanner ingest, which is what calls this.
+    void attemptDelivery(channel, event, message, data).then(async (outcome) => {
+      await recordDelivery(channel.id, event, outcome.ok, outcome.statusCode, outcome.ok ? null : outcome.error);
+      if (outcome.ok) return;
 
-  for (const channel of targets) {
-    if (channel.channel_type === "email") {
-      if (!channel.email_to) continue;
-      sendEmailAlert(channel.email_to, subject, message)
-        .then(() => recordDelivery(channel.id, event, true, null, null))
-        .catch((err) => {
-          const errMessage = err instanceof Error ? err.message : String(err);
-          logger.warn({
-            event: "webhook.delivery_failed",
-            webhook_id: channel.id,
-            webhook_event: event,
-            channel_type: "email",
-            error: errMessage,
-          });
-          recordDelivery(channel.id, event, false, null, errMessage);
-        });
-      continue;
-    }
-
-    if (!channel.url) continue;
-    fetch(channel.url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: channel.channel_type === "teams" ? teamsBody : slackDiscordBody,
-    })
-      .then((res) => {
-        if (!res.ok) {
-          logger.warn({ event: "webhook.delivery_failed", webhook_id: channel.id, webhook_event: event, status: res.status });
-        }
-        recordDelivery(channel.id, event, res.ok, res.status, null);
-      })
-      .catch((err) => {
-        const errMessage = err instanceof Error ? err.message : String(err);
-        logger.warn({
-          event: "webhook.delivery_failed",
-          webhook_id: channel.id,
-          webhook_event: event,
-          error: errMessage,
-        });
-        recordDelivery(channel.id, event, false, null, errMessage);
+      logger.warn({
+        event: "webhook.delivery_failed",
+        webhook_id: channel.id,
+        webhook_event: event,
+        channel_type: channel.channel_type,
+        status: outcome.statusCode,
+        error: outcome.error,
+        permanent: outcome.permanent,
       });
+      if (!outcome.permanent) {
+        await enqueueRetry(channel.id, event, message, data, outcome.error);
+      }
+    });
   }
 }

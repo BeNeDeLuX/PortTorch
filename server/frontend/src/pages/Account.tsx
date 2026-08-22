@@ -45,6 +45,12 @@ export default function Account({
   const [disablePassword, setDisablePassword] = useState("");
   const [regenerateCode, setRegenerateCode] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [repeatPassword, setRepeatPassword] = useState("");
+  const [pwError, setPwError] = useState<string | null>(null);
+  const [pwDone, setPwDone] = useState(false);
+  const [pwBusy, setPwBusy] = useState(false);
 
   const [agents, setAgents] = useState<ScannerAgent[]>([]);
   // "" stands in for "no override" throughout this form (theme, page size,
@@ -97,6 +103,31 @@ export default function Account({
       setPrefsSaved(true);
     } catch (err) {
       setPrefsError(err instanceof Error ? err.message : "Failed to save preferences");
+    }
+  }
+
+  // The repeat field is checked here and nowhere else on purpose: it's a
+  // typo guard for the person typing, not a security property, so the
+  // server has no reason to know about it.
+  async function handleChangePassword(e: FormEvent) {
+    e.preventDefault();
+    setPwError(null);
+    setPwDone(false);
+    if (newPassword !== repeatPassword) {
+      setPwError("The two new passwords don't match.");
+      return;
+    }
+    setPwBusy(true);
+    try {
+      await api.changePassword(currentPassword, newPassword);
+      setCurrentPassword("");
+      setNewPassword("");
+      setRepeatPassword("");
+      setPwDone(true);
+    } catch (err) {
+      setPwError(err instanceof Error ? err.message : "Failed to change password");
+    } finally {
+      setPwBusy(false);
     }
   }
 
@@ -239,6 +270,40 @@ export default function Account({
         </label>
         <button type="submit" className="btn-icon-label">
           <IconSave /> Save preferences
+        </button>
+      </form>
+
+      <h3>Password</h3>
+      <p className="host-meta">
+        Changing your password requires your current one - being signed in isn't on its own proof of who's at the
+        keyboard. Other sessions you may have open elsewhere stay signed in; sign out there separately if that matters.
+      </p>
+      {pwError && <p className="error">{pwError}</p>}
+      {pwDone && <p className="callout-success">Password changed.</p>}
+      <form className="inline-form" onSubmit={handleChangePassword}>
+        <input
+          type="password"
+          autoComplete="current-password"
+          placeholder="Current password"
+          value={currentPassword}
+          onChange={(e) => setCurrentPassword(e.target.value)}
+        />
+        <input
+          type="password"
+          autoComplete="new-password"
+          placeholder="New password (min. 8 characters)"
+          value={newPassword}
+          onChange={(e) => setNewPassword(e.target.value)}
+        />
+        <input
+          type="password"
+          autoComplete="new-password"
+          placeholder="Repeat new password"
+          value={repeatPassword}
+          onChange={(e) => setRepeatPassword(e.target.value)}
+        />
+        <button type="submit" className="btn-icon-label" disabled={pwBusy}>
+          <IconSave /> Change password
         </button>
       </form>
 

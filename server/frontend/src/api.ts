@@ -115,6 +115,11 @@ export interface HostSummary {
   cve_count: number;
   max_cvss_score: number | null;
   has_kev: boolean;
+  // Open ports this host's own most recent scan did not re-confirm.
+  // masscan only reports ports it currently sees open, so one that
+  // quietly stops answering leaves its last "open" observation standing
+  // - these are counted as open everywhere but may no longer be.
+  stale_port_count: number;
 }
 
 export interface HostFilters {
@@ -126,6 +131,7 @@ export interface HostFilters {
   deviceType?: string;
   hideEmpty?: boolean;
   hasScreenshot?: boolean;
+  hasStalePorts?: boolean;
   // yyyy-mm-dd, matching <input type="date">
   lastSeenAfter?: string;
   lastSeenBefore?: string;
@@ -692,6 +698,7 @@ function hostsQueryString(filters: HostFilters, page?: number, pageSize?: number
   if (filters.deviceType) params.set("deviceType", filters.deviceType);
   if (filters.hideEmpty) params.set("hideEmpty", "true");
   if (filters.hasScreenshot) params.set("hasScreenshot", "true");
+  if (filters.hasStalePorts) params.set("hasStalePorts", "true");
   if (filters.lastSeenAfter) params.set("lastSeenAfter", filters.lastSeenAfter);
   if (filters.lastSeenBefore) params.set("lastSeenBefore", filters.lastSeenBefore);
   if (filters.scannerAgentIds?.length) params.set("scannerAgentId", filters.scannerAgentIds.join(","));
@@ -751,6 +758,8 @@ export const api = {
   updatePreferences: (patch: Partial<UserPreferences>) =>
     request<UserPreferences>("/auth/preferences", { method: "PATCH", body: JSON.stringify(patch) }),
   twoFactorStatus: () => request<{ enabled: boolean }>("/auth/2fa/status"),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<void>("/auth/password", { method: "POST", body: JSON.stringify({ currentPassword, newPassword }) }),
   twoFactorSetup: () => request<TwoFactorSetup>("/auth/2fa/setup", { method: "POST" }),
   twoFactorConfirm: (code: string) =>
     request<{ recoveryCodes: string[] }>("/auth/2fa/confirm", { method: "POST", body: JSON.stringify({ code }) }),
@@ -956,6 +965,8 @@ export const api = {
   createUser: (input: { username: string; password: string; role: string; scannerAgentIds?: string[] }) =>
     request<DashboardUser>("/api/users", { method: "POST", body: JSON.stringify(input) }),
   deleteUser: (id: number) => request<void>(`/api/users/${id}`, { method: "DELETE" }),
+  setUserPassword: (id: number, password: string) =>
+    request<void>(`/api/users/${id}/password`, { method: "POST", body: JSON.stringify({ password }) }),
   setUserScannerAgents: (id: number, scannerAgentIds: string[]) =>
     request<{ scannerAgentIds: string[] }>(`/api/users/${id}/scanner-agents`, {
       method: "PATCH",

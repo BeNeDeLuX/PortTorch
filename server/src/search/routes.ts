@@ -78,6 +78,7 @@ export interface HostFilterParams {
   deviceType: string;
   hideEmpty: boolean;
   hasScreenshot: boolean;
+  hasStalePorts: boolean;
   lastSeenAfter: string;
   lastSeenBefore: string;
   scannerAgentIds: string[];
@@ -114,6 +115,7 @@ export function parseHostFilterParams(query: Record<string, unknown>): HostFilte
     deviceType: typeof query.deviceType === "string" ? query.deviceType.trim() : "",
     hideEmpty: query.hideEmpty === "true" || query.hideEmpty === "1",
     hasScreenshot: query.hasScreenshot === "true" || query.hasScreenshot === "1",
+    hasStalePorts: query.hasStalePorts === "true" || query.hasStalePorts === "1",
     lastSeenAfter: typeof query.lastSeenAfter === "string" ? query.lastSeenAfter.trim() : "",
     lastSeenBefore: typeof query.lastSeenBefore === "string" ? query.lastSeenBefore.trim() : "",
     scannerAgentIds: parseCommaList(query.scannerAgentId),
@@ -141,6 +143,7 @@ export function applyHostFilters(
     deviceType,
     hideEmpty,
     hasScreenshot,
+    hasStalePorts,
     lastSeenAfter,
     lastSeenBefore,
     scannerAgentIds,
@@ -321,6 +324,30 @@ export function applyHostFilters(
     );
   }
 
+  // Narrows to hosts carrying at least one open port their own most
+  // recent scan didn't re-confirm - same definition as the
+  // stale_port_count column above, expressed as an EXISTS so it stays a
+  // plain AND-ed condition like every other filter here.
+  if (hasStalePorts) {
+    query = query.where((eb: any) =>
+      eb.exists(
+        eb
+          .selectFrom("current_host_ports as chps")
+          .select("chps.port")
+          .whereRef("chps.host_id", "=", "hosts.id")
+          .where("chps.state", "=", "open")
+          .where(
+            "chps.observed_at",
+            "<",
+            eb
+              .selectFrom("current_host_ports as chps2")
+              .select(eb.fn.max("chps2.observed_at").as("m"))
+              .whereRef("chps2.host_id", "=", "hosts.id")
+          )
+      )
+    );
+  }
+
   if (lastSeenAfter) {
     const after = parseDateOnly(lastSeenAfter);
     if (after) {
@@ -419,6 +446,30 @@ hostsRouter.get("/", asyncHandler(async (req, res) => {
         where chp2.host_id = hosts.id and chp2.state = 'open'
           and ${cveNotTriaged("hosts.id", "cve_elem->>'id'", NOT_A_LIVE_RISK_STATES)}
       )`.as("cve_count"),
+      // Ports still showing "open" that this host's most recent scan did
+      // not actually re-confirm. masscan only ever reports ports it
+      // currently sees open, so a port that quietly stops answering gets
+      // no observation row at all that run - not even a 'closed' one -
+      // and current_host_ports keeps surfacing its last known "open" as
+      // if it were current (see the Database shape notes in CLAUDE.md).
+      // Host Detail has shown this per port for a while; without it here,
+      // the fleet-wide open-port counts silently overstate exposure with
+      // no way to tell which hosts are affected.
+      //
+      // Compared against the newest observed_at among *this host's own
+      // ports*, deliberately not hosts.last_seen_at: that one is written
+      // from the webserver's Date.now() while observed_at comes from
+      // Postgres now(), and the two disagree by milliseconds even within
+      // one scan - which would flag every port of a perfectly fresh scan
+      // as stale. Same comparison HostDetail.tsx already makes.
+      sql<number>`(
+        select count(*)
+        from current_host_ports chp3
+        where chp3.host_id = hosts.id and chp3.state = 'open'
+          and chp3.observed_at < (
+            select max(chp4.observed_at) from current_host_ports chp4 where chp4.host_id = hosts.id
+          )
+      )`.as("stale_port_count"),
       sql<number | null>`(
         select max((cve_elem->>'cvssScore')::float)
         from current_host_ports chp2
@@ -466,9 +517,25 @@ hostsRouter.get("/", asyncHandler(async (req, res) => {
   // frontend's `cve_count === 0` check silently never matched a string
   // "0", so a host with zero CVEs rendered a stray "0 CVEs" badge instead
   // of no badge at all.
-  const itemsWithNumericCveCount = items.map((h) => ({ ...h, cve_count: Number(h.cve_count) }));
+  // stale_port_count is another count(*) and therefore another bigint -
+  // same conversion, same reason. Skipping it would make the frontend's
+  // `> 0` check compare a string, which happens to work for "0" but not
+  // for the truthiness/arithmetic uses right next to it.
+  // open_port_count is one too, and has been shipping as a string all
+  // along - typed here as number, and it happens to survive its two
+  // current uses (JSX interpolation, and a `-` subtraction in the table
+  // sort, which coerces). Converted alongside the other two so the
+  // declared type is actually true, rather than waiting for the next
+  // consumer that uses `+` to hit the same bug ScanHistory's screenshot
+  // counts and RiskBadge's cve_count already did.
+  const itemsWithNumericCounts = items.map((h) => ({
+    ...h,
+    cve_count: Number(h.cve_count),
+    stale_port_count: Number(h.stale_port_count),
+    open_port_count: Number(h.open_port_count),
+  }));
 
-  res.json({ items: itemsWithNumericCveCount, total: Number(count), page, pageSize });
+  res.json({ items: itemsWithNumericCounts, total: Number(count), page, pageSize });
 }));
 
 // "host": one row per host, open_port_count only - a quick fleet summary.
@@ -676,6 +743,7 @@ function hasActiveHostFilters(f: HostFilterParams): boolean {
       f.deviceType ||
       f.hideEmpty ||
       f.hasScreenshot ||
+      f.hasStalePorts ||
       f.lastSeenAfter ||
       f.lastSeenBefore ||
       f.scannerAgentIds.length

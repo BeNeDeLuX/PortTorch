@@ -58,6 +58,7 @@ function filtersFromSearchParams(searchParams: URLSearchParams): HostFilters {
     deviceType: searchParams.get("deviceType") ?? undefined,
     hideEmpty: searchParams.get("hideEmpty") === "true" || undefined,
     hasScreenshot: searchParams.get("hasScreenshot") === "true" || undefined,
+    hasStalePorts: searchParams.get("hasStalePorts") === "true" || undefined,
     lastSeenAfter: searchParams.get("lastSeenAfter") ?? undefined,
     lastSeenBefore: searchParams.get("lastSeenBefore") ?? undefined,
     scannerAgentIds: scannerAgentIds.length ? scannerAgentIds : undefined,
@@ -188,6 +189,21 @@ function sortHosts(hosts: HostSummary[], sortKey: SortKey, direction: SortDirect
 // any of its CVEs are confirmed actively exploited. Renders nothing for
 // a host with no known CVEs, same "absence isn't shown as a zero" as the
 // rest of this app's badge-based indicators.
+// Flags open ports this host's own latest scan didn't re-confirm. Not a
+// severity signal - it means "this count may be overstated", which is
+// worth seeing next to the count itself rather than only on Host Detail.
+function StalePortBadge({ count }: { count: number }) {
+  if (!count) return null;
+  return (
+    <span
+      className="stale-badge"
+      title={`${count} open port(s) were not re-confirmed by this host's most recent scan - masscan only reports ports it currently sees open, so these may already be closed`}
+    >
+      {count} unconfirmed
+    </span>
+  );
+}
+
 function RiskBadge({ host }: { host: HostSummary }) {
   if (host.cve_count === 0) return null;
   return (
@@ -476,6 +492,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
     if (merged.deviceType) next.set("deviceType", merged.deviceType);
     if (merged.hideEmpty) next.set("hideEmpty", "true");
     if (merged.hasScreenshot) next.set("hasScreenshot", "true");
+    if (merged.hasStalePorts) next.set("hasStalePorts", "true");
     if (merged.lastSeenAfter) next.set("lastSeenAfter", merged.lastSeenAfter);
     if (merged.lastSeenBefore) next.set("lastSeenBefore", merged.lastSeenBefore);
     if (merged.scannerAgentIds?.length) next.set("scannerAgentId", merged.scannerAgentIds.join(","));
@@ -720,6 +737,17 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
               onChange={(e) => updateFilters({ hasScreenshot: e.target.checked || undefined })}
             />
             Only hosts with a screenshot
+          </label>
+          <label
+            className="hide-empty-toggle"
+            title="Ports still listed as open that this host's own latest scan didn't re-confirm. masscan only reports ports it currently sees open, so one that quietly stops answering keeps its last known state - these may already be closed."
+          >
+            <input
+              type="checkbox"
+              checked={filters.hasStalePorts ?? false}
+              onChange={(e) => updateFilters({ hasStalePorts: e.target.checked || undefined })}
+            />
+            Only hosts with unconfirmed ports
           </label>
           <div className="last-seen-range">
             <label className="date-range-filter">
@@ -1010,7 +1038,12 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                     )}
                     <td>{h.ip}</td>
                     {tablePrefs.columns.includes("hostname") && <td>{h.hostname ?? "-"}</td>}
-                    {tablePrefs.columns.includes("open_port_count") && <td>{h.open_port_count}</td>}
+                    {tablePrefs.columns.includes("open_port_count") && (
+                      <td>
+                        {h.open_port_count}
+                        <StalePortBadge count={h.stale_port_count} />
+                      </td>
+                    )}
                     {tablePrefs.columns.includes("last_seen_at") && (
                       <td>{formatDateTime(h.last_seen_at, me.preferences)}</td>
                     )}
@@ -1150,7 +1183,8 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                     </div>
                   )}
                   <div className="host-meta">
-                    {h.open_port_count} open port(s) · last seen{" "}
+                    {h.open_port_count} open port(s)
+                    <StalePortBadge count={h.stale_port_count} /> · last seen{" "}
                     {formatDateTime(h.last_seen_at, me.preferences)}
                   </div>
                 </Link>

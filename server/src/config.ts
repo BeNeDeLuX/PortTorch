@@ -54,4 +54,9 @@ export const config = {
   // - independently configurable here since, unlike that page's coloring,
   // this one has a real side effect (an outbound webhook).
   queueBacklogThresholdMinutes: parseInt(process.env.QUEUE_BACKLOG_THRESHOLD_MINUTES ?? "30", 10),
+  // Per-token request cap for the External API (/api/v1), per minute.
+  // 0 disables it. 120/min is well above what a normal SOAR integration
+  // does (it reacts to events, it doesn't poll hard) while still bounding
+  // a runaway client, whose calls each run real fleet-wide SQL.
+  apiTokenRateLimitPerMinute: parseInt(process.env.API_TOKEN_RATE_LIMIT_PER_MINUTE ?? "120", 10),
 };
