@@ -125,6 +125,55 @@ describe("password change and admin reset", () => {
     expect((await login(target.username, target.password)).status).toBe(200);
   });
 
+  // The property that matters most, and the one an earlier version of
+  // this code explicitly gave up on: after a password change, a session
+  // opened with the OLD password must stop working. Asserted against a
+  // real authenticated request, not by counting rows in the session table.
+  it("terminates other sessions on a self-service change, but keeps the current one", async () => {
+    const u = await user();
+    const attacker = await loginAs(u.username, u.password);
+    const owner = await loginAs(u.username, u.password);
+
+    expect((await attacker.get("/auth/me")).status).toBe(200);
+
+    const res = await owner.post("/auth/password").send({ currentPassword: u.password, newPassword: "Owner-Chosen-Pw1" });
+    expect(res.status).toBe(204);
+
+    // The other session is gone...
+    expect((await attacker.get("/auth/me")).status).toBe(401);
+    // ...and the one that made the change still works.
+    expect((await owner.get("/auth/me")).status).toBe(200);
+  });
+
+  it("terminates every session on an admin reset, including the target's own", async () => {
+    const target = await user();
+    const targetSession = await loginAs(target.username, target.password);
+    expect((await targetSession.get("/auth/me")).status).toBe(200);
+
+    const admin = await user("admin");
+    const adminSession = await loginAs(admin.username, admin.password);
+    expect((await adminSession.post(`/api/users/${target.id}/password`).send({ password: "Admin-Reset-Pw1" })).status).toBe(204);
+
+    expect((await targetSession.get("/auth/me")).status).toBe(401);
+    // The acting admin's own session is unaffected.
+    expect((await adminSession.get("/auth/me")).status).toBe(200);
+  });
+
+  // requireAuth never revalidates session.userId against the users table,
+  // so without explicit revocation a deleted account stayed usable for up
+  // to the cookie lifetime.
+  it("terminates a deleted user's session immediately", async () => {
+    const doomed = await user();
+    const doomedSession = await loginAs(doomed.username, doomed.password);
+    expect((await doomedSession.get("/auth/me")).status).toBe(200);
+
+    const admin = await user("admin");
+    const adminSession = await loginAs(admin.username, admin.password);
+    expect((await adminSession.delete(`/api/users/${doomed.id}`)).status).toBe(204);
+
+    expect((await doomedSession.get("/auth/me")).status).toBe(401);
+  });
+
   it("records both actions in the audit log, with the actor and target", async () => {
     const target = await user();
     const admin = await user("admin");

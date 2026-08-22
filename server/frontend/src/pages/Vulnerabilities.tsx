@@ -5,6 +5,7 @@ import { cveSeverityClass } from "../lib/cveSeverity";
 import PageHeader from "../components/PageHeader";
 import TriageControl from "../components/TriageControl";
 import TriageFilterSelect from "../components/TriageFilterSelect";
+import BulkTriageBar from "../components/BulkTriageBar";
 import TableExport from "../components/TableExport";
 import { TriageFilter, matchesTriageFilter, triageCounts } from "../lib/triageFilter";
 
@@ -59,6 +60,7 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
   // wants attention, not every CVE ever matched. Same default and same
   // control on WebFindings.tsx.
   const [triageFilter, setTriageFilter] = useState<TriageFilter>("needs_decision");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const canEdit = me.role === "admin" || me.role === "operator";
 
   useEffect(() => {
@@ -86,6 +88,38 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
   function sortIndicator(key: SortKey): string {
     if (sortKey !== key) return "";
     return sortDirection === "asc" ? " ▲" : " ▼";
+  }
+
+  // A CVE finding's identity is (host, cve) - the same pair
+  // finding_triage keys on, so a selection can never address something
+  // the triage endpoint can't.
+  const rowKey = (v: FleetVulnerability) => `${v.host_id}:${v.cve_id}`;
+
+  function toggleRow(key: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  }
+
+  async function applyBulkTriage(state: "false_positive" | "accepted_risk" | "fixed" | null) {
+    const targets = sortedVulns.filter((v) => selected.has(rowKey(v)));
+    const results = await Promise.allSettled(
+      targets.map((v) => {
+        const target = { kind: "cve" as const, hostId: v.host_id, cveId: v.cve_id };
+        // Clearing an already-open finding 404s server-side, which would
+        // count as a spurious failure - skip those rather than report them.
+        if (state === null) return v.triage_state ? api.clearFindingTriage(target) : Promise.resolve();
+        return api.setFindingTriage(target, state);
+      })
+    );
+    setSelected(new Set());
+    await load();
+    return {
+      succeeded: results.filter((r) => r.status === "fulfilled").length,
+      failed: results.filter((r) => r.status === "rejected").length,
+    };
   }
 
   const trimmedQuery = query.trim().toLowerCase();
@@ -170,6 +204,13 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
               ]}
             />
           </div>
+          {canEdit && (
+            <BulkTriageBar
+              count={selected.size}
+              onApply={applyBulkTriage}
+              onClearSelection={() => setSelected(new Set())}
+            />
+          )}
           <p className="host-meta">
             {query.trim() || severityFilter || kevOnly || triageFilter !== "all"
               ? `${sortedVulns.length} of ${vulns.length} shown`
@@ -189,6 +230,18 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
         <table className="sortable">
           <thead>
             <tr>
+              {canEdit && (
+                <th className="select-col">
+                  <input
+                    type="checkbox"
+                    title="Select every row currently shown"
+                    checked={sortedVulns.length > 0 && sortedVulns.every((v) => selected.has(rowKey(v)))}
+                    onChange={(e) =>
+                      setSelected(e.target.checked ? new Set(sortedVulns.map(rowKey)) : new Set())
+                    }
+                  />
+                </th>
+              )}
               <th onClick={() => setSort("host")}>Host{sortIndicator("host")}</th>
               <th onClick={() => setSort("port")}>Port{sortIndicator("port")}</th>
               <th onClick={() => setSort("cve_id")}>CVE{sortIndicator("cve_id")}</th>
@@ -202,6 +255,11 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
           <tbody>
             {sortedVulns.map((v) => (
               <tr key={`${v.host_id}-${v.port}-${v.cve_id}`}>
+                {canEdit && (
+                  <td className="select-col">
+                    <input type="checkbox" checked={selected.has(rowKey(v))} onChange={() => toggleRow(rowKey(v))} />
+                  </td>
+                )}
                 <td>
                   <Link to={`/hosts/${v.host_id}`}>{v.host_hostname || v.host_ip}</Link>
                 </td>

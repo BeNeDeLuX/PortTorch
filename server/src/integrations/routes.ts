@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { sql } from "kysely";
 import { db } from "../db";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
@@ -8,6 +9,7 @@ import { requestRescan } from "../rescan";
 import { requestScanCancel } from "../scanCancel";
 import { tokenAuth } from "../apiTokens/tokenAuth";
 import { zIp } from "../lib/zodIp";
+import { applyHostFilters, parseHostFilterParams } from "../search/routes";
 import { ScanProfileNotFoundError, resolveNSEProfile, type NSEProfileSelection } from "../scanProfiles/resolve";
 import { NucleiProfileNotFoundError, resolveNucleiProfile, type NucleiProfileSelection } from "../nucleiProfiles/resolve";
 
@@ -38,6 +40,89 @@ export const lookupSchema = z.object({
   hostname: z.string().min(1).optional(),
   scannerAgent: z.string().min(1).optional(),
 });
+
+// Listing, as opposed to lookup-by-identity above. Every other route
+// here needs the caller to already know an ip or hostname, which rules
+// out exactly the jobs this API exists for - "give me everything with a
+// KEV finding", "what appeared since yesterday", a nightly export. Those
+// were only possible from the dashboard, by a human, with a browser.
+//
+// Reuses parseHostFilterParams/applyHostFilters (exported from
+// search/routes.ts, already shared with the saved-search checker) rather
+// than growing a second filter dialect, so an external caller's `?port=`
+// or `?tag=` means exactly what the same parameter means in the
+// dashboard's own URL - and so a filter added there can't silently skip
+// this route.
+//
+// Paginated with a hard cap: the dashboard defaults to 50 and an
+// automated caller has more reason to ask for a lot at once, so this
+// allows more (200) but never unbounded - an unpaginated fleet dump is
+// the one shape that could turn a single call into a real load problem.
+export const listHostsSchema = z.object({
+  q: z.string().min(1).optional(),
+  port: z.string().min(1).optional(),
+  service: z.string().min(1).optional(),
+  tag: z.string().min(1).optional(),
+  osFamily: z.string().min(1).optional(),
+  deviceType: z.string().min(1).optional(),
+  scannerAgentId: z.string().min(1).optional(),
+  hasStalePorts: z.enum(["true", "false"]).optional(),
+  lastSeenAfter: z.string().min(1).optional(),
+  lastSeenBefore: z.string().min(1).optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(200).optional(),
+});
+
+integrationsRouter.get("/hosts", asyncHandler(async (req, res) => {
+  const parsed = listHostsSchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const page = parsed.data.page ?? 1;
+  const pageSize = parsed.data.pageSize ?? 50;
+  const filters = parseHostFilterParams(req.query as Record<string, unknown>);
+
+  // No scanner restriction: a token isn't a user session and has no
+  // per-user scanner scoping (see apiTokens/tokenAuth.ts) - the same
+  // unrestricted view every other route in this router already returns.
+  const base = () => applyHostFilters(db.selectFrom("hosts").leftJoin("scanner_agents", "scanner_agents.id", "hosts.scanner_agent_id"), filters, null);
+
+  // applyHostFilters is deliberately loosely typed (it serves callers
+  // selecting different column sets), so the count and the row shape are
+  // spelled out here rather than inferred.
+  const countRow: { count: string } = await base()
+    .select(sql<string>`count(distinct hosts.id)`.as("count"))
+    .executeTakeFirstOrThrow();
+
+  const rows = await base()
+    .select([
+      "hosts.id",
+      "hosts.ip",
+      "hosts.hostname",
+      "hosts.first_seen_at",
+      "hosts.last_seen_at",
+      "hosts.os_family",
+      "hosts.device_type",
+      "hosts.mac_address",
+      "scanner_agents.name as scanner_agent_name",
+    ])
+    .groupBy(["hosts.id", "scanner_agents.name"])
+    .orderBy("hosts.last_seen_at", "desc")
+    .limit(pageSize)
+    .offset((page - 1) * pageSize)
+    .execute();
+
+  res.json({
+    // hosts.ip is Postgres inet, which node-postgres returns as a string
+    // already - normalized explicitly so the JSON shape can't depend on
+    // that driver detail.
+    items: (rows as Array<Record<string, unknown>>).map((h) => ({ ...h, ip: String(h.ip) })),
+    total: Number(countRow.count),
+    page,
+    pageSize,
+  });
+}));
 
 integrationsRouter.get("/hosts/lookup", asyncHandler(async (req, res) => {
   const parsed = lookupSchema.safeParse(req.query);

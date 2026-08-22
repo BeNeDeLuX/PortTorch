@@ -4,6 +4,7 @@ import { api, FleetNucleiFinding, Me } from "../api";
 import PageHeader from "../components/PageHeader";
 import TriageControl from "../components/TriageControl";
 import TriageFilterSelect from "../components/TriageFilterSelect";
+import BulkTriageBar from "../components/BulkTriageBar";
 import TableExport from "../components/TableExport";
 import { TriageFilter, matchesTriageFilter, triageCounts } from "../lib/triageFilter";
 
@@ -51,6 +52,7 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
   // (e.g. reviewing a previous analyst's calls). Same control and default
   // as Vulnerabilities.tsx.
   const [triageFilter, setTriageFilter] = useState<TriageFilter>("needs_decision");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const canEdit = me.role === "admin" || me.role === "operator";
 
   useEffect(() => {
@@ -78,6 +80,38 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
   function sortIndicator(key: SortKey): string {
     if (sortKey !== key) return "";
     return sortDirection === "asc" ? " ▲" : " ▼";
+  }
+
+  // A nuclei finding's identity is (host, template, matched_at) - the
+  // same triple finding_triage keys on, and deliberately not the
+  // nuclei_findings row id, which is re-inserted on every rescan.
+  const rowKey = (f: FleetNucleiFinding) => `${f.host_id}:${f.template_id}:${f.matched_at}`;
+
+  function toggleRow(key: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  }
+
+  async function applyBulkTriage(state: "false_positive" | "accepted_risk" | "fixed" | null) {
+    const targets = sorted.filter((f) => selected.has(rowKey(f)));
+    const results = await Promise.allSettled(
+      targets.map((f) => {
+        const target = { kind: "nuclei" as const, hostId: f.host_id, templateId: f.template_id, matchedAt: f.matched_at };
+        // Clearing an untriaged finding 404s server-side; skipping those
+        // keeps them out of the failure count.
+        if (state === null) return f.triage_state ? api.clearFindingTriage(target) : Promise.resolve();
+        return api.setFindingTriage(target, state);
+      })
+    );
+    setSelected(new Set());
+    await load();
+    return {
+      succeeded: results.filter((r) => r.status === "fulfilled").length,
+      failed: results.filter((r) => r.status === "rejected").length,
+    };
   }
 
   const trimmedQuery = query.trim().toLowerCase();
@@ -151,6 +185,13 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
               ]}
             />
           </div>
+          {canEdit && (
+            <BulkTriageBar
+              count={selected.size}
+              onApply={applyBulkTriage}
+              onClearSelection={() => setSelected(new Set())}
+            />
+          )}
           <p className="host-meta">
             {query.trim() || severityFilter || triageFilter !== "all"
               ? `${sorted.length} of ${findings.length} shown`
@@ -170,6 +211,16 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
         <table className="sortable">
           <thead>
             <tr>
+              {canEdit && (
+                <th className="select-col">
+                  <input
+                    type="checkbox"
+                    title="Select every row currently shown"
+                    checked={sorted.length > 0 && sorted.every((f) => selected.has(rowKey(f)))}
+                    onChange={(e) => setSelected(e.target.checked ? new Set(sorted.map(rowKey)) : new Set())}
+                  />
+                </th>
+              )}
               <th onClick={() => setSort("host")}>Host{sortIndicator("host")}</th>
               <th onClick={() => setSort("port")}>Port{sortIndicator("port")}</th>
               <th onClick={() => setSort("template_id")}>Template{sortIndicator("template_id")}</th>
@@ -182,6 +233,11 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
           <tbody>
             {sorted.map((f) => (
               <tr key={f.id}>
+                {canEdit && (
+                  <td className="select-col">
+                    <input type="checkbox" checked={selected.has(rowKey(f))} onChange={() => toggleRow(rowKey(f))} />
+                  </td>
+                )}
                 <td>
                   <Link to={`/hosts/${f.host_id}`}>{f.host_hostname || f.host_ip}</Link>
                 </td>

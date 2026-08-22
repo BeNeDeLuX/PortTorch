@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "../db";
 import { requireAdmin } from "../auth/middleware";
 import { hashPassword } from "../auth/password";
+import { revokeUserSessions } from "../auth/sessions";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
@@ -191,9 +192,17 @@ usersRouter.delete("/:id", asyncHandler(async (req, res) => {
 
   await db.deleteFrom("users").where("id", "=", id).execute();
 
+  // requireAuth only checks that session.userId is set - it never
+  // revalidates against the users table - so without this a deleted
+  // account stays fully usable until its cookie expires, up to 12 hours
+  // later. Revoking here is cheaper and more reliable than a DB lookup on
+  // every authenticated request, which is the alternative fix.
+  const revokedSessions = await revokeUserSessions(id);
+
   logger.info({
     event: "user.deleted",
     user_id: id,
+    sessions_revoked: revokedSessions,
     deleted_by: req.session.username,
     source_ip: req.ip,
   });
@@ -244,8 +253,15 @@ usersRouter.post("/:id/password", asyncHandler(async (req, res) => {
     .where("id", "=", id)
     .execute();
 
+  // Every session of the target account, with no exception: an admin
+  // resets a password precisely when they suspect it's compromised, and
+  // leaving the existing session alive would make the reset look like a
+  // lockout without being one.
+  const revokedSessions = await revokeUserSessions(id);
+
   logger.info({
     event: "user.password_reset",
+    sessions_revoked: revokedSessions,
     user_id: id,
     username: target.username,
     reset_by: req.session.username,

@@ -4,6 +4,7 @@ import { z } from "zod";
 import qrcode from "qrcode";
 import { db } from "../db";
 import { hashPassword, verifyPassword } from "./password";
+import { revokeUserSessions } from "./sessions";
 import { requireAuth } from "./middleware";
 import { isLockedOut, recordFailure, recordSuccess } from "./rateLimiter";
 import { hashApiKey } from "../ingest/apiKeyAuth";
@@ -586,13 +587,13 @@ authRouter.post("/password", requireAuth, asyncHandler(async (req, res) => {
     .where("id", "=", req.session.userId!)
     .execute();
 
-  // Deliberately keeps this session alive: express-session has no
-  // practical way to selectively invalidate an account's *other* sessions
-  // (they're independent store entries with no user index), so logging
-  // this one out would be security theatre - it would inconvenience the
-  // one person we know is legitimate while leaving any other session
-  // untouched. Documented rather than half-solved.
-  logger.info({ event: "auth.password_changed", username: user.username, source_ip: req.ip });
+  // Every *other* session for this account is terminated - a password
+  // change is exactly when someone wants sessions they don't control to
+  // stop working. This one is kept: the caller just proved they know the
+  // current password, so signing them out would be pure friction.
+  const revoked = await revokeUserSessions(req.session.userId!, req.sessionID);
+
+  logger.info({ event: "auth.password_changed", username: user.username, source_ip: req.ip, sessions_revoked: revoked });
   recordAudit("auth.password_changed", user.username, req.ip);
 
   res.status(204).end();

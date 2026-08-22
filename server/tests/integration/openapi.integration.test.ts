@@ -25,6 +25,7 @@ describe("External API OpenAPI document", () => {
 
     expect(documented).toEqual([
       "DELETE /findings/triage",
+      "GET /hosts",
       "GET /hosts/lookup",
       "POST /hosts/cancel-scan",
       "POST /hosts/rescan",

@@ -335,6 +335,31 @@ header h1 {
   width: auto;
 }
 
+/* Bulk-selection column on the findings tables - narrow, and the
+   checkbox must not inherit the full-width input styling the forms use. */
+.select-col {
+  width: 1.5rem;
+}
+
+.select-col input {
+  width: auto;
+  margin: 0;
+}
+
+/* Bulk action bar on the findings pages, shown only once something is
+   selected - same role as the Dashboard's own bulk toolbar. */
+.bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  margin: 0.5rem 0;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
 /* Triage state filter on the Vulnerabilities/Web Findings pages - sits in
    the same .list-controls row, and matches .hide-empty-toggle's muted
    label treatment since it replaced a checkbox that lived exactly there. */

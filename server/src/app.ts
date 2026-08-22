@@ -10,6 +10,7 @@ import { pgPool } from "./db";
 import { logger } from "./logger";
 import { requestLogger } from "./lib/requestLogger";
 import { authRouter } from "./auth/routes";
+import { observabilityRouter } from "./observability/routes";
 import { ingestRouter } from "./ingest/routes";
 import { agentsRouter } from "./agents/routes";
 import { scanJobsRouter } from "./scanJobs/routes";
@@ -64,6 +65,11 @@ export function buildApp() {
       },
     })
   );
+
+  // Mounted at the root, before every authenticated router: /healthz must
+  // be reachable by infrastructure that has no session and no token, and
+  // /metrics carries its own separate check.
+  app.use(observabilityRouter);
 
   app.use("/auth", authRouter);
   app.use("/api/ingest", ingestRouter);

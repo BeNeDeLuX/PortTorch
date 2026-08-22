@@ -59,4 +59,9 @@ export const config = {
   // does (it reacts to events, it doesn't poll hard) while still bounding
   // a runaway client, whose calls each run real fleet-wide SQL.
   apiTokenRateLimitPerMinute: parseInt(process.env.API_TOKEN_RATE_LIMIT_PER_MINUTE ?? "120", 10),
+  // Bearer token guarding GET /metrics. Unset (the default) disables that
+  // endpoint entirely - fail-closed, so an operator who never considered
+  // it doesn't silently publish fleet counts. /healthz needs no token and
+  // is always on.
+  metricsToken: process.env.METRICS_TOKEN ?? "",
 };

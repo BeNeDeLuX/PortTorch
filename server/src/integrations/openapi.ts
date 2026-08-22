@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { VERSION } from "../version";
-import { adhocScanSchema, cancelScanSchema, clearTriageSchema, lookupSchema, rescanSchema, triageSchema } from "./routes";
+import { adhocScanSchema, cancelScanSchema, clearTriageSchema, listHostsSchema, lookupSchema, rescanSchema, triageSchema } from "./routes";
 
 // OpenAPI document for the External API (/api/v1) only - deliberately not
 // the dashboard's own /api/* routes or the scanner ingest API.
@@ -120,6 +120,22 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       { name: "Findings", description: "Record decisions about CVE and web findings." },
     ],
     paths: {
+      "/hosts": {
+        get: {
+          tags: ["Hosts"],
+          summary: "List hosts, with the dashboard's own filters",
+          description:
+            "Paginated fleet listing. Takes the same filter parameters as the dashboard's host list (`q`, `port`, " +
+            "`service`, `tag`, `osFamily`, `deviceType`, `scannerAgentId`, `hasStalePorts`, `lastSeenAfter`, " +
+            "`lastSeenBefore`), so a filter means the same thing here as it does there. Use this to enumerate; use " +
+            "/hosts/lookup when you already know an IP or hostname and want the full enrichment record.",
+          parameters: queryParams(listHostsSchema),
+          responses: {
+            200: { description: "A page of matching hosts, plus the total match count." },
+            400: errorResponse,
+          },
+        },
+      },
       "/hosts/lookup": {
         get: {
           tags: ["Hosts"],
