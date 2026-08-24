@@ -204,7 +204,7 @@ Each item below is a one-line summary - click **Details** to expand it.
   <details>
   <summary>Details</summary>
 
-  A fleet-wide "what changed" view (newly discovered hosts, newly opened/closed ports) over the last 24 hours or 7 days. Also available as a daily email/webhook (`digest.daily`, see Webhooks below) - a fixed UTC hour (`DIGEST_EMAIL_HOUR_UTC` in `.env`, default 8) rather than a per-schedule picker.
+  A fleet-wide "what changed" view (newly discovered hosts, newly opened/closed ports) over the last 24 hours or 7 days. Also available as a daily email/webhook (`digest.daily`, see Webhooks below) - a fixed UTC hour (Admin -> Settings -> Alerting, default 8) rather than a per-schedule picker.
   </details>
 
 - :chart_with_upwards_trend: **Trends** - fleet-wide time series for hosts, scans, open ports, and CVE matches over a selectable range.
@@ -218,7 +218,7 @@ Each item below is a one-line summary - click **Details** to expand it.
   <details>
   <summary>Details</summary>
 
-  Fire a JSON POST (compatible with Slack/Discord incoming webhooks), a Microsoft Teams Adaptive Card (the current "Workflows" webhook, not the deprecated classic connector), or an email to one or more addresses when a new host appears, a port newly opens, a certificate (either a scanned host's, or the webserver's own) is about to expire, a saved search matches a new host, a known CVE's EPSS (exploit prediction) score crosses a threshold (`EPSS_ALERT_THRESHOLD` in `.env`, default 0.5), a known CVE is added to CISA's Known Exploited Vulnerabilities catalog, a running scan looks stalled, a scanner's self-update fails, a scanner's request queue is backing up, or once a day for the fleet-wide digest. Email requires `SMTP_HOST` (and friends) set in `.env` - webhook/Teams channels need no extra configuration. Every delivery attempt (success or failure) is recorded per webhook, viewable via a "History" button - the most recent 50 attempts, so you can tell whether a webhook is actually working without digging through logs.
+  Fire a JSON POST (compatible with Slack/Discord incoming webhooks), a Microsoft Teams Adaptive Card (the current "Workflows" webhook, not the deprecated classic connector), or an email to one or more addresses when a new host appears, a port newly opens, a certificate (either a scanned host's, or the webserver's own) is about to expire, a saved search matches a new host, a known CVE's EPSS (exploit prediction) score crosses a threshold (Admin -> Settings -> Alerting, default 0.5), a known CVE is added to CISA's Known Exploited Vulnerabilities catalog, a running scan looks stalled, a scanner's self-update fails, a scanner's request queue is backing up, or once a day for the fleet-wide digest. Email requires a mail server configured under Admin -> Settings -> Mail Server (SMTP), which also has a "send test email" button - webhook/Teams channels need no extra configuration. Every delivery attempt (success or failure) is recorded per webhook, viewable via a "History" button - the most recent 50 attempts, so you can tell whether a webhook is actually working without digging through logs.
   </details>
 
 - :dna: **Vulnerability correlation** - daily CVE/EPSS/KEV sync against every detected service version.
@@ -338,7 +338,10 @@ cp .env.example .env
 ```
 
 Edit `.env` and set real values - at minimum, change `POSTGRES_PASSWORD`,
-`SESSION_SECRET` (`openssl rand -hex 32`), and `ADMIN_PASSWORD`:
+`SESSION_SECRET` (`openssl rand -hex 32`), and `ADMIN_PASSWORD`. That is
+all `.env` is needed for: the mail server, retention windows, alerting
+thresholds and the rest are configured from **Admin -> Settings** in the
+dashboard, so changing them never needs a redeploy.
 
 ```bash
 sudo docker compose up -d
@@ -765,6 +768,32 @@ doesn't lose everything - whatever hosts had already streamed in stay in
 the database. A host whose submission fails is logged and skipped; the
 rest of the scan keeps running.
 
+### Monitoring the webserver
+
+`GET /healthz` needs no credential and reports whether the process can
+reach its database - suitable as a load balancer or container health
+check. It returns `503` with `{"status":"degraded"}` when the database is
+unreachable, and never exposes any fleet data:
+
+```bash
+curl -k https://porttorch.internal/healthz
+# {"status":"ok","database":"ok","version":"0.14.0","uptimeSeconds":1234}
+```
+
+`GET /metrics` serves Prometheus exposition for the webserver itself -
+host and scanner counts, running scans, queue depths, the webhook retry
+backlog, and the on-disk size of the append-only tables that grow with
+every scan. It is **disabled unless `METRICS_TOKEN` is set** in `.env`,
+and then requires that token as a bearer, so an upgrade never starts
+publishing fleet counts on its own:
+
+```bash
+curl -k -H "Authorization: Bearer $METRICS_TOKEN" https://porttorch.internal/metrics
+```
+
+Admin -> Settings -> Storage shows the same growth figures in the
+dashboard, including screenshot files counted from disk.
+
 ### Monitoring a scanner with Prometheus
 
 `serve` mode exposes a `/metrics` endpoint (same host/port as `listenAddr`
@@ -929,6 +958,13 @@ browser straight at them. Covers `/api/v1` only; the dashboard's own
 aren't documented there.
 
 ```bash
+# List hosts, with the same filters the dashboard's own host list uses
+# (q, port, service, tag, osFamily, deviceType, scannerAgentId,
+# hasStalePorts, lastSeenAfter/Before) - use this to enumerate when you
+# don't already know an address. Paginated; pageSize caps at 200.
+curl -H "Authorization: Bearer <token>" \
+  "https://porttorch.internal/api/v1/hosts?port=443&pageSize=50"
+
 # Look up a host by IP or hostname - returns open ports, service/version
 # fingerprints, known CVEs (from the vulnerability correlation cache),
 # tags, and when/by which scanner it was last seen.
