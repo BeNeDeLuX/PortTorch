@@ -811,7 +811,9 @@ button.export-link {
 .triage-badge {
   font-size: 0.75rem;
   border-radius: 999px;
-  padding: 0.1rem 0.5rem;
+  display: inline-block;
+  vertical-align: middle;
+  padding: 0.15rem 0.55rem;
   border: 1px solid currentColor;
 }
 
@@ -1944,14 +1946,23 @@ th {
   padding: 0.1rem 0.5rem;
 }
 
+/* inline-block, not the default inline: on an inline element vertical
+   padding and borders don't grow the line box, so this pill's border bled
+   into the neighbouring line and crowded whatever wrapped underneath it
+   (reported against the Dashboard card's "N open port(s) [badge] · last
+   seen ..." line, where the date wraps to the next line). The small
+   vertical margin keeps consecutive wrapped lines apart. .kev-badge
+   already did this correctly - these three had drifted from it. */
 .stale-badge {
   font-size: 0.7rem;
   font-weight: 600;
   color: var(--warning);
   border: 1px solid var(--warning);
   border-radius: 999px;
-  padding: 0.1rem 0.5rem;
-  margin-left: 0.5rem;
+  display: inline-block;
+  vertical-align: middle;
+  padding: 0.15rem 0.55rem;
+  margin: 0.1rem 0 0.1rem 0.5rem;
   white-space: nowrap;
 }
 
@@ -1989,8 +2000,10 @@ th {
   color: var(--danger);
   border: 1px solid var(--danger);
   border-radius: 999px;
-  padding: 0.1rem 0.5rem;
-  margin-left: 0.5rem;
+  display: inline-block;
+  vertical-align: middle;
+  padding: 0.15rem 0.55rem;
+  margin: 0.1rem 0 0.1rem 0.5rem;
   white-space: nowrap;
 }
 
