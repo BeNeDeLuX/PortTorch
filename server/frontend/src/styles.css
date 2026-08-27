@@ -139,6 +139,17 @@ button {
   font-weight: 600;
 }
 
+/* There was no disabled styling at all, so every disabled button in the
+   app looked exactly like a working one - you clicked and nothing
+   happened, with no way to tell why. That was survivable while disabled
+   states were rare and transient (mid-request), but the settings rows now
+   keep their Save button disabled whenever the field already matches
+   what's stored, which is most of the time. */
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* A button whose label is preceded by one of components/icons.tsx's inline
    SVGs (e.g. Host Detail's Export data / Rescan) - centers icon and text
    on the same line with a small gap, rather than relying on default inline
@@ -365,6 +376,12 @@ header h1 {
 
 .settings-form button {
   align-self: flex-start;
+}
+
+/* Same reasoning as .inline-form input.input-number: a field holding an
+   hour or a threshold has no business being as wide as the column. */
+.settings-form input.input-number {
+  width: 6.5rem;
 }
 
 /* Bulk-selection column on the findings tables - narrow, and the
@@ -1654,6 +1671,36 @@ th {
 
 .inline-form input {
   flex: 1;
+}
+
+/* A numeric settings field (days, minutes, a count) inside .inline-form.
+   Without this it inherits flex: 1 and stretches across the whole row,
+   which looks wrong for two or three digits and makes the row hard to
+   scan. Sized for 4 digits plus the spinner, and explicitly flex: none so
+   it keeps that width instead of being grown by the flex container. */
+.inline-form input.input-number {
+  flex: none;
+  width: 6.5rem;
+}
+
+/* Save state for a settings row: a transient confirmation after a
+   successful save, and a persistent marker while the field differs from
+   what's stored. Between them, "did that apply?" is answerable at a
+   glance instead of being guessed at. */
+.save-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  align-self: center;
+}
+
+.save-state.saved {
+  color: var(--success);
+}
+
+.save-state.unsaved {
+  color: var(--muted);
 }
 
 .tag-form {

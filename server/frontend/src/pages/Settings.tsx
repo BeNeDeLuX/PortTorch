@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, AppSettings, Me, StorageUsage, TlsCertificateInfo } from "../api";
-import { IconRefresh, IconSave, IconSend, IconTrash, IconUpload } from "../components/icons";
+import { IconCheck, IconRefresh, IconSave, IconSend, IconTrash, IconUpload } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime } from "../lib/formatDate";
 import { certExpiryDaysLeft, certExpiryLabel, certExpiryStatus } from "../lib/certExpiry";
@@ -13,6 +13,25 @@ import { formatBytes } from "../lib/formatBytes";
 // first boot. Not to be confused with the fleet-wide Certificates page,
 // which shows certificates captured *from scanned hosts* - this is the
 // one certificate for this webserver itself.
+// Every settings row saves independently, and until this existed none of
+// the numeric ones said anything at all on success - you clicked Save and
+// had to take it on faith. Two signals rather than one: a transient
+// confirmation right after a successful write, and a persistent marker
+// whenever the field no longer matches what's stored, so "is what I'm
+// looking at actually applied?" stays answerable rather than only being
+// answered for a few seconds.
+function SaveState({ saved, dirty }: { saved: boolean; dirty: boolean }) {
+  if (dirty) return <span className="save-state unsaved">unsaved</span>;
+  if (saved) {
+    return (
+      <span className="save-state saved">
+        <IconCheck /> Saved
+      </span>
+    );
+  }
+  return null;
+}
+
 export default function Settings({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [info, setInfo] = useState<TlsCertificateInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -39,6 +58,19 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
   const [queueThresholdInput, setQueueThresholdInput] = useState("");
   const [savingQueueThreshold, setSavingQueueThreshold] = useState(false);
   const [queueThresholdError, setQueueThresholdError] = useState<string | null>(null);
+
+  // Which row showed a successful save most recently. One value rather
+  // than a boolean per row - only one can be the most recent, and it
+  // keeps the four numeric rows from each needing their own flag/timer.
+  const [savedRow, setSavedRow] = useState<string | null>(null);
+
+  function markSaved(row: string) {
+    setSavedRow(row);
+    // Cleared on a timer so a stale "Saved" from ten minutes ago can't be
+    // mistaken for confirmation of the edit currently on screen. The
+    // dirty marker takes over from here.
+    window.setTimeout(() => setSavedRow((current) => (current === row ? null : current)), 4000);
+  }
 
   const [storage, setStorage] = useState<StorageUsage | null>(null);
   const [loadingStorage, setLoadingStorage] = useState(false);
@@ -126,6 +158,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
     try {
       const updated = await api.updateAppSettings({ hostRetentionDays: days });
       setAppSettings(updated);
+      markSaved("retention");
       setRetentionDaysInput(String(updated.hostRetentionDays));
     } catch (err) {
       setRetentionError(err instanceof Error ? err.message : "Failed to update setting");
@@ -146,6 +179,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
     try {
       const updated = await api.updateAppSettings({ staleScanThresholdMinutes: minutes });
       setAppSettings(updated);
+      markSaved("stale");
       setStaleThresholdInput(String(updated.staleScanThresholdMinutes));
     } catch (err) {
       setStaleThresholdError(err instanceof Error ? err.message : "Failed to update setting");
@@ -216,6 +250,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
     try {
       const updated = await api.updateAppSettings({ scanLogRetentionDays: days });
       setAppSettings(updated);
+      markSaved("scanlog");
       setScanLogDaysInput(String(updated.scanLogRetentionDays));
     } catch (err) {
       setScanLogDaysError(err instanceof Error ? err.message : "Failed to save");
@@ -285,6 +320,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
     try {
       const updated = await api.updateAppSettings({ scanQueueWarningThreshold: count });
       setAppSettings(updated);
+      markSaved("queue");
       setQueueThresholdInput(String(updated.scanQueueWarningThreshold));
     } catch (err) {
       setQueueThresholdError(err instanceof Error ? err.message : "Failed to update setting");
@@ -451,6 +487,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
         <>
           <form className="inline-form" onSubmit={handleSaveRetentionDays}>
             <input
+              className="input-number"
               type="number"
               min={0}
               step={1}
@@ -459,9 +496,10 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
               aria-label="Host retention days"
             />
             <span className="host-meta">days</span>
-            <button type="submit" className="btn-icon-label" disabled={savingRetention}>
-              <IconSave /> Save
+            <button type="submit" className="btn-icon-label" disabled={savingRetention || !(retentionDaysInput !== String(appSettings.hostRetentionDays))}>
+              <IconSave /> {savingRetention ? "Saving..." : "Save"}
             </button>
+            <SaveState saved={savedRow === "retention"} dirty={retentionDaysInput !== String(appSettings.hostRetentionDays)} />
           </form>
           <p>
             <button className="btn-icon-label" onClick={handleCleanupNow} disabled={runningCleanup}>
@@ -485,6 +523,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       {appSettings && (
         <form className="inline-form" onSubmit={handleSaveStaleThreshold}>
           <input
+            className="input-number"
             type="number"
             min={1}
             step={1}
@@ -493,9 +532,10 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
             aria-label="Stale scan threshold minutes"
           />
           <span className="host-meta">minutes</span>
-          <button type="submit" className="btn-icon-label" disabled={savingStaleThreshold}>
-            <IconSave /> Save
+          <button type="submit" className="btn-icon-label" disabled={savingStaleThreshold || !(staleThresholdInput !== String(appSettings.staleScanThresholdMinutes))}>
+            <IconSave /> {savingStaleThreshold ? "Saving..." : "Save"}
           </button>
+          <SaveState saved={savedRow === "stale"} dirty={staleThresholdInput !== String(appSettings.staleScanThresholdMinutes)} />
         </form>
       )}
 
@@ -512,6 +552,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       {appSettings && (
         <form className="inline-form" onSubmit={handleSaveQueueThreshold}>
           <input
+            className="input-number"
             type="number"
             min={1}
             step={1}
@@ -520,9 +561,10 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
             aria-label="Scan queue warning threshold"
           />
           <span className="host-meta">pending requests</span>
-          <button type="submit" className="btn-icon-label" disabled={savingQueueThreshold}>
-            <IconSave /> Save
+          <button type="submit" className="btn-icon-label" disabled={savingQueueThreshold || !(queueThresholdInput !== String(appSettings.scanQueueWarningThreshold))}>
+            <IconSave /> {savingQueueThreshold ? "Saving..." : "Save"}
           </button>
+          <SaveState saved={savedRow === "queue"} dirty={queueThresholdInput !== String(appSettings.scanQueueWarningThreshold)} />
         </form>
       )}
 
@@ -539,6 +581,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       {appSettings && (
         <form className="inline-form" onSubmit={handleSaveScanLogDays}>
           <input
+            className="input-number"
             type="number"
             min={0}
             step={1}
@@ -547,9 +590,10 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
             aria-label="Scan log retention days"
           />
           <span className="host-meta">days</span>
-          <button type="submit" className="btn-icon-label" disabled={savingScanLogDays}>
-            <IconSave /> Save
+          <button type="submit" className="btn-icon-label" disabled={savingScanLogDays || !(scanLogDaysInput !== String(appSettings.scanLogRetentionDays))}>
+            <IconSave /> {savingScanLogDays ? "Saving..." : "Save"}
           </button>
+          <SaveState saved={savedRow === "scanlog"} dirty={scanLogDaysInput !== String(appSettings.scanLogRetentionDays)} />
         </form>
       )}
 
@@ -613,6 +657,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
           <label>
             Daily digest hour (UTC)
             <input
+              className="input-number"
               type="number"
               min={0}
               max={23}
@@ -624,6 +669,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
           <label>
             EPSS alert threshold (0-1)
             <input
+              className="input-number"
               type="number"
               min={0}
               max={1}
@@ -635,6 +681,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
           <label>
             Scan queue backlog alert after (minutes)
             <input
+              className="input-number"
               type="number"
               min={1}
               step={1}
