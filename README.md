@@ -1001,9 +1001,13 @@ curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/js
 # scannerAgent is the agent's name (Scanner Agents page), not an id.
 # profile/nucleiProfile are optional, same flat-string values as rescan
 # above (nucleiProfile: "off" (default), "safe", or a Custom nuclei
-# profile's name).
+# profile's name). priority ("high"/"normal"/"low", default "normal")
+# decides where this lands in the target scanner's queue - "high" jumps
+# ahead of any scheduled sweep already waiting, which is usually what you
+# want for a playbook reacting to a live alert. Also accepted by
+# /hosts/rescan above.
 curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"scannerAgent":"office-berlin","targetSpec":"10.0.0.99","portSpec":"1-1000","profile":"all_safe"}' \
+  -d '{"scannerAgent":"office-berlin","targetSpec":"10.0.0.99","portSpec":"1-1000","profile":"all_safe","priority":"high"}' \
   "https://porttorch.internal/api/v1/scans/adhoc"
 ```
 
@@ -1163,6 +1167,54 @@ recurring schedules reach a scanner at all, and what lets the "Stop" button
 on a running scan actually take effect - see [`CLAUDE.md`](./CLAUDE.md)'s
 "Schedule Scans and the rescan button share one mechanism" section for the
 request queue they poll against.
+
+## Backup and restore
+
+Everything PortTorch can't rebuild from this checkout lives in two places:
+the Postgres database (hosts, port observations, findings, triage
+decisions, users, audit log) and the webserver's `/data` volumes
+(screenshots and the TLS cert/key). `scripts/backup.sh` captures both into
+a single archive:
+
+```bash
+sudo ./scripts/backup.sh                 # -> backups/porttorch-<utc-timestamp>.tar.gz
+sudo ./scripts/backup.sh -o /mnt/nas     # write it somewhere off this host
+sudo ./scripts/backup.sh --keep 7        # and prune all but the newest 7 there
+```
+
+It runs `pg_dump` inside the `postgres` container and reads the volumes
+via `--volumes-from` the `webserver` container, so it needs no local
+`psql` and never has to guess a volume name - whatever the webserver
+actually has mounted at `/data` is what gets archived. The stack can stay
+up while it runs. The archive is written `chmod 600` and **contains the
+TLS private key and every password hash in the database** - treat it as a
+secret, and note that it deliberately does *not* contain `.env`, so back
+that up separately (once - it rarely changes).
+
+A daily backup from cron, keeping a fortnight:
+
+```
+15 3 * * * cd /opt/porttorch && ./scripts/backup.sh -o /mnt/nas --keep 14 >> /var/log/porttorch-backup.log 2>&1
+```
+
+Restoring is the reverse, and is destructive - it replaces the current
+database and volumes rather than merging into them:
+
+```bash
+docker compose up -d                     # the stack must exist once first
+sudo ./scripts/restore.sh backups/porttorch-20260828-152545Z.tar.gz
+```
+
+It prints the archive's manifest (when it was taken, from which webserver
+version and schema migration), asks for confirmation, stops the webserver
+for the duration so nothing is writing mid-restore, and starts it again at
+the end. Pass `--yes` to skip the prompt in a scripted recovery. If the
+backup was taken on a *newer* schema than the checkout you're restoring
+into, it warns - restoring into newer code is fine (migrations handle it),
+the other direction is not.
+
+Recovering onto a fresh host: clone the repo, restore your `.env`, run
+`docker compose up -d` once to create the volumes, then `restore.sh`.
 
 ## Versioning
 

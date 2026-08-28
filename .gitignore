@@ -13,3 +13,6 @@ scanner/*.yaml
 *.swp
 *.swo
 *~
+
+# Backup archives (contain the TLS private key and password hashes)
+/backups/

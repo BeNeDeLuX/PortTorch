@@ -11,6 +11,7 @@ import { recordAudit } from "../audit/log";
 import { requestScanCancel } from "../scanCancel";
 import { singleParam } from "../lib/reqParams";
 import { getAppSettings } from "../settings/appSettings";
+import { scanPriorityOrder } from "../scanPriority";
 
 export const scanJobsRouter = Router();
 scanJobsRouter.use(requireAuth);
@@ -306,6 +307,7 @@ scanJobsRouter.get("/queue", asyncHandler(async (req, res) => {
       "scan_requests.port_spec as port_spec",
       "scan_requests.requested_by as requested_by",
       "scan_requests.created_at as created_at",
+      "scan_requests.priority as priority",
       "scanner_agents.name as scanner_agent_name",
       "hosts.ip as host_ip",
       "hosts.hostname as host_hostname",
@@ -314,7 +316,14 @@ scanJobsRouter.get("/queue", asyncHandler(async (req, res) => {
   if (allowed) {
     queuedQuery = queuedQuery.where("scan_requests.scanner_agent_id", "in", allowed);
   }
-  const queued = await queuedQuery.orderBy("scan_requests.created_at", "asc").execute();
+  // Same ordering the scanner's own claim query uses (shared expression),
+  // so the queue is displayed in the order it will actually be consumed -
+  // otherwise a high-priority request would show up buried in the middle
+  // of the list it's about to jump to the front of.
+  const queued = await queuedQuery
+    .orderBy(scanPriorityOrder)
+    .orderBy("scan_requests.created_at", "asc")
+    .execute();
 
   res.json(queued);
 }));

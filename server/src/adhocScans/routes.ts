@@ -8,6 +8,7 @@ import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { ScanProfileNotFoundError, resolveNSEProfile } from "../scanProfiles/resolve";
 import { NucleiProfileNotFoundError, resolveNucleiProfile } from "../nucleiProfiles/resolve";
+import { DEFAULT_SCAN_PRIORITY, scanPrioritySchema } from "../scanPriority";
 
 // A one-shot scan against an arbitrary target - the same NSE/nuclei
 // profile choice Schedule Scans offers, minus all scheduling (no
@@ -52,6 +53,12 @@ const createAdhocScanSchema = z.object({
   masscanRate: z.number().int().min(1).max(10_000_000).optional(),
   profile: nseProfileSelectionSchema.optional(),
   nucleiProfile: nucleiProfileSelectionSchema.optional(),
+  // Where this lands in the scanner's claim order (see src/scanPriority.ts).
+  // Omitted defaults to 'normal' rather than 'high' so the External API's
+  // own ad-hoc endpoint keeps behaving exactly as before this column
+  // existed - the dashboard's form is what pre-selects 'high', since an
+  // operator typing a target into it is by definition waiting on it.
+  priority: scanPrioritySchema.optional(),
 });
 
 adhocScansRouter.post(
@@ -123,8 +130,9 @@ adhocScansRouter.post(
         nuclei_tags: resolvedNucleiProfile.nucleiTags,
         nuclei_profile_label: resolvedNucleiProfile.nucleiProfileLabel,
         masscan_rate: parsed.data.masscanRate ?? null,
+        priority: parsed.data.priority ?? DEFAULT_SCAN_PRIORITY,
       })
-      .returning(["id", "created_at", "nse_profile_label", "nuclei_profile_label"])
+      .returning(["id", "created_at", "nse_profile_label", "nuclei_profile_label", "priority"])
       .executeTakeFirstOrThrow();
 
     logger.info({
@@ -134,6 +142,7 @@ adhocScansRouter.post(
       scanner_agent_name: agent.name,
       target_spec: parsed.data.targetSpec,
       port_spec: parsed.data.portSpec,
+      priority: request.priority,
       requested_by: req.session.username,
       source_ip: req.ip,
     });

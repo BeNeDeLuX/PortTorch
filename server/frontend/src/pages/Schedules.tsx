@@ -1,10 +1,11 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
-import { api, Me, NSEProfileSelection, NucleiProfileSelection, ScannerAgent, Schedule } from "../api";
+import { api, Me, NSEProfileSelection, NucleiProfileSelection, ScanPriority, ScannerAgent, Schedule } from "../api";
 import { IconEdit, IconPause, IconPlay, IconPlus, IconSave, IconTrash, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScanProfilePicker from "../components/ScanProfilePicker";
 import NucleiProfilePicker from "../components/NucleiProfilePicker";
+import ScanPriorityPicker from "../components/ScanPriorityPicker";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanRateSupportNote from "../components/ScanRateSupportNote";
 import { formatDateTime } from "../lib/formatDate";
@@ -181,6 +182,11 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
   const [nucleiProfile, setNucleiProfile] = useState<NucleiProfileSelection>({ kind: "off" });
   const [nucleiProfileTouched, setNucleiProfileTouched] = useState(false);
   const [masscanRate, setMasscanRate] = useState("");
+  // Unlike the profile pickers above, this needs no "touched" tracking on
+  // edit: a schedule stores its priority as a plain enum, not a snapshot
+  // of something editable elsewhere, so handleEdit can just pre-select the
+  // stored value with no risk of silently reverting anything.
+  const [priority, setPriority] = useState<ScanPriority>("normal");
   const [editingNucleiProfileLabel, setEditingNucleiProfileLabel] = useState<string | null>(null);
   const [scheduleType, setScheduleType] = useState<"interval" | "cron" | "once">("interval");
   const [intervalMinutes, setIntervalMinutes] = useState(60);
@@ -268,6 +274,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     setNucleiProfileTouched(false);
     setEditingNucleiProfileLabel(null);
     setMasscanRate("");
+    setPriority("normal");
     setScheduleType("interval");
     setIntervalMinutes(60);
     setRepeatMode("daily");
@@ -300,6 +307,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     setNucleiProfileTouched(false);
     setEditingNucleiProfileLabel(s.nuclei_profile_label);
     setMasscanRate(s.masscan_rate != null ? String(s.masscan_rate) : "");
+    setPriority(s.priority);
     setScheduleType(s.schedule_type);
 
     if (s.schedule_type === "interval") {
@@ -341,6 +349,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         ...(profileTouched ? { profile } : {}),
         ...(nucleiProfileTouched ? { nucleiProfile } : {}),
         ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
+        priority,
       };
       if (scheduleType === "interval") {
         await api.updateSchedule(editingId, { ...base, intervalMinutes });
@@ -368,6 +377,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         profile,
         nucleiProfile,
         ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
+        priority,
       });
     } else if (scheduleType === "once") {
       if (!runAt) return;
@@ -386,6 +396,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         profile,
         nucleiProfile,
         ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
+        priority,
       });
     } else {
       const cronExpression = advancedCron ? rawCronExpression.trim() : generatedCron;
@@ -399,6 +410,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         profile,
         nucleiProfile,
         ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
+        priority,
       });
     }
     setTargetSpec("");
@@ -409,6 +421,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     setNucleiProfile({ kind: "off" });
     setNucleiProfileTouched(false);
     setMasscanRate("");
+    setPriority("normal");
     await load();
   }
 
@@ -458,6 +471,17 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
             <span className="fingerprint" title="cron expression, UTC">
               {s.cron_expression}
             </span>
+          )}
+          {/* Only shown when it isn't the default - a Priority column of
+              its own would be another column on an already-wide table for
+              a value that's "normal" on almost every row. */}
+          {s.priority !== "normal" && (
+            <>
+              {" "}
+              <span className={`priority-badge priority-${s.priority}`} title="Queue priority">
+                {s.priority}
+              </span>
+            </>
           )}
         </td>
         <td>{s.scanner_agent_name ?? "?"}</td>
@@ -567,6 +591,10 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
               value={masscanRate}
               onChange={(e) => setMasscanRate(e.target.value)}
             />
+          </label>
+          <label>
+            Queue priority
+            <ScanPriorityPicker value={priority} onChange={setPriority} />
           </label>
           <ScanRateSupportNote agent={agents.find((a) => a.id === scannerAgentId)} rate={masscanRate} />
           <label>
@@ -723,48 +751,54 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
           {activeSchedules.length === 0 ? (
             <p className="empty">No active schedules.</p>
           ) : (
-            <table className="sortable">
-              <thead>
-                <tr>{sharedHeaders}</tr>
-              </thead>
-              <tbody>
-                {sortedGroup(activeSchedules).map((s) => (
-                  <tr key={s.id}>{sharedCells(s)}</tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="table-scroll">
+              <table className="sortable">
+                <thead>
+                  <tr>{sharedHeaders}</tr>
+                </thead>
+                <tbody>
+                  {sortedGroup(activeSchedules).map((s) => (
+                    <tr key={s.id}>{sharedCells(s)}</tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
 
           <h3>Done ({doneSchedules.length})</h3>
           {doneSchedules.length === 0 ? (
             <p className="empty">No one-time schedules have fired yet.</p>
           ) : (
-            <table className="sortable">
-              <thead>
-                <tr>{sharedHeaders}</tr>
-              </thead>
-              <tbody>
-                {sortedGroup(doneSchedules).map((s) => (
-                  <tr key={s.id}>{sharedCells(s)}</tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="table-scroll">
+              <table className="sortable">
+                <thead>
+                  <tr>{sharedHeaders}</tr>
+                </thead>
+                <tbody>
+                  {sortedGroup(doneSchedules).map((s) => (
+                    <tr key={s.id}>{sharedCells(s)}</tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
 
           <h3>Paused ({pausedSchedules.length})</h3>
           {pausedSchedules.length === 0 ? (
             <p className="empty">No paused schedules.</p>
           ) : (
-            <table className="sortable">
-              <thead>
-                <tr>{sharedHeaders}</tr>
-              </thead>
-              <tbody>
-                {sortedGroup(pausedSchedules).map((s) => (
-                  <tr key={s.id}>{sharedCells(s)}</tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="table-scroll">
+              <table className="sortable">
+                <thead>
+                  <tr>{sharedHeaders}</tr>
+                </thead>
+                <tbody>
+                  {sortedGroup(pausedSchedules).map((s) => (
+                    <tr key={s.id}>{sharedCells(s)}</tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </>
       )}

@@ -179,72 +179,74 @@ export default function Users({ me, onLogout }: { me: Me; onLogout: () => void }
       ) : users.length === 0 ? (
         <p className="empty">No users found.</p>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Username</th>
-              <th>Role</th>
-              <th>Scanner access</th>
-              <th>Created</th>
-              <th>Last login</th>
-              <th>2FA</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id}>
-                <td>{u.username}</td>
-                <td>{u.role}</td>
-                <td>
-                  {u.role !== "admin" && editingUserId === u.id ? (
-                    <div className="actions-cell">
-                      <ScannerMultiSelect agents={agents} selectedIds={editScannerAgentIds} onChange={setEditScannerAgentIds} />
-                      <button className="btn-icon-label" onClick={() => handleSaveAccess(u)}>
-                        <IconSave /> Save
-                      </button>
-                      <button className="btn-icon-label" onClick={() => setEditingUserId(null)}>
-                        <IconX /> Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    scannerAccessLabel(u.scannerAgentIds, agents)
-                  )}
-                </td>
-                <td>{formatDateTime(u.created_at, me.preferences)}</td>
-                <td>{u.last_login_at ? formatDateTime(u.last_login_at, me.preferences) : "never"}</td>
-                <td>{u.totp_enabled ? "enabled" : "disabled"}</td>
-                <td>
-                  <div className="actions-cell">
-                    {u.role !== "admin" && editingUserId !== u.id && (
-                      <button className="btn-icon-label" onClick={() => startEditAccess(u)}>
-                        <IconEdit /> Edit access
-                      </button>
-                    )}
-                    {u.activeSessions > 0 && (
-                      <button className="btn-icon-label" onClick={() => handleRevokeSessions(u)}>
-                        <IconLogOut /> End sessions ({u.activeSessions})
-                      </button>
-                    )}
-                    <button className="btn-icon-label" onClick={() => handleResetPassword(u)}>
-                      <IconKey /> Reset password
-                    </button>
-                    {u.totp_enabled && (
-                      <button className="btn-icon-label" onClick={() => handleResetTwoFactor(u)}>
-                        <IconRefresh /> Reset 2FA
-                      </button>
-                    )}
-                    {u.username !== me.username && (
-                      <button className="btn-icon-label" onClick={() => handleDelete(u)}>
-                        <IconTrash /> Delete
-                      </button>
-                    )}
-                  </div>
-                </td>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Role</th>
+                <th>Scanner access</th>
+                <th>Created</th>
+                <th>Last login</th>
+                <th>2FA</th>
+                <th>Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {users.map((u) => (
+                <tr key={u.id}>
+                  <td>{u.username}</td>
+                  <td>{u.role}</td>
+                  <td>
+                    {u.role !== "admin" && editingUserId === u.id ? (
+                      <div className="actions-cell">
+                        <ScannerMultiSelect agents={agents} selectedIds={editScannerAgentIds} onChange={setEditScannerAgentIds} />
+                        <button className="btn-icon-label" onClick={() => handleSaveAccess(u)}>
+                          <IconSave /> Save
+                        </button>
+                        <button className="btn-icon-label" onClick={() => setEditingUserId(null)}>
+                          <IconX /> Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      scannerAccessLabel(u.scannerAgentIds, agents)
+                    )}
+                  </td>
+                  <td>{formatDateTime(u.created_at, me.preferences)}</td>
+                  <td>{u.last_login_at ? formatDateTime(u.last_login_at, me.preferences) : "never"}</td>
+                  <td>{u.totp_enabled ? "enabled" : "disabled"}</td>
+                  <td>
+                    <div className="actions-cell">
+                      {u.role !== "admin" && editingUserId !== u.id && (
+                        <button className="btn-icon-label" onClick={() => startEditAccess(u)}>
+                          <IconEdit /> Edit access
+                        </button>
+                      )}
+                      {u.activeSessions > 0 && (
+                        <button className="btn-icon-label" onClick={() => handleRevokeSessions(u)}>
+                          <IconLogOut /> End sessions ({u.activeSessions})
+                        </button>
+                      )}
+                      <button className="btn-icon-label" onClick={() => handleResetPassword(u)}>
+                        <IconKey /> Reset password
+                      </button>
+                      {u.totp_enabled && (
+                        <button className="btn-icon-label" onClick={() => handleResetTwoFactor(u)}>
+                          <IconRefresh /> Reset 2FA
+                        </button>
+                      )}
+                      {u.username !== me.username && (
+                        <button className="btn-icon-label" onClick={() => handleDelete(u)}>
+                          <IconTrash /> Delete
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

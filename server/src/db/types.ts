@@ -320,6 +320,9 @@ export interface ScanSchedulesTable {
   // NULL = use the scanner's own configured masscanRate (see the
   // scan_masscan_rate migration).
   masscan_rate: number | null;
+  // Copied onto every scan_requests row this schedule spawns, same
+  // snapshot idiom as the profile columns above - see src/scanPriority.ts.
+  priority: ColumnType<"high" | "normal" | "low", "high" | "normal" | "low" | undefined, "high" | "normal" | "low">;
 }
 
 export interface ScanRequestsTable {
@@ -348,6 +351,10 @@ export interface ScanRequestsTable {
   // Same NULL-means-scanner-default semantics as ScanSchedulesTable's own
   // column; snapshotted from the schedule when scheduler.ts spawns a run.
   masscan_rate: number | null;
+  // Decides claim order in GET /api/ingest/scan-requests/next - see
+  // src/scanPriority.ts. Snapshotted from the schedule for scheduled runs,
+  // picked in the UI for ad-hoc scans and rescans.
+  priority: ColumnType<"high" | "normal" | "low", "high" | "normal" | "low" | undefined, "high" | "normal" | "low">;
 }
 
 export interface ScanProfilesTable {

@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router";
-import { api, HostDetail as HostDetailData, HostFilters, Me, NSEProfileSelection, NucleiProfileSelection, TRIAGE_LABEL } from "../api";
+import { api, HostDetail as HostDetailData, HostFilters, Me, NSEProfileSelection, NucleiProfileSelection, ScanPriority, TRIAGE_LABEL } from "../api";
 import { certExpiryStatus, certExpiryLabel } from "../lib/certExpiry";
 import { cveSeverityClass } from "../lib/cveSeverity";
 import { isAutoTag } from "../lib/knownServiceTags";
@@ -194,12 +194,12 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
     }, 5000);
   }
 
-  async function handleRescan(profile: NSEProfileSelection, nucleiProfile: NucleiProfileSelection) {
+  async function handleRescan(profile: NSEProfileSelection, nucleiProfile: NucleiProfileSelection, priority: ScanPriority) {
     if (!id) return;
     setShowRescanModal(false);
     setRescanError(null);
     try {
-      await api.rescan(id, profile, nucleiProfile);
+      await api.rescan(id, profile, nucleiProfile, priority);
       await load(id);
       startPollingForRescan(id);
     } catch (err) {
@@ -597,115 +597,117 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
 
       <section>
         <h2>Open Ports</h2>
-        <table className="open-ports-table">
-          <thead>
-            <tr>
-              <th>Port</th>
-              <th>Protocol</th>
-              <th>Service</th>
-              <th>Product/Version</th>
-              <th title="Only ports whose service greets a client unprompted (SSH, FTP, SMTP, ...) get a banner here - HTTP(S), RDP and similar 'client speaks first' protocols never will, by design. See Screenshots or Service Banners & Enumeration below for those instead.">
-                Banner
-              </th>
-              <th>Last confirmed</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.ports.map((p) => {
-              // A port only ever gets a fresh observation row when the
-              // scanner actually rediscovers it - masscan has no
-              // "checked and it's now closed" signal of its own (it's a
-              // stateless SYN scanner that just doesn't report a port it
-              // gets no response for, indistinguishable at that layer
-              // from one lost probe on an otherwise-fine port), so a port
-              // that quietly stops answering keeps showing its last-seen
-              // "open" row indefinitely instead of ever flipping to
-              // closed. Flagging whenever this port's own observation
-              // predates this host's most recently observed port is the
-              // cheap, false-positive-free signal: it means this specific
-              // port wasn't part of the most recent run's results at all.
-              const stale = new Date(p.observed_at).getTime() < latestPortObservedAt;
-              const hasDetails = portsWithDetails.has(`${p.port}-${p.protocol}`);
-              return (
-                <tr key={`${p.port}-${p.protocol}`}>
-                  <td>
-                    {hasDetails ? (
-                      <a className="port-link" href={`#port-detail-${p.port}-${p.protocol}`}>
-                        {p.port}
-                      </a>
-                    ) : (
-                      p.port
-                    )}
-                  </td>
-                  <td>{p.protocol}</td>
-                  <td>{p.service_name}</td>
-                  <td>
-                    {p.service_product} {p.service_version}
-                    {(p.os_type || p.extra_info) && (
-                      <div className="host-meta">{[p.os_type, p.extra_info].filter(Boolean).join(" · ")}</div>
-                    )}
-                    {p.cpes && p.cpes.length > 0 && <div className="fingerprint">{p.cpes.join(", ")}</div>}
-                    {p.vulnerabilities.length > 0 && (
-                      <div className="cve-badges">
-                        {p.vulnerabilities.map((v) => (
-                          <span key={v.id} style={{ display: "inline-flex", gap: "0.25rem", alignItems: "center" }}>
-                            <a
-                              className={`cve-badge cve-${cveSeverityClass(v)}`}
-                              href={`https://nvd.nist.gov/vuln/detail/${v.id}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              title={
-                                v.epssScore != null
-                                  ? `${v.description}\nEPSS: ${(v.epssScore * 100).toFixed(1)}% likely to be exploited (${Math.round((v.epssPercentile ?? 0) * 100)}th percentile)`
-                                  : v.description
-                              }
-                            >
-                              {v.id}
-                              {v.cvssScore != null && ` (${v.cvssScore})`}
-                              {v.epssScore != null && ` · EPSS ${(v.epssScore * 100).toFixed(1)}%`}
-                            </a>
-                            {v.triageState && (
-                              <span
-                                className={`triage-badge triage-${v.triageState}`}
+        <div className="table-scroll">
+          <table className="open-ports-table">
+            <thead>
+              <tr>
+                <th>Port</th>
+                <th>Protocol</th>
+                <th>Service</th>
+                <th>Product/Version</th>
+                <th title="Only ports whose service greets a client unprompted (SSH, FTP, SMTP, ...) get a banner here - HTTP(S), RDP and similar 'client speaks first' protocols never will, by design. See Screenshots or Service Banners & Enumeration below for those instead.">
+                  Banner
+                </th>
+                <th>Last confirmed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.ports.map((p) => {
+                // A port only ever gets a fresh observation row when the
+                // scanner actually rediscovers it - masscan has no
+                // "checked and it's now closed" signal of its own (it's a
+                // stateless SYN scanner that just doesn't report a port it
+                // gets no response for, indistinguishable at that layer
+                // from one lost probe on an otherwise-fine port), so a port
+                // that quietly stops answering keeps showing its last-seen
+                // "open" row indefinitely instead of ever flipping to
+                // closed. Flagging whenever this port's own observation
+                // predates this host's most recently observed port is the
+                // cheap, false-positive-free signal: it means this specific
+                // port wasn't part of the most recent run's results at all.
+                const stale = new Date(p.observed_at).getTime() < latestPortObservedAt;
+                const hasDetails = portsWithDetails.has(`${p.port}-${p.protocol}`);
+                return (
+                  <tr key={`${p.port}-${p.protocol}`}>
+                    <td>
+                      {hasDetails ? (
+                        <a className="port-link" href={`#port-detail-${p.port}-${p.protocol}`}>
+                          {p.port}
+                        </a>
+                      ) : (
+                        p.port
+                      )}
+                    </td>
+                    <td>{p.protocol}</td>
+                    <td>{p.service_name}</td>
+                    <td>
+                      {p.service_product} {p.service_version}
+                      {(p.os_type || p.extra_info) && (
+                        <div className="host-meta">{[p.os_type, p.extra_info].filter(Boolean).join(" · ")}</div>
+                      )}
+                      {p.cpes && p.cpes.length > 0 && <div className="fingerprint">{p.cpes.join(", ")}</div>}
+                      {p.vulnerabilities.length > 0 && (
+                        <div className="cve-badges">
+                          {p.vulnerabilities.map((v) => (
+                            <span key={v.id} style={{ display: "inline-flex", gap: "0.25rem", alignItems: "center" }}>
+                              <a
+                                className={`cve-badge cve-${cveSeverityClass(v)}`}
+                                href={`https://nvd.nist.gov/vuln/detail/${v.id}`}
+                                target="_blank"
+                                rel="noreferrer"
                                 title={
-                                  v.triageNote
-                                    ? `${TRIAGE_LABEL[v.triageState]}: ${v.triageNote}`
-                                    : `Triaged as ${TRIAGE_LABEL[v.triageState]} - still listed here since this is the host's full record`
+                                  v.epssScore != null
+                                    ? `${v.description}\nEPSS: ${(v.epssScore * 100).toFixed(1)}% likely to be exploited (${Math.round((v.epssPercentile ?? 0) * 100)}th percentile)`
+                                    : v.description
                                 }
                               >
-                                {TRIAGE_LABEL[v.triageState]}
-                              </span>
-                            )}
-                            {v.kevDateAdded && (
-                              <span
-                                className="kev-badge"
-                                title={`Added to CISA Known Exploited Vulnerabilities catalog ${v.kevDateAdded}${v.kevKnownRansomwareCampaignUse === "Known" ? " - known ransomware campaign use" : ""}`}
-                              >
-                                KEV
-                              </span>
-                            )}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </td>
-                  <td className="banner">{p.banner}</td>
-                  <td>
-                    {formatDateTime(p.observed_at, me.preferences)}
-                    {stale && (
-                      <span
-                        className="stale-badge"
-                        title="This port wasn't part of the most recent scan's results - it may no longer be open. masscan can't distinguish a genuinely closed port from one lost probe, so this isn't auto-corrected to 'closed'."
-                      >
-                        stale
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                                {v.id}
+                                {v.cvssScore != null && ` (${v.cvssScore})`}
+                                {v.epssScore != null && ` · EPSS ${(v.epssScore * 100).toFixed(1)}%`}
+                              </a>
+                              {v.triageState && (
+                                <span
+                                  className={`triage-badge triage-${v.triageState}`}
+                                  title={
+                                    v.triageNote
+                                      ? `${TRIAGE_LABEL[v.triageState]}: ${v.triageNote}`
+                                      : `Triaged as ${TRIAGE_LABEL[v.triageState]} - still listed here since this is the host's full record`
+                                  }
+                                >
+                                  {TRIAGE_LABEL[v.triageState]}
+                                </span>
+                              )}
+                              {v.kevDateAdded && (
+                                <span
+                                  className="kev-badge"
+                                  title={`Added to CISA Known Exploited Vulnerabilities catalog ${v.kevDateAdded}${v.kevKnownRansomwareCampaignUse === "Known" ? " - known ransomware campaign use" : ""}`}
+                                >
+                                  KEV
+                                </span>
+                              )}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                    <td className="banner">{p.banner}</td>
+                    <td>
+                      {formatDateTime(p.observed_at, me.preferences)}
+                      {stale && (
+                        <span
+                          className="stale-badge"
+                          title="This port wasn't part of the most recent scan's results - it may no longer be open. masscan can't distinguish a genuinely closed port from one lost probe, so this isn't auto-corrected to 'closed'."
+                        >
+                          stale
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       {(data.ports.some((p) => p.banner || p.ftp_anon_listing || p.smb_shares || (p.nse_extra && p.nse_extra.length > 0)) ||

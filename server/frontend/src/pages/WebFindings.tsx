@@ -208,61 +208,63 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
       ) : sorted.length === 0 ? (
         <p className="empty">No findings match the current search/filter.</p>
       ) : (
-        <table className="sortable">
-          <thead>
-            <tr>
-              {canEdit && (
-                <th className="select-col">
-                  <input
-                    type="checkbox"
-                    title="Select every row currently shown"
-                    checked={sorted.length > 0 && sorted.every((f) => selected.has(rowKey(f)))}
-                    onChange={(e) => setSelected(e.target.checked ? new Set(sorted.map(rowKey)) : new Set())}
-                  />
-                </th>
-              )}
-              <th onClick={() => setSort("host")}>Host{sortIndicator("host")}</th>
-              <th onClick={() => setSort("port")}>Port{sortIndicator("port")}</th>
-              <th onClick={() => setSort("template_id")}>Template{sortIndicator("template_id")}</th>
-              <th onClick={() => setSort("severity")}>Severity{sortIndicator("severity")}</th>
-              <th>Matched at</th>
-              <th>Description</th>
-              <th>Triage</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((f) => (
-              <tr key={f.id}>
+        <div className="table-scroll">
+          <table className="sortable">
+            <thead>
+              <tr>
                 {canEdit && (
-                  <td className="select-col">
-                    <input type="checkbox" checked={selected.has(rowKey(f))} onChange={() => toggleRow(rowKey(f))} />
-                  </td>
+                  <th className="select-col">
+                    <input
+                      type="checkbox"
+                      title="Select every row currently shown"
+                      checked={sorted.length > 0 && sorted.every((f) => selected.has(rowKey(f)))}
+                      onChange={(e) => setSelected(e.target.checked ? new Set(sorted.map(rowKey)) : new Set())}
+                    />
+                  </th>
                 )}
-                <td>
-                  <Link to={`/hosts/${f.host_id}`}>{f.host_hostname || f.host_ip}</Link>
-                </td>
-                <td>{f.port}</td>
-                <td>
-                  <span className={`cve-badge cve-${f.severity}`}>{f.template_id}</span>
-                </td>
-                <td>{f.severity}</td>
-                <td className="banner">{f.matched_at}</td>
-                <td className="audit-details">{f.description}</td>
-                <td>
-                  <TriageControl
-                    target={{ kind: "nuclei", hostId: f.host_id, templateId: f.template_id, matchedAt: f.matched_at }}
-                    state={f.triage_state}
-                    note={f.triage_note}
-                    reviewAt={f.triage_review_at}
-                    expired={f.triage_expired}
-                    canEdit={canEdit}
-                    onChanged={load}
-                  />
-                </td>
+                <th onClick={() => setSort("host")}>Host{sortIndicator("host")}</th>
+                <th onClick={() => setSort("port")}>Port{sortIndicator("port")}</th>
+                <th onClick={() => setSort("template_id")}>Template{sortIndicator("template_id")}</th>
+                <th onClick={() => setSort("severity")}>Severity{sortIndicator("severity")}</th>
+                <th>Matched at</th>
+                <th>Description</th>
+                <th>Triage</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {sorted.map((f) => (
+                <tr key={f.id}>
+                  {canEdit && (
+                    <td className="select-col">
+                      <input type="checkbox" checked={selected.has(rowKey(f))} onChange={() => toggleRow(rowKey(f))} />
+                    </td>
+                  )}
+                  <td>
+                    <Link to={`/hosts/${f.host_id}`}>{f.host_hostname || f.host_ip}</Link>
+                  </td>
+                  <td>{f.port}</td>
+                  <td>
+                    <span className={`cve-badge cve-${f.severity}`}>{f.template_id}</span>
+                  </td>
+                  <td>{f.severity}</td>
+                  <td className="banner">{f.matched_at}</td>
+                  <td className="audit-details">{f.description}</td>
+                  <td>
+                    <TriageControl
+                      target={{ kind: "nuclei", hostId: f.host_id, templateId: f.template_id, matchedAt: f.matched_at }}
+                      state={f.triage_state}
+                      note={f.triage_note}
+                      reviewAt={f.triage_review_at}
+                      expired={f.triage_expired}
+                      canEdit={canEdit}
+                      onChanged={load}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

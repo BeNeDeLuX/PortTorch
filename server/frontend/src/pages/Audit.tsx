@@ -192,30 +192,32 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
             : "No audit entries yet."}
         </p>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Event</th>
-              <th>Actor</th>
-              <th>Source IP</th>
-              <th>Details</th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.map((e) => (
-              <tr key={e.id}>
-                <td>{formatDateTime(e.created_at, me.preferences)}</td>
-                <td>{e.event}</td>
-                <td>{e.actor ?? "-"}</td>
-                <td>{e.source_ip ?? "-"}</td>
-                <td className="audit-details">
-                  <AuditDetails entry={e} />
-                </td>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Event</th>
+                <th>Actor</th>
+                <th>Source IP</th>
+                <th>Details</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {entries.map((e) => (
+                <tr key={e.id}>
+                  <td>{formatDateTime(e.created_at, me.preferences)}</td>
+                  <td>{e.event}</td>
+                  <td>{e.actor ?? "-"}</td>
+                  <td>{e.source_ip ?? "-"}</td>
+                  <td className="audit-details">
+                    <AuditDetails entry={e} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {!loading && total > PAGE_SIZE && (

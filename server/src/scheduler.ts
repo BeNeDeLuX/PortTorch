@@ -47,6 +47,9 @@ async function tick(): Promise<void> {
           nuclei_tags: schedule.nuclei_tags,
           nuclei_profile_label: schedule.nuclei_profile_label,
           masscan_rate: schedule.masscan_rate,
+          // Snapshotted from the schedule, not re-read live - same reason
+          // the profile columns above are (see the root CLAUDE.md).
+          priority: schedule.priority,
         })
         .execute();
 

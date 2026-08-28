@@ -114,46 +114,48 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
       ) : items.length === 0 ? (
         <p className="empty">No scan jobs match the current search/filter.</p>
       ) : (
-        <table className="sortable">
-          <thead>
-            <tr>
-              <th onClick={() => setSort("target_spec")}>Target{sortIndicator("target_spec")}</th>
-              <th onClick={() => setSort("port_spec")}>Ports{sortIndicator("port_spec")}</th>
-              <th onClick={() => setSort("scanner_agent_name")}>Scanner{sortIndicator("scanner_agent_name")}</th>
-              <th onClick={() => setSort("status")}>Status{sortIndicator("status")}</th>
-              <th onClick={() => setSort("started_at")}>Started{sortIndicator("started_at")}</th>
-              <th onClick={() => setSort("duration_ms")}>Duration{sortIndicator("duration_ms")}</th>
-              <th onClick={() => setSort("hosts_scanned")}>Hosts scanned{sortIndicator("hosts_scanned")}</th>
-              <th onClick={() => setSort("open_ports_found")}>Open ports{sortIndicator("open_ports_found")}</th>
-              <th onClick={() => setSort("screenshots")}>Screenshots{sortIndicator("screenshots")}</th>
-              <th onClick={() => setSort("tls_certificates")}>TLS certs{sortIndicator("tls_certificates")}</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((s) => (
-              <tr key={s.id}>
-                <td className="spec-cell">{s.target_spec}</td>
-                <td className="spec-cell">{s.port_spec}</td>
-                <td>{s.scanner_agent_name ?? "?"}</td>
-                <td>
-                  <span className={`scan-status scan-status-${s.status}`}>{s.status}</span>
-                </td>
-                <td>{formatDateTime(s.started_at, me.preferences)}</td>
-                <td>{s.duration_ms !== null ? durationLabel(s.duration_ms) : "-"}</td>
-                <td>{s.hosts_scanned}</td>
-                <td>{s.open_ports_found}</td>
-                <td>{s.screenshots + s.rdp_screenshots}</td>
-                <td>{s.tls_certificates}</td>
-                <td>
-                  <button className="btn-icon-label" onClick={() => setDetailsJobId(s.id)}>
-                    <IconInfo /> Details
-                  </button>
-                </td>
+        <div className="table-scroll">
+          <table className="sortable">
+            <thead>
+              <tr>
+                <th onClick={() => setSort("target_spec")}>Target{sortIndicator("target_spec")}</th>
+                <th onClick={() => setSort("port_spec")}>Ports{sortIndicator("port_spec")}</th>
+                <th onClick={() => setSort("scanner_agent_name")}>Scanner{sortIndicator("scanner_agent_name")}</th>
+                <th onClick={() => setSort("status")}>Status{sortIndicator("status")}</th>
+                <th onClick={() => setSort("started_at")}>Started{sortIndicator("started_at")}</th>
+                <th onClick={() => setSort("duration_ms")}>Duration{sortIndicator("duration_ms")}</th>
+                <th onClick={() => setSort("hosts_scanned")}>Hosts scanned{sortIndicator("hosts_scanned")}</th>
+                <th onClick={() => setSort("open_ports_found")}>Open ports{sortIndicator("open_ports_found")}</th>
+                <th onClick={() => setSort("screenshots")}>Screenshots{sortIndicator("screenshots")}</th>
+                <th onClick={() => setSort("tls_certificates")}>TLS certs{sortIndicator("tls_certificates")}</th>
+                <th>Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {items.map((s) => (
+                <tr key={s.id}>
+                  <td className="spec-cell">{s.target_spec}</td>
+                  <td className="spec-cell">{s.port_spec}</td>
+                  <td>{s.scanner_agent_name ?? "?"}</td>
+                  <td>
+                    <span className={`scan-status scan-status-${s.status}`}>{s.status}</span>
+                  </td>
+                  <td>{formatDateTime(s.started_at, me.preferences)}</td>
+                  <td>{s.duration_ms !== null ? durationLabel(s.duration_ms) : "-"}</td>
+                  <td>{s.hosts_scanned}</td>
+                  <td>{s.open_ports_found}</td>
+                  <td>{s.screenshots + s.rdp_screenshots}</td>
+                  <td>{s.tls_certificates}</td>
+                  <td>
+                    <button className="btn-icon-label" onClick={() => setDetailsJobId(s.id)}>
+                      <IconInfo /> Details
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {!loading && total > PAGE_SIZE && (

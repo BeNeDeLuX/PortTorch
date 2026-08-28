@@ -15,6 +15,7 @@ import { zIp } from "../lib/zodIp";
 import { singleParam } from "../lib/reqParams";
 import { deriveServiceTags } from "../lib/serviceTags";
 import { recordAudit } from "../audit/log";
+import { scanPriorityOrder } from "../scanPriority";
 
 export const ingestRouter = Router();
 ingestRouter.use(asyncHandler(apiKeyAuth));
@@ -961,17 +962,18 @@ ingestRouter.get("/scan-requests/next", asyncHandler(async (req, res) => {
     nuclei_profile: string;
     nuclei_tags: string[] | null;
     masscan_rate: number | null;
+    priority: string;
   }>`
     UPDATE scan_requests
     SET status = 'claimed', claimed_at = now()
     WHERE id = (
       SELECT id FROM scan_requests
       WHERE scanner_agent_id = ${req.scannerAgentId!} AND status = 'pending'
-      ORDER BY created_at
+      ORDER BY ${scanPriorityOrder}, created_at
       FOR UPDATE SKIP LOCKED
       LIMIT 1
     )
-    RETURNING id, target_spec, port_spec, nse_profile, nse_scripts, nuclei_profile, nuclei_tags, masscan_rate
+    RETURNING id, target_spec, port_spec, nse_profile, nse_scripts, nuclei_profile, nuclei_tags, masscan_rate, priority
   `.execute(db);
 
   const next = claimed.rows[0];
@@ -987,6 +989,7 @@ ingestRouter.get("/scan-requests/next", asyncHandler(async (req, res) => {
     scanner_agent_name: req.scannerAgentName,
     target_spec: next.target_spec,
     port_spec: next.port_spec,
+    priority: next.priority,
   });
 
   // nse_profile_label/nuclei_profile_label are display-only and never

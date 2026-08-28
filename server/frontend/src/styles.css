@@ -853,6 +853,43 @@ button.export-link {
   border-color: var(--danger);
 }
 
+/* Scan queue priority. Same pill shape as .triage-badge above; Normal is
+   deliberately muted rather than coloured, since it's the default the vast
+   majority of rows carry and colouring it would drown out the two that
+   actually mean something. */
+/* The picker's hint paragraph makes its <label> a full-width row in the
+   form's flex layout, which would otherwise stretch the select across the
+   whole form - unlike the profile pickers beside it, which have no hint
+   and sit at their natural width. Only the select is capped: constraining
+   the hint too shrank the label enough that the next field ("Scan rate")
+   floated up alongside it, which looked like a layout bug. */
+.scan-priority-select {
+  max-width: 24rem;
+}
+
+.priority-badge {
+  font-size: 0.75rem;
+  border-radius: 999px;
+  display: inline-block;
+  vertical-align: middle;
+  padding: 0.15rem 0.55rem;
+  border: 1px solid currentColor;
+  text-transform: capitalize;
+}
+
+.priority-badge.priority-high {
+  color: var(--warning);
+}
+
+.priority-badge.priority-normal {
+  color: var(--muted);
+}
+
+.priority-badge.priority-low {
+  color: var(--muted);
+  opacity: 0.7;
+}
+
 .triage-review-date {
   padding: 0.15rem 0.3rem;
   font-size: 0.75rem;
@@ -2469,6 +2506,161 @@ th {
      static, already-generated document. */
 .digest-print-range {
   display: none;
+}
+
+/* ---------------------------------------------------------------
+   Narrow viewports.
+
+   Until this existed the stylesheet had exactly one media query, and it
+   was @media print - so every layout here was only ever correct at one
+   width. Measured before writing any of it (headless Chrome, real pages
+   with real data): every page overflowed to a scrollWidth of 808px at
+   both 390px and 768px viewports, driven mainly by the 160px-tall brand
+   logo (554px wide on its own), the fixed 200px dashboard sidebar, and
+   wide data tables with nothing to scroll inside.
+
+   Two breakpoints, not a full mobile redesign: 900px is where the
+   sidebar/table layouts stop fitting, 560px is phone territory where the
+   brand and page padding also have to give.
+   --------------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .dashboard,
+  .host-detail {
+    padding: 1rem;
+  }
+
+  /* space-between alone keeps the brand and the account block on one row
+     and lets them overflow; below this width they stack instead. The logo
+     is one SVG with the wordmark baked in (~3.46:1), so scaling it is a
+     width change, not a font change - and header's -45px margin exists to
+     cancel the empty space inside the 160px-tall asset, so it has to
+     scale by the same factor or the nav lands on top of the logo. */
+  header {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    /* Moved off header and onto the logo itself below. header's own
+       negative margin only works while the header is a single row: once
+       it wraps, the account block lands on a second row and a negative
+       margin here drags the nav on top of it (confirmed in a real 390px
+       render, not reasoned about). On .brand-logo it trims the asset's
+       own empty edge wherever that asset happens to sit. */
+    margin-bottom: 0;
+  }
+
+  .brand-logo {
+    height: auto;
+    width: min(100%, 320px);
+    /* ~28% of the rendered height, the same proportion the full-size
+       -45px/160px compensation works out to. */
+    margin-bottom: -26px;
+  }
+
+  /* The sidebar is a filter rail, not navigation - stacking it above the
+     content keeps it reachable rather than hiding it behind a toggle. */
+  .dashboard-layout {
+    grid-template-columns: 1fr;
+  }
+
+  /* Wide data tables scroll sideways inside their own container rather
+     than pushing the whole page with them. Every page-level <table> is
+     wrapped in .table-scroll for this (the pattern Trends.tsx already
+     used); the wrapper is what scrolls, and width:max-content on the
+     table is what stops the columns from squeezing into an unreadable
+     three-words-per-line grid instead.
+
+     An element can't provide its own horizontal scroll, which is why the
+     wrapper is needed at all: `display:block; overflow-x:auto` applied to
+     the table itself gets clamped straight back down by max-width and the
+     columns squeeze anyway - measured, not assumed.
+
+     The per-cell cap keeps max-content bounded: without it a single prose
+     cell (a CVE description, an audit detail blob) sets the table's width
+     and turns a small scroll into an enormous one. */
+  .table-scroll {
+    overflow-x: auto;
+  }
+
+  .table-scroll > table {
+    width: max-content;
+    min-width: 100%;
+  }
+
+  .table-scroll > table th,
+  .table-scroll > table td {
+    max-width: 20rem;
+  }
+
+  /* Fixed to the viewport corner, which on a wide screen sits in empty
+     margin and on a narrow one sits directly on top of the content. A
+     background plus normal document flow at the end of the page keeps it
+     legible without covering anything. */
+  .version-badge {
+    position: static;
+    display: block;
+    text-align: right;
+    padding: 0.75rem 0 0;
+  }
+
+  /* Forms: every fixed pixel width in here is a minimum that no longer
+     fits. These stay wide wherever there's room (the rules they override
+     are unchanged above this breakpoint) and simply stop forcing it. */
+  .save-search-form {
+    flex-wrap: wrap;
+  }
+
+  .save-search-form input,
+  .schedule-form input[type="text"],
+  .schedule-form input:not([type]),
+  .schedule-form select {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .schedule-form label {
+    max-width: 100%;
+  }
+
+  /* Rows of a heading plus action buttons - one line with no wrap is what
+     pushes these past the viewport, since neither half can shrink. */
+  .host-detail-header,
+  .host-nav-row {
+    flex-wrap: wrap;
+  }
+
+  /* The two date pickers plus a 1.5rem gap are a few pixels wider than a
+     390px viewport's content box - close enough that it only ever showed
+     up as a 5px horizontal scroll, which is exactly the kind of thing
+     nobody finds by eye. */
+  .last-seen-range {
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .dashboard,
+  .host-detail {
+    padding: 0.75rem;
+  }
+
+  /* Same scaling as the 900px block above, one step further down. */
+  .brand-logo {
+    width: min(100%, 230px);
+    margin-bottom: -19px;
+  }
+
+  /* Every card grid's minmax floor is wider than a phone's content box,
+     so auto-fill can't drop to one column on its own - it overflows
+     instead. cert-grid's 620px floor is the worst of the four. */
+  .host-grid,
+  .screenshot-grid,
+  .health-grid,
+  .cert-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media print {

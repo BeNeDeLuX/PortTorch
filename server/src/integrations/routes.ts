@@ -6,6 +6,7 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { requestRescan } from "../rescan";
+import { DEFAULT_SCAN_PRIORITY, scanPrioritySchema } from "../scanPriority";
 import { requestScanCancel } from "../scanCancel";
 import { tokenAuth } from "../apiTokens/tokenAuth";
 import { zIp } from "../lib/zodIp";
@@ -159,6 +160,9 @@ export const rescanSchema = z.object({
   // as before this existed - this never breaks an existing caller that
   // doesn't know the concept yet.
   profile: z.string().min(1).optional(),
+  // "high" | "normal" | "low" - same claim-order control the ad-hoc
+  // endpoint below takes; omitted keeps the pre-priority 'normal'.
+  priority: scanPrioritySchema.optional(),
 });
 
 // Resolves the External API's flat, name-based `profile` string into the
@@ -234,7 +238,13 @@ integrationsRouter.post("/hosts/rescan", asyncHandler(async (req, res) => {
   const host = result.host;
 
   const requestedBy = `api-token:${req.apiTokenName}`;
-  const outcome = await requestRescan(host.id, requestedBy, resolvedProfile.selection);
+  const outcome = await requestRescan(
+    host.id,
+    requestedBy,
+    resolvedProfile.selection,
+    { kind: "off" },
+    parsed.data.priority ?? DEFAULT_SCAN_PRIORITY
+  );
   if (!outcome.ok) {
     res.status(outcome.status).json({ error: outcome.error });
     return;
@@ -355,6 +365,9 @@ export const adhocScanSchema = z.object({
   // masscanRate - omitted/null means the scanner keeps using its config
   // value, so this never changes behavior for anyone who doesn't set it.
   masscanRate: z.number().int().min(1).max(10_000_000).optional(),
+  // "high" | "normal" | "low" - where this lands in the target scanner's
+  // claim order. Omitted keeps the pre-priority behavior ('normal').
+  priority: scanPrioritySchema.optional(),
 });
 
 // Ad-hoc Scans' External API counterpart - the one route in this router
@@ -432,6 +445,7 @@ integrationsRouter.post("/scans/adhoc", asyncHandler(async (req, res) => {
       nuclei_tags: nucleiResolution.nucleiTags,
       nuclei_profile_label: nucleiResolution.nucleiProfileLabel,
       masscan_rate: parsed.data.masscanRate ?? null,
+      priority: parsed.data.priority ?? DEFAULT_SCAN_PRIORITY,
     })
     .returning(["id", "status", "created_at"])
     .executeTakeFirstOrThrow();

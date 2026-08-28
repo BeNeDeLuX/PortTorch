@@ -240,42 +240,44 @@ export default function ScanProfiles({ me, onLogout }: { me: Me; onLogout: () =>
       ) : profiles.length === 0 ? (
         <p className="empty">No custom scan profiles created yet.</p>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Scripts</th>
-              <th>Created by</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {profiles.map((p) => (
-              <tr key={p.id}>
-                <td>
-                  {p.name}
-                  {p.nse_scripts.some((s) => ACTIVE_SCRIPTS.has(s)) && (
-                    <span className="callout-danger-inline" title="Includes Active Modules scripts (intrusive/exploit/brute/dos)">
-                      <IconWarning size={13} />
-                    </span>
-                  )}
-                </td>
-                <td className="banner">{p.nse_scripts.join(", ")}</td>
-                <td>{p.created_by ?? "-"}</td>
-                <td>
-                  <div className="actions-cell">
-                    <button className="btn-icon-label" onClick={() => startEdit(p)}>
-                      <IconEdit /> Edit
-                    </button>
-                    <button className="btn-icon-label" onClick={() => handleDelete(p)}>
-                      <IconTrash /> Delete
-                    </button>
-                  </div>
-                </td>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Scripts</th>
+                <th>Created by</th>
+                <th>Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {profiles.map((p) => (
+                <tr key={p.id}>
+                  <td>
+                    {p.name}
+                    {p.nse_scripts.some((s) => ACTIVE_SCRIPTS.has(s)) && (
+                      <span className="callout-danger-inline" title="Includes Active Modules scripts (intrusive/exploit/brute/dos)">
+                        <IconWarning size={13} />
+                      </span>
+                    )}
+                  </td>
+                  <td className="banner">{p.nse_scripts.join(", ")}</td>
+                  <td>{p.created_by ?? "-"}</td>
+                  <td>
+                    <div className="actions-cell">
+                      <button className="btn-icon-label" onClick={() => startEdit(p)}>
+                        <IconEdit /> Edit
+                      </button>
+                      <button className="btn-icon-label" onClick={() => handleDelete(p)}>
+                        <IconTrash /> Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

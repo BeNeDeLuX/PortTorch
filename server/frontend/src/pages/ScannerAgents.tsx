@@ -36,11 +36,22 @@ function looksLikeServeMode(a: ScannerAgent): boolean {
   return Date.now() - new Date(a.last_seen_at).getTime() < RECENTLY_SEEN_THRESHOLD_MS;
 }
 
-type QueueSortKey = "target_spec" | "port_spec" | "scanner_agent_name" | "host" | "requested_by" | "created_at";
+type QueueSortKey = "priority" | "target_spec" | "port_spec" | "scanner_agent_name" | "host" | "requested_by" | "created_at";
+
+// Mirrors the server's own claim ordering (src/scanPriority.ts) so the
+// default view of this table is the order the scanners will actually
+// consume it in - sorting by any other column is an explicit override.
+const QUEUE_PRIORITY_RANK: Record<string, number> = { high: 0, normal: 1, low: 2 };
 
 function compareQueued(a: QueuedScanRequest, b: QueuedScanRequest, key: QueueSortKey, direction: SortDirection): number {
   const sign = direction === "asc" ? 1 : -1;
   switch (key) {
+    case "priority": {
+      const byPriority = (QUEUE_PRIORITY_RANK[a.priority] ?? 1) - (QUEUE_PRIORITY_RANK[b.priority] ?? 1);
+      // Same tiebreak the server applies within a priority level, so this
+      // reproduces the real claim order exactly rather than approximating it.
+      return sign * (byPriority !== 0 ? byPriority : a.created_at.localeCompare(b.created_at));
+    }
     case "target_spec":
       return sign * a.target_spec.localeCompare(b.target_spec);
     case "port_spec":
@@ -107,7 +118,7 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
   const [loading, setLoading] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>("created_at");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
-  const [queueSortKey, setQueueSortKey] = useState<QueueSortKey>("created_at");
+  const [queueSortKey, setQueueSortKey] = useState<QueueSortKey>("priority");
   const [queueSortDirection, setQueueSortDirection] = useState<SortDirection>("asc");
   const [activeScanJobs, setActiveScanJobs] = useState<ActiveScanJob[]>([]);
   const [detailsJobId, setDetailsJobId] = useState<string | null>(null);
@@ -493,82 +504,84 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
           {scanning.length === 0 ? (
             <p className="empty">No scanner currently running a scan.</p>
           ) : (
-            <table className="sortable">
-              <thead>
-                <tr>
-                  {sharedHeaders}
-                  <th onClick={() => setSort("current_scan")}>Current scan{sortIndicator("current_scan")}</th>
-                  <th onClick={() => setSort("created_at")}>Created{sortIndicator("created_at")}</th>
-                  {canEdit && <th>Actions</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {sortedGroup(scanning).map((a) => {
-                  const activeJob = activeJobByAgent.get(a.id);
-                  return (
-                    <tr key={a.id}>
-                      {sharedCells(a)}
-                      <td className="spec-cell">
-                        {activeJob && (
-                          <>
-                            {activeJob.target_spec} <span className="host-meta">(ports {activeJob.port_spec})</span>
-                            <div className="host-meta">
-                              running {elapsedLabel(activeJob.started_at)}
-                              {activeJob.is_stale && (
-                                <span
-                                  className="stale-badge"
-                                  title="No update in a while - this scanner may be offline or have died mid-scan"
-                                >
-                                  stale
-                                </span>
-                              )}
-                            </div>
-                            {activeJob.applicable_excludes && activeJob.applicable_excludes.length > 0 && (
+            <div className="table-scroll">
+              <table className="sortable">
+                <thead>
+                  <tr>
+                    {sharedHeaders}
+                    <th onClick={() => setSort("current_scan")}>Current scan{sortIndicator("current_scan")}</th>
+                    <th onClick={() => setSort("created_at")}>Created{sortIndicator("created_at")}</th>
+                    {canEdit && <th>Actions</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedGroup(scanning).map((a) => {
+                    const activeJob = activeJobByAgent.get(a.id);
+                    return (
+                      <tr key={a.id}>
+                        {sharedCells(a)}
+                        <td className="spec-cell">
+                          {activeJob && (
+                            <>
+                              {activeJob.target_spec} <span className="host-meta">(ports {activeJob.port_spec})</span>
                               <div className="host-meta">
-                                Excludes: {activeJob.applicable_excludes.map((e) => `${e.kind}: ${e.value}`).join(", ")}
+                                running {elapsedLabel(activeJob.started_at)}
+                                {activeJob.is_stale && (
+                                  <span
+                                    className="stale-badge"
+                                    title="No update in a while - this scanner may be offline or have died mid-scan"
+                                  >
+                                    stale
+                                  </span>
+                                )}
                               </div>
-                            )}
-                          </>
-                        )}
-                      </td>
-                      <td>{formatDateTime(a.created_at, me.preferences)}</td>
-                      {canEdit && (
-                        <td>
-                          <div className="actions-cell">
-                            {activeJob && (
-                              <button className="btn-icon-label" onClick={() => setDetailsJobId(activeJob.id)}>
-                                <IconInfo /> Details
-                              </button>
-                            )}
-                            {activeJob?.is_stale && (
-                              <button className="btn-icon-label" onClick={() => handleDismissScanJob(activeJob.id)}>
-                                <IconX /> Dismiss
-                              </button>
-                            )}
-                            {activeJob?.cancellable && (
-                              <button
-                                className="btn-icon-label"
-                                onClick={() => handleCancelScanJob(activeJob.id)}
-                                disabled={activeJob.cancel_requested}
-                              >
-                                <IconStop /> {activeJob.cancel_requested ? "Stopping..." : "Stop"}
-                              </button>
-                            )}
-                            {isAdmin && updateActions(a)}
-                            {/* No Revoke here, deliberately - a scanning
-                                agent's scan has to be stopped first (see
-                                the Stop button above); revoking mid-scan
-                                would just leave it authenticated but
-                                unable to report the running job's
-                                outcome. Idle agents get Revoke below. */}
-                          </div>
+                              {activeJob.applicable_excludes && activeJob.applicable_excludes.length > 0 && (
+                                <div className="host-meta">
+                                  Excludes: {activeJob.applicable_excludes.map((e) => `${e.kind}: ${e.value}`).join(", ")}
+                                </div>
+                              )}
+                            </>
+                          )}
                         </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        <td>{formatDateTime(a.created_at, me.preferences)}</td>
+                        {canEdit && (
+                          <td>
+                            <div className="actions-cell">
+                              {activeJob && (
+                                <button className="btn-icon-label" onClick={() => setDetailsJobId(activeJob.id)}>
+                                  <IconInfo /> Details
+                                </button>
+                              )}
+                              {activeJob?.is_stale && (
+                                <button className="btn-icon-label" onClick={() => handleDismissScanJob(activeJob.id)}>
+                                  <IconX /> Dismiss
+                                </button>
+                              )}
+                              {activeJob?.cancellable && (
+                                <button
+                                  className="btn-icon-label"
+                                  onClick={() => handleCancelScanJob(activeJob.id)}
+                                  disabled={activeJob.cancel_requested}
+                                >
+                                  <IconStop /> {activeJob.cancel_requested ? "Stopping..." : "Stop"}
+                                </button>
+                              )}
+                              {isAdmin && updateActions(a)}
+                              {/* No Revoke here, deliberately - a scanning
+                                  agent's scan has to be stopped first (see
+                                  the Stop button above); revoking mid-scan
+                                  would just leave it authenticated but
+                                  unable to report the running job's
+                                  outcome. Idle agents get Revoke below. */}
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
 
           <div className="list-controls">
@@ -590,110 +603,120 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
           ) : filteredQueue.length === 0 ? (
             <p className="empty">No queued scan requests match the selected scanner(s).</p>
           ) : (
-            <table className="sortable">
-              <thead>
-                <tr>
-                  <th onClick={() => setQueueSort("target_spec")}>Target{queueSortIndicator("target_spec")}</th>
-                  <th onClick={() => setQueueSort("port_spec")}>Ports{queueSortIndicator("port_spec")}</th>
-                  <th onClick={() => setQueueSort("scanner_agent_name")}>Scanner{queueSortIndicator("scanner_agent_name")}</th>
-                  <th onClick={() => setQueueSort("host")}>Host{queueSortIndicator("host")}</th>
-                  <th onClick={() => setQueueSort("requested_by")}>Requested by{queueSortIndicator("requested_by")}</th>
-                  <th onClick={() => setQueueSort("created_at")}>Queued since{queueSortIndicator("created_at")}</th>
-                  {canEdit && <th>Actions</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {sortedQueue.map((q) => (
-                  <tr key={q.id}>
-                    <td className="spec-cell">{q.target_spec}</td>
-                    <td className="spec-cell">{q.port_spec}</td>
-                    <td>{q.scanner_agent_name ?? "-"}</td>
-                    <td>{q.host_hostname ?? q.host_ip ?? "-"}</td>
-                    <td>{q.requested_by ?? "-"}</td>
-                    <td>
-                      {formatDateTime(q.created_at, me.preferences)}{" "}
-                      <span className="host-meta">(waiting {elapsedLabel(q.created_at)})</span>
-                    </td>
-                    {canEdit && (
-                      <td>
-                        <div className="actions-cell">
-                          <button className="btn-icon-label" onClick={() => handleCancelQueuedScanRequest(q.id)}>
-                            <IconX /> Cancel
-                          </button>
-                        </div>
-                      </td>
-                    )}
+            <div className="table-scroll">
+              <table className="sortable">
+                <thead>
+                  <tr>
+                    <th onClick={() => setQueueSort("priority")}>Priority{queueSortIndicator("priority")}</th>
+                    <th onClick={() => setQueueSort("target_spec")}>Target{queueSortIndicator("target_spec")}</th>
+                    <th onClick={() => setQueueSort("port_spec")}>Ports{queueSortIndicator("port_spec")}</th>
+                    <th onClick={() => setQueueSort("scanner_agent_name")}>Scanner{queueSortIndicator("scanner_agent_name")}</th>
+                    <th onClick={() => setQueueSort("host")}>Host{queueSortIndicator("host")}</th>
+                    <th onClick={() => setQueueSort("requested_by")}>Requested by{queueSortIndicator("requested_by")}</th>
+                    <th onClick={() => setQueueSort("created_at")}>Queued since{queueSortIndicator("created_at")}</th>
+                    {canEdit && <th>Actions</th>}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {sortedQueue.map((q) => (
+                    <tr key={q.id}>
+                      <td>
+                        <span className={`priority-badge priority-${q.priority}`}>{q.priority}</span>
+                      </td>
+                      <td className="spec-cell">{q.target_spec}</td>
+                      <td className="spec-cell">{q.port_spec}</td>
+                      <td>{q.scanner_agent_name ?? "-"}</td>
+                      <td>{q.host_hostname ?? q.host_ip ?? "-"}</td>
+                      <td>{q.requested_by ?? "-"}</td>
+                      <td>
+                        {formatDateTime(q.created_at, me.preferences)}{" "}
+                        <span className="host-meta">(waiting {elapsedLabel(q.created_at)})</span>
+                      </td>
+                      {canEdit && (
+                        <td>
+                          <div className="actions-cell">
+                            <button className="btn-icon-label" onClick={() => handleCancelQueuedScanRequest(q.id)}>
+                              <IconX /> Cancel
+                            </button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
 
           <h3>Idle ({idle.length})</h3>
           {idle.length === 0 ? (
             <p className="empty">No idle scanner agents.</p>
           ) : (
-            <table className="sortable">
-              <thead>
-                <tr>
-                  {sharedHeaders}
-                  <th onClick={() => setSort("created_at")}>Created{sortIndicator("created_at")}</th>
-                  {isAdmin && <th>Actions</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {sortedGroup(idle).map((a) => (
-                  <tr key={a.id}>
-                    {sharedCells(a)}
-                    <td>{formatDateTime(a.created_at, me.preferences)}</td>
-                    {isAdmin && (
-                      <td>
-                        <div className="actions-cell">
-                          {updateActions(a)}
-                          <button className="btn-icon-label" onClick={() => handleRevoke(a)}>
-                            <IconBan /> Revoke
-                          </button>
-                        </div>
-                      </td>
-                    )}
+            <div className="table-scroll">
+              <table className="sortable">
+                <thead>
+                  <tr>
+                    {sharedHeaders}
+                    <th onClick={() => setSort("created_at")}>Created{sortIndicator("created_at")}</th>
+                    {isAdmin && <th>Actions</th>}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {sortedGroup(idle).map((a) => (
+                    <tr key={a.id}>
+                      {sharedCells(a)}
+                      <td>{formatDateTime(a.created_at, me.preferences)}</td>
+                      {isAdmin && (
+                        <td>
+                          <div className="actions-cell">
+                            {updateActions(a)}
+                            <button className="btn-icon-label" onClick={() => handleRevoke(a)}>
+                              <IconBan /> Revoke
+                            </button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
 
           <h3>Revoked ({revoked.length})</h3>
           {revoked.length === 0 ? (
             <p className="empty">No revoked scanner agents.</p>
           ) : (
-            <table className="sortable">
-              <thead>
-                <tr>
-                  {sharedHeaders}
-                  <th onClick={() => setSort("created_at")}>Created{sortIndicator("created_at")}</th>
-                  <th>Revoked</th>
-                  {isAdmin && <th>Actions</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {sortedGroup(revoked).map((a) => (
-                  <tr key={a.id}>
-                    {sharedCells(a)}
-                    <td>{formatDateTime(a.created_at, me.preferences)}</td>
-                    <td>{a.revoked_at ? formatDateTime(a.revoked_at, me.preferences) : "-"}</td>
-                    {isAdmin && (
-                      <td>
-                        <div className="actions-cell">
-                          <button className="btn-icon-label" onClick={() => handleDelete(a)}>
-                            <IconTrash /> Delete
-                          </button>
-                        </div>
-                      </td>
-                    )}
+            <div className="table-scroll">
+              <table className="sortable">
+                <thead>
+                  <tr>
+                    {sharedHeaders}
+                    <th onClick={() => setSort("created_at")}>Created{sortIndicator("created_at")}</th>
+                    <th>Revoked</th>
+                    {isAdmin && <th>Actions</th>}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {sortedGroup(revoked).map((a) => (
+                    <tr key={a.id}>
+                      {sharedCells(a)}
+                      <td>{formatDateTime(a.created_at, me.preferences)}</td>
+                      <td>{a.revoked_at ? formatDateTime(a.revoked_at, me.preferences) : "-"}</td>
+                      {isAdmin && (
+                        <td>
+                          <div className="actions-cell">
+                            <button className="btn-icon-label" onClick={() => handleDelete(a)}>
+                              <IconTrash /> Delete
+                            </button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </>
       )}

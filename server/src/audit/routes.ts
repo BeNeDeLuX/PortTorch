@@ -6,6 +6,7 @@ import { requireAdmin } from "../auth/middleware";
 import { asyncHandler } from "../lib/asyncHandler";
 import { parseDateOnly } from "../lib/dateOnly";
 import { resolveAuditNames } from "./resolveNames";
+import { csvEscape } from "../lib/csv";
 
 type AuditLogRow = Selectable<AuditLogTable>;
 
@@ -144,11 +145,6 @@ auditRouter.get("/", asyncHandler(async (req, res) => {
     pageSize,
   });
 }));
-
-function csvEscape(value: string | number): string {
-  const s = String(value);
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 
 // Exports every entry matching the current q/from/until filters (no
 // pagination applied) - same "the export always matches exactly what the

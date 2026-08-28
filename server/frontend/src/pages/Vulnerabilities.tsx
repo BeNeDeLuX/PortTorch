@@ -227,86 +227,88 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
       ) : sortedVulns.length === 0 ? (
         <p className="empty">No vulnerabilities match the current search/filter.</p>
       ) : (
-        <table className="sortable">
-          <thead>
-            <tr>
-              {canEdit && (
-                <th className="select-col">
-                  <input
-                    type="checkbox"
-                    title="Select every row currently shown"
-                    checked={sortedVulns.length > 0 && sortedVulns.every((v) => selected.has(rowKey(v)))}
-                    onChange={(e) =>
-                      setSelected(e.target.checked ? new Set(sortedVulns.map(rowKey)) : new Set())
-                    }
-                  />
-                </th>
-              )}
-              <th onClick={() => setSort("host")}>Host{sortIndicator("host")}</th>
-              <th onClick={() => setSort("port")}>Port{sortIndicator("port")}</th>
-              <th onClick={() => setSort("cve_id")}>CVE{sortIndicator("cve_id")}</th>
-              <th onClick={() => setSort("cvss_score")}>Severity{sortIndicator("cvss_score")}</th>
-              <th onClick={() => setSort("epss_score")}>EPSS{sortIndicator("epss_score")}</th>
-              <th onClick={() => setSort("kev")}>KEV{sortIndicator("kev")}</th>
-              <th>Description</th>
-              <th>Triage</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sortedVulns.map((v) => (
-              <tr key={`${v.host_id}-${v.port}-${v.cve_id}`}>
+        <div className="table-scroll">
+          <table className="sortable">
+            <thead>
+              <tr>
                 {canEdit && (
-                  <td className="select-col">
-                    <input type="checkbox" checked={selected.has(rowKey(v))} onChange={() => toggleRow(rowKey(v))} />
-                  </td>
+                  <th className="select-col">
+                    <input
+                      type="checkbox"
+                      title="Select every row currently shown"
+                      checked={sortedVulns.length > 0 && sortedVulns.every((v) => selected.has(rowKey(v)))}
+                      onChange={(e) =>
+                        setSelected(e.target.checked ? new Set(sortedVulns.map(rowKey)) : new Set())
+                      }
+                    />
+                  </th>
                 )}
-                <td>
-                  <Link to={`/hosts/${v.host_id}`}>{v.host_hostname || v.host_ip}</Link>
-                </td>
-                <td>{v.port}</td>
-                <td>
-                  <a
-                    className={`cve-badge cve-${severityOf(v)}`}
-                    href={`https://nvd.nist.gov/vuln/detail/${v.cve_id}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {v.cve_id}
-                  </a>
-                </td>
-                <td>
-                  {severityOf(v)}
-                  {v.cvss_score != null && ` (${v.cvss_score})`}
-                </td>
-                <td title={v.epss_percentile != null ? `${Math.round(v.epss_percentile * 100)}th percentile` : undefined}>
-                  {v.epss_score != null ? `${(v.epss_score * 100).toFixed(1)}%` : "-"}
-                </td>
-                <td>
-                  {v.kev_date_added && (
-                    <span
-                      className="kev-badge"
-                      title={`Added to CISA KEV ${v.kev_date_added}${v.kev_known_ransomware_campaign_use === "Known" ? " - known ransomware campaign use" : ""}`}
-                    >
-                      KEV
-                    </span>
-                  )}
-                </td>
-                <td className="audit-details">{v.description}</td>
-                <td>
-                  <TriageControl
-                    target={{ kind: "cve", hostId: v.host_id, cveId: v.cve_id }}
-                    state={v.triage_state}
-                    note={v.triage_note}
-                    reviewAt={v.triage_review_at}
-                    expired={v.triage_expired}
-                    canEdit={canEdit}
-                    onChanged={load}
-                  />
-                </td>
+                <th onClick={() => setSort("host")}>Host{sortIndicator("host")}</th>
+                <th onClick={() => setSort("port")}>Port{sortIndicator("port")}</th>
+                <th onClick={() => setSort("cve_id")}>CVE{sortIndicator("cve_id")}</th>
+                <th onClick={() => setSort("cvss_score")}>Severity{sortIndicator("cvss_score")}</th>
+                <th onClick={() => setSort("epss_score")}>EPSS{sortIndicator("epss_score")}</th>
+                <th onClick={() => setSort("kev")}>KEV{sortIndicator("kev")}</th>
+                <th>Description</th>
+                <th>Triage</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {sortedVulns.map((v) => (
+                <tr key={`${v.host_id}-${v.port}-${v.cve_id}`}>
+                  {canEdit && (
+                    <td className="select-col">
+                      <input type="checkbox" checked={selected.has(rowKey(v))} onChange={() => toggleRow(rowKey(v))} />
+                    </td>
+                  )}
+                  <td>
+                    <Link to={`/hosts/${v.host_id}`}>{v.host_hostname || v.host_ip}</Link>
+                  </td>
+                  <td>{v.port}</td>
+                  <td>
+                    <a
+                      className={`cve-badge cve-${severityOf(v)}`}
+                      href={`https://nvd.nist.gov/vuln/detail/${v.cve_id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {v.cve_id}
+                    </a>
+                  </td>
+                  <td>
+                    {severityOf(v)}
+                    {v.cvss_score != null && ` (${v.cvss_score})`}
+                  </td>
+                  <td title={v.epss_percentile != null ? `${Math.round(v.epss_percentile * 100)}th percentile` : undefined}>
+                    {v.epss_score != null ? `${(v.epss_score * 100).toFixed(1)}%` : "-"}
+                  </td>
+                  <td>
+                    {v.kev_date_added && (
+                      <span
+                        className="kev-badge"
+                        title={`Added to CISA KEV ${v.kev_date_added}${v.kev_known_ransomware_campaign_use === "Known" ? " - known ransomware campaign use" : ""}`}
+                      >
+                        KEV
+                      </span>
+                    )}
+                  </td>
+                  <td className="audit-details">{v.description}</td>
+                  <td>
+                    <TriageControl
+                      target={{ kind: "cve", hostId: v.host_id, cveId: v.cve_id }}
+                      state={v.triage_state}
+                      note={v.triage_note}
+                      reviewAt={v.triage_review_at}
+                      expired={v.triage_expired}
+                      canEdit={canEdit}
+                      onChanged={load}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

@@ -1,10 +1,11 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router";
-import { AdhocScanResult, api, Me, NSEProfileSelection, NucleiProfileSelection, ScannerAgent } from "../api";
+import { AdhocScanResult, api, Me, NSEProfileSelection, NucleiProfileSelection, ScanPriority, ScannerAgent } from "../api";
 import { IconPlay } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScanProfilePicker from "../components/ScanProfilePicker";
 import NucleiProfilePicker from "../components/NucleiProfilePicker";
+import ScanPriorityPicker from "../components/ScanPriorityPicker";
 import ScanRateSupportNote from "../components/ScanRateSupportNote";
 import { formatDateTime } from "../lib/formatDate";
 
@@ -23,6 +24,13 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
   const [profile, setProfile] = useState<NSEProfileSelection>({ kind: "default" });
   const [nucleiProfile, setNucleiProfile] = useState<NucleiProfileSelection>({ kind: "off" });
   const [masscanRate, setMasscanRate] = useState("");
+  // Pre-selected High rather than the column's own 'normal' default:
+  // someone typing a target into this form is by definition waiting on
+  // the result, and the whole point of the page is "scan this now" - so
+  // it should get ahead of a scheduled sweep that happens to be queued.
+  // The API itself still defaults to 'normal' when the field is omitted,
+  // keeping the External API's own ad-hoc endpoint unchanged.
+  const [priority, setPriority] = useState<ScanPriority>("high");
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +68,7 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
         portSpec: portSpec.trim(),
         profile,
         nucleiProfile,
+        priority,
         ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
       });
       setLastResult(result);
@@ -67,6 +76,7 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
       setPortSpec("");
       setProfile({ kind: "default" });
       setNucleiProfile({ kind: "off" });
+      setPriority("high");
       setMasscanRate("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to queue scan");
@@ -126,6 +136,10 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
             <NucleiProfilePicker value={nucleiProfile} onChange={setNucleiProfile} />
           </label>
           <label>
+            Queue priority
+            <ScanPriorityPicker value={priority} onChange={setPriority} />
+          </label>
+          <label>
             Scan rate (optional)
             <input
               type="number"
@@ -153,7 +167,8 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
         <p className="callout-success">
           Scan queued for {lastResult.scannerAgentName} at {formatDateTime(lastResult.created_at, me.preferences)}.
           Profile: {lastResult.nse_profile_label ?? "Default"}
-          {lastResult.nuclei_profile_label ? `, Nuclei: ${lastResult.nuclei_profile_label}` : ""}.
+          {lastResult.nuclei_profile_label ? `, Nuclei: ${lastResult.nuclei_profile_label}` : ""}, priority:{" "}
+          {lastResult.priority}.
         </p>
       )}
     </div>

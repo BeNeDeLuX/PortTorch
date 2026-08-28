@@ -161,57 +161,59 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
       ) : webhooks.length === 0 ? (
         <p className="empty">No webhooks configured yet.</p>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Channel</th>
-              <th>Target</th>
-              <th>Events</th>
-              <th>Status</th>
-              <th></th>
-              {isAdmin && <th></th>}
-            </tr>
-          </thead>
-          <tbody>
-            {webhooks.map((w) => (
-              <tr key={w.id}>
-                <td>{w.name}</td>
-                <td>{CHANNEL_LABELS[w.channel_type]}</td>
-                <td className="banner">{w.channel_type === "email" ? w.email_to : w.url}</td>
-                <td>{w.events.join(", ")}</td>
-                <td>{w.enabled ? "active" : "paused"}</td>
-                <td>
-                  <button className="btn-icon-label" onClick={() => setHistoryWebhook(w)}>
-                    <IconInfo /> History
-                  </button>
-                </td>
-                {isAdmin && (
-                  <td>
-                    <button className="btn-icon-label" onClick={() => handleToggle(w)}>
-                      {w.enabled ? (
-                        <>
-                          <IconPause /> Pause
-                        </>
-                      ) : (
-                        <>
-                          <IconPlay /> Activate
-                        </>
-                      )}
-                    </button>{" "}
-                    <button className="btn-icon-label" onClick={() => handleTest(w)}>
-                      <IconSend /> Test
-                    </button>{" "}
-                    <button className="btn-icon-label" onClick={() => handleDelete(w)}>
-                      <IconTrash /> Delete
-                    </button>
-                    {testResult[w.id] && <div className="host-meta">{testResult[w.id]}</div>}
-                  </td>
-                )}
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Channel</th>
+                <th>Target</th>
+                <th>Events</th>
+                <th>Status</th>
+                <th></th>
+                {isAdmin && <th></th>}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {webhooks.map((w) => (
+                <tr key={w.id}>
+                  <td>{w.name}</td>
+                  <td>{CHANNEL_LABELS[w.channel_type]}</td>
+                  <td className="banner">{w.channel_type === "email" ? w.email_to : w.url}</td>
+                  <td>{w.events.join(", ")}</td>
+                  <td>{w.enabled ? "active" : "paused"}</td>
+                  <td>
+                    <button className="btn-icon-label" onClick={() => setHistoryWebhook(w)}>
+                      <IconInfo /> History
+                    </button>
+                  </td>
+                  {isAdmin && (
+                    <td>
+                      <button className="btn-icon-label" onClick={() => handleToggle(w)}>
+                        {w.enabled ? (
+                          <>
+                            <IconPause /> Pause
+                          </>
+                        ) : (
+                          <>
+                            <IconPlay /> Activate
+                          </>
+                        )}
+                      </button>{" "}
+                      <button className="btn-icon-label" onClick={() => handleTest(w)}>
+                        <IconSend /> Test
+                      </button>{" "}
+                      <button className="btn-icon-label" onClick={() => handleDelete(w)}>
+                        <IconTrash /> Delete
+                      </button>
+                      {testResult[w.id] && <div className="host-meta">{testResult[w.id]}</div>}
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {historyWebhook && (

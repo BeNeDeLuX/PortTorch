@@ -10,6 +10,7 @@ import {
   Me,
   NSEProfileSelection,
   NucleiProfileSelection,
+  ScanPriority,
   SavedSearch,
   ScannerAgent,
 } from "../api";
@@ -434,13 +435,13 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
     }
   }
 
-  async function handleBulkRescan(profile: NSEProfileSelection, nucleiProfile: NucleiProfileSelection) {
+  async function handleBulkRescan(profile: NSEProfileSelection, nucleiProfile: NucleiProfileSelection, priority: ScanPriority) {
     if (selected.size === 0) return;
     setShowRescanModal(false);
     setBulkBusy(true);
     setBulkStatus(null);
     try {
-      const results = await Promise.allSettled([...selected].map((id) => api.rescan(id, profile, nucleiProfile)));
+      const results = await Promise.allSettled([...selected].map((id) => api.rescan(id, profile, nucleiProfile, priority)));
       const failed = results.filter((r) => r.status === "rejected").length;
       setBulkStatus(
         failed === 0
@@ -988,121 +989,123 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
           ) : hostList.items.length === 0 ? (
             <p className="empty">No hosts found. Maybe no scan results have been submitted yet?</p>
           ) : tablePrefs.view === "table" ? (
-            <table className="host-table">
-              <thead>
-                <tr>
-                  {canEdit && (
-                    <th className="select-col">
-                      <input
-                        type="checkbox"
-                        checked={hostList.items.length > 0 && hostList.items.every((h) => selected.has(h.id))}
-                        onChange={toggleSelectAllOnPage}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </th>
-                  )}
-                  <th onClick={() => setSort("ip")}>IP{sortIndicator("ip")}</th>
-                  {tablePrefs.columns.includes("hostname") && (
-                    <th onClick={() => setSort("hostname")}>Hostname{sortIndicator("hostname")}</th>
-                  )}
-                  {tablePrefs.columns.includes("open_port_count") && (
-                    <th onClick={() => setSort("open_port_count")}>Open Ports{sortIndicator("open_port_count")}</th>
-                  )}
-                  {tablePrefs.columns.includes("last_seen_at") && (
-                    <th onClick={() => setSort("last_seen_at")}>Last Seen{sortIndicator("last_seen_at")}</th>
-                  )}
-                  {tablePrefs.columns.includes("screenshot") && (
-                    <th onClick={() => setSort("screenshot")}>Screenshot{sortIndicator("screenshot")}</th>
-                  )}
-                  {tablePrefs.columns.includes("device") && (
-                    <th onClick={() => setSort("device")}>OS/Device{sortIndicator("device")}</th>
-                  )}
-                  {tablePrefs.columns.includes("mac") && (
-                    <th onClick={() => setSort("mac")}>MAC{sortIndicator("mac")}</th>
-                  )}
-                  {tablePrefs.columns.includes("scanner") && (
-                    <th onClick={() => setSort("scanner")}>Scanner{sortIndicator("scanner")}</th>
-                  )}
-                  {tablePrefs.columns.includes("risk") && (
-                    <th onClick={() => setSort("risk")}>Risk{sortIndicator("risk")}</th>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {sortHosts(hostList.items, tablePrefs.sortKey, tablePrefs.sortDirection).map((h) => (
-                  <tr key={h.id} onClick={() => navigate(`/hosts/${h.id}`, { state: navState })}>
+            <div className="table-scroll">
+              <table className="host-table">
+                <thead>
+                  <tr>
                     {canEdit && (
-                      <td className="select-col" onClick={(e) => e.stopPropagation()}>
-                        <input type="checkbox" checked={selected.has(h.id)} onChange={() => toggleSelected(h.id)} />
-                      </td>
+                      <th className="select-col">
+                        <input
+                          type="checkbox"
+                          checked={hostList.items.length > 0 && hostList.items.every((h) => selected.has(h.id))}
+                          onChange={toggleSelectAllOnPage}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </th>
                     )}
-                    <td>{h.ip}</td>
-                    {tablePrefs.columns.includes("hostname") && <td>{h.hostname ?? "-"}</td>}
+                    <th onClick={() => setSort("ip")}>IP{sortIndicator("ip")}</th>
+                    {tablePrefs.columns.includes("hostname") && (
+                      <th onClick={() => setSort("hostname")}>Hostname{sortIndicator("hostname")}</th>
+                    )}
                     {tablePrefs.columns.includes("open_port_count") && (
-                      <td>
-                        {h.open_port_count}
-                        <StalePortBadge count={h.stale_port_count} />
-                      </td>
+                      <th onClick={() => setSort("open_port_count")}>Open Ports{sortIndicator("open_port_count")}</th>
                     )}
                     {tablePrefs.columns.includes("last_seen_at") && (
-                      <td>{formatDateTime(h.last_seen_at, me.preferences)}</td>
+                      <th onClick={() => setSort("last_seen_at")}>Last Seen{sortIndicator("last_seen_at")}</th>
                     )}
-                    {tablePrefs.columns.includes("screenshot") && <td>{h.thumbnail_kind ?? "-"}</td>}
+                    {tablePrefs.columns.includes("screenshot") && (
+                      <th onClick={() => setSort("screenshot")}>Screenshot{sortIndicator("screenshot")}</th>
+                    )}
                     {tablePrefs.columns.includes("device") && (
-                      <td onClick={(e) => e.stopPropagation()}>
-                        {h.device_type || h.os_family ? (
-                          <>
-                            {h.device_type && (
-                              <button
-                                type="button"
-                                className="link-button"
-                                title={`Filter by device type: ${h.device_type}`}
-                                onClick={() => toggleDeviceTypeFacet(h.device_type!)}
-                              >
-                                {h.device_type}
-                              </button>
-                            )}
-                            {h.device_type && h.os_family && " · "}
-                            {h.os_family && (
-                              <button
-                                type="button"
-                                className="link-button"
-                                title={`Filter by OS family: ${h.os_family}`}
-                                onClick={() => toggleOsFamilyFacet(h.os_family!)}
-                              >
-                                {h.os_family}
-                              </button>
-                            )}
-                          </>
-                        ) : (
-                          "-"
-                        )}
-                      </td>
+                      <th onClick={() => setSort("device")}>OS/Device{sortIndicator("device")}</th>
                     )}
                     {tablePrefs.columns.includes("mac") && (
-                      <td title={h.mac_vendor ?? undefined}>{h.mac_address ?? "-"}</td>
+                      <th onClick={() => setSort("mac")}>MAC{sortIndicator("mac")}</th>
                     )}
                     {tablePrefs.columns.includes("scanner") && (
-                      <td onClick={(e) => e.stopPropagation()}>
-                        {h.scanner_agent_name && h.scanner_agent_id ? (
-                          <button
-                            type="button"
-                            className="link-button"
-                            title={`Filter by scanner: ${h.scanner_agent_name}`}
-                            onClick={() => toggleScannerAgentFilter(h.scanner_agent_id!)}
-                          >
-                            {h.scanner_agent_name}
-                          </button>
-                        ) : (
-                          "-"
-                        )}
-                      </td>
+                      <th onClick={() => setSort("scanner")}>Scanner{sortIndicator("scanner")}</th>
                     )}
-                    {tablePrefs.columns.includes("risk") && <td><RiskBadge host={h} /></td>}
+                    {tablePrefs.columns.includes("risk") && (
+                      <th onClick={() => setSort("risk")}>Risk{sortIndicator("risk")}</th>
+                    )}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {sortHosts(hostList.items, tablePrefs.sortKey, tablePrefs.sortDirection).map((h) => (
+                    <tr key={h.id} onClick={() => navigate(`/hosts/${h.id}`, { state: navState })}>
+                      {canEdit && (
+                        <td className="select-col" onClick={(e) => e.stopPropagation()}>
+                          <input type="checkbox" checked={selected.has(h.id)} onChange={() => toggleSelected(h.id)} />
+                        </td>
+                      )}
+                      <td>{h.ip}</td>
+                      {tablePrefs.columns.includes("hostname") && <td>{h.hostname ?? "-"}</td>}
+                      {tablePrefs.columns.includes("open_port_count") && (
+                        <td>
+                          {h.open_port_count}
+                          <StalePortBadge count={h.stale_port_count} />
+                        </td>
+                      )}
+                      {tablePrefs.columns.includes("last_seen_at") && (
+                        <td>{formatDateTime(h.last_seen_at, me.preferences)}</td>
+                      )}
+                      {tablePrefs.columns.includes("screenshot") && <td>{h.thumbnail_kind ?? "-"}</td>}
+                      {tablePrefs.columns.includes("device") && (
+                        <td onClick={(e) => e.stopPropagation()}>
+                          {h.device_type || h.os_family ? (
+                            <>
+                              {h.device_type && (
+                                <button
+                                  type="button"
+                                  className="link-button"
+                                  title={`Filter by device type: ${h.device_type}`}
+                                  onClick={() => toggleDeviceTypeFacet(h.device_type!)}
+                                >
+                                  {h.device_type}
+                                </button>
+                              )}
+                              {h.device_type && h.os_family && " · "}
+                              {h.os_family && (
+                                <button
+                                  type="button"
+                                  className="link-button"
+                                  title={`Filter by OS family: ${h.os_family}`}
+                                  onClick={() => toggleOsFamilyFacet(h.os_family!)}
+                                >
+                                  {h.os_family}
+                                </button>
+                              )}
+                            </>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+                      )}
+                      {tablePrefs.columns.includes("mac") && (
+                        <td title={h.mac_vendor ?? undefined}>{h.mac_address ?? "-"}</td>
+                      )}
+                      {tablePrefs.columns.includes("scanner") && (
+                        <td onClick={(e) => e.stopPropagation()}>
+                          {h.scanner_agent_name && h.scanner_agent_id ? (
+                            <button
+                              type="button"
+                              className="link-button"
+                              title={`Filter by scanner: ${h.scanner_agent_name}`}
+                              onClick={() => toggleScannerAgentFilter(h.scanner_agent_id!)}
+                            >
+                              {h.scanner_agent_name}
+                            </button>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+                      )}
+                      {tablePrefs.columns.includes("risk") && <td><RiskBadge host={h} /></td>}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           ) : (
             <div className="host-grid">
               {hostList.items.map((h) => (

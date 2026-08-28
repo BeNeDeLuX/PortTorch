@@ -215,39 +215,41 @@ export default function NucleiProfiles({ me, onLogout }: { me: Me; onLogout: () 
       ) : profiles.length === 0 ? (
         <p className="empty">No custom nuclei profiles created yet.</p>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Tags</th>
-              <th>Severities</th>
-              <th>Excluded tags</th>
-              <th>Created by</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {profiles.map((p) => (
-              <tr key={p.id}>
-                <td>{p.name}</td>
-                <td className="banner">{p.tags.join(", ") || "-"}</td>
-                <td className="banner">{p.severities.join(", ") || "-"}</td>
-                <td className="banner">{p.excluded_tags.join(", ") || "-"}</td>
-                <td>{p.created_by ?? "-"}</td>
-                <td>
-                  <div className="actions-cell">
-                    <button className="btn-icon-label" onClick={() => startEdit(p)}>
-                      <IconEdit /> Edit
-                    </button>
-                    <button className="btn-icon-label" onClick={() => handleDelete(p)}>
-                      <IconTrash /> Delete
-                    </button>
-                  </div>
-                </td>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Tags</th>
+                <th>Severities</th>
+                <th>Excluded tags</th>
+                <th>Created by</th>
+                <th>Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {profiles.map((p) => (
+                <tr key={p.id}>
+                  <td>{p.name}</td>
+                  <td className="banner">{p.tags.join(", ") || "-"}</td>
+                  <td className="banner">{p.severities.join(", ") || "-"}</td>
+                  <td className="banner">{p.excluded_tags.join(", ") || "-"}</td>
+                  <td>{p.created_by ?? "-"}</td>
+                  <td>
+                    <div className="actions-cell">
+                      <button className="btn-icon-label" onClick={() => startEdit(p)}>
+                        <IconEdit /> Edit
+                      </button>
+                      <button className="btn-icon-label" onClick={() => handleDelete(p)}>
+                        <IconTrash /> Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

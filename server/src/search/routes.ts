@@ -13,11 +13,13 @@ import { parseDateOnly, toDateOnlyString } from "../lib/dateOnly";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { requestRescan } from "../rescan";
+import { DEFAULT_SCAN_PRIORITY, scanPrioritySchema } from "../scanPriority";
 import { NOT_A_LIVE_RISK_STATES, cveNotTriaged } from "../findingTriage/sqlFilters";
 import { NSEProfileSelection } from "../scanProfiles/resolve";
 import { NucleiProfileSelection } from "../nucleiProfiles/resolve";
 import { singleParam } from "../lib/reqParams";
 import { deleteScreenshotFiles, screenshotPathsForHosts } from "../screenshots/files";
+import { csvEscape } from "../lib/csv";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -366,11 +368,6 @@ export function applyHostFilters(
   }
 
   return query;
-}
-
-function csvEscape(value: string | number): string {
-  const s = String(value);
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 const DEFAULT_PAGE_SIZE = 50;
@@ -1171,6 +1168,7 @@ const nucleiProfileSelectionSchema = z.discriminatedUnion("kind", [
 const rescanBodySchema = z.object({
   profile: nseProfileSelectionSchema.optional(),
   nucleiProfile: nucleiProfileSelectionSchema.optional(),
+  priority: scanPrioritySchema.optional(),
 });
 
 hostsRouter.post("/:id/rescan", requireOperator, asyncHandler(async (req, res) => {
@@ -1181,7 +1179,8 @@ hostsRouter.post("/:id/rescan", requireOperator, asyncHandler(async (req, res) =
   }
   const profile: NSEProfileSelection = parsedBody.data.profile ?? { kind: "default" };
   const nucleiProfile: NucleiProfileSelection = parsedBody.data.nucleiProfile ?? { kind: "off" };
-  const outcome = await requestRescan(singleParam(req.params.id), req.session.username ?? null, profile, nucleiProfile);
+  const priority = parsedBody.data.priority ?? DEFAULT_SCAN_PRIORITY;
+  const outcome = await requestRescan(singleParam(req.params.id), req.session.username ?? null, profile, nucleiProfile, priority);
   if (!outcome.ok) {
     res.status(outcome.status).json({ error: outcome.error });
     return;

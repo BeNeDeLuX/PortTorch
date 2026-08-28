@@ -140,45 +140,47 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
       ) : tokens.length === 0 ? (
         <p className="empty">No API tokens created yet.</p>
       ) : (
-        <table className="sortable">
-          <thead>
-            <tr>
-              <th onClick={() => setSort("name")}>Name{sortIndicator("name")}</th>
-              <th onClick={() => setSort("last_used_at")}>Last used{sortIndicator("last_used_at")}</th>
-              <th onClick={() => setSort("created_at")}>Created{sortIndicator("created_at")}</th>
-              <th>Expires</th>
-              <th onClick={() => setSort("status")}>Status{sortIndicator("status")}</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {[...tokens].sort((a, b) => compareTokens(a, b, sortKey, sortDirection)).map((t) => (
-              <tr key={t.id}>
-                <td>{t.name}</td>
-                <td>{t.last_used_at ? formatDateTime(t.last_used_at, me.preferences) : "never"}</td>
-                <td>{formatDateTime(t.created_at, me.preferences)}</td>
-                <td>
-                  {t.expires_at ? (
-                    <>
-                      {formatDateTime(t.expires_at, me.preferences)}
-                      {tokenIsExpired(t) && !t.revoked_at && <span className="expiry-label expiry-expired"> expired</span>}
-                    </>
-                  ) : (
-                    "never"
-                  )}
-                </td>
-                <td>{t.revoked_at ? `revoked ${formatDateTime(t.revoked_at, me.preferences)}` : "active"}</td>
-                <td>
-                  {!t.revoked_at && (
-                    <button className="btn-icon-label" onClick={() => handleRevoke(t)}>
-                      <IconBan /> Revoke
-                    </button>
-                  )}
-                </td>
+        <div className="table-scroll">
+          <table className="sortable">
+            <thead>
+              <tr>
+                <th onClick={() => setSort("name")}>Name{sortIndicator("name")}</th>
+                <th onClick={() => setSort("last_used_at")}>Last used{sortIndicator("last_used_at")}</th>
+                <th onClick={() => setSort("created_at")}>Created{sortIndicator("created_at")}</th>
+                <th>Expires</th>
+                <th onClick={() => setSort("status")}>Status{sortIndicator("status")}</th>
+                <th></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {[...tokens].sort((a, b) => compareTokens(a, b, sortKey, sortDirection)).map((t) => (
+                <tr key={t.id}>
+                  <td>{t.name}</td>
+                  <td>{t.last_used_at ? formatDateTime(t.last_used_at, me.preferences) : "never"}</td>
+                  <td>{formatDateTime(t.created_at, me.preferences)}</td>
+                  <td>
+                    {t.expires_at ? (
+                      <>
+                        {formatDateTime(t.expires_at, me.preferences)}
+                        {tokenIsExpired(t) && !t.revoked_at && <span className="expiry-label expiry-expired"> expired</span>}
+                      </>
+                    ) : (
+                      "never"
+                    )}
+                  </td>
+                  <td>{t.revoked_at ? `revoked ${formatDateTime(t.revoked_at, me.preferences)}` : "active"}</td>
+                  <td>
+                    {!t.revoked_at && (
+                      <button className="btn-icon-label" onClick={() => handleRevoke(t)}>
+                        <IconBan /> Revoke
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

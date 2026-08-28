@@ -566,6 +566,11 @@ export interface ScanJobProgress {
   updatedAt: string | null;
 }
 
+// Where a scan request lands in its scanner's claim order. See the
+// server's src/scanPriority.ts - lower-priority work never starves,
+// created_at still breaks ties within a level.
+export type ScanPriority = "high" | "normal" | "low";
+
 export interface QueuedScanRequest {
   id: string;
   scanner_agent_id: string | null;
@@ -576,6 +581,7 @@ export interface QueuedScanRequest {
   created_at: string;
   host_ip: string | null;
   host_hostname: string | null;
+  priority: ScanPriority;
 }
 
 export interface ScannerAgentWithKey extends ScannerAgent {
@@ -694,6 +700,7 @@ export interface Schedule {
   nuclei_profile_label: string | null;
   // null = the target scanner uses its own configured masscanRate.
   masscan_rate: number | null;
+  priority: ScanPriority;
 }
 
 export interface AdhocScanResult {
@@ -701,6 +708,7 @@ export interface AdhocScanResult {
   created_at: string;
   nse_profile_label: string | null;
   nuclei_profile_label: string | null;
+  priority: ScanPriority;
   scannerAgentName: string;
 }
 
@@ -822,8 +830,13 @@ export const api = {
   rescan: (
     id: string,
     profile: NSEProfileSelection = { kind: "default" },
-    nucleiProfile: NucleiProfileSelection = { kind: "off" }
-  ) => request<ScanRequest>(`/api/hosts/${id}/rescan`, { method: "POST", body: JSON.stringify({ profile, nucleiProfile }) }),
+    nucleiProfile: NucleiProfileSelection = { kind: "off" },
+    priority: ScanPriority = "normal"
+  ) =>
+    request<ScanRequest>(`/api/hosts/${id}/rescan`, {
+      method: "POST",
+      body: JSON.stringify({ profile, nucleiProfile, priority }),
+    }),
   dismissRescan: (id: string) => request<void>(`/api/hosts/${id}/rescan/dismiss`, { method: "POST" }),
   addHostTag: (id: string, tag: string) =>
     request<{ tag: string }>(`/api/hosts/${id}/tags`, { method: "POST", body: JSON.stringify({ tag }) }),
@@ -915,7 +928,12 @@ export const api = {
       | { scheduleType: "interval"; scannerAgentId: string; targetSpec: string; portSpec: string; intervalMinutes: number }
       | { scheduleType: "cron"; scannerAgentId: string; targetSpec: string; portSpec: string; cronExpression: string }
       | { scheduleType: "once"; scannerAgentId: string; targetSpec: string; portSpec: string; runAt: string }
-    ) & { profile?: NSEProfileSelection; nucleiProfile?: NucleiProfileSelection; masscanRate?: number }
+    ) & {
+      profile?: NSEProfileSelection;
+      nucleiProfile?: NucleiProfileSelection;
+      masscanRate?: number;
+      priority?: ScanPriority;
+    }
   ) => request<{ id: string }>("/api/schedules", { method: "POST", body: JSON.stringify(input) }),
   setScheduleEnabled: (id: string, enabled: boolean) =>
     request<void>(`/api/schedules/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
@@ -931,6 +949,7 @@ export const api = {
       profile?: NSEProfileSelection;
       nucleiProfile?: NucleiProfileSelection;
       masscanRate?: number;
+      priority?: ScanPriority;
     }
   ) => request<void>(`/api/schedules/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteSchedule: (id: string) => request<void>(`/api/schedules/${id}`, { method: "DELETE" }),
@@ -943,6 +962,7 @@ export const api = {
     nucleiProfile?: NucleiProfileSelection;
     // Omitted = the target scanner keeps using its own configured rate.
     masscanRate?: number;
+    priority?: ScanPriority;
   }) => request<AdhocScanResult>("/api/adhoc-scans", { method: "POST", body: JSON.stringify(input) }),
 
   scanProfiles: () => request<ScanProfile[]>("/api/scan-profiles"),

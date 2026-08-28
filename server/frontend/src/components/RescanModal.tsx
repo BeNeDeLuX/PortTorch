@@ -1,12 +1,14 @@
 import { useState } from "react";
-import { NSEProfileSelection, NucleiProfileSelection } from "../api";
+import { NSEProfileSelection, NucleiProfileSelection, ScanPriority } from "../api";
 import { IconRefresh, IconX } from "./icons";
 import Modal from "./Modal";
 import ScanProfilePicker from "./ScanProfilePicker";
 import NucleiProfilePicker from "./NucleiProfilePicker";
+import ScanPriorityPicker from "./ScanPriorityPicker";
 
 const LAST_PROFILE_KEY = "porttorch.rescan.lastProfile";
 const LAST_NUCLEI_PROFILE_KEY = "porttorch.rescan.lastNucleiProfile";
+const LAST_PRIORITY_KEY = "porttorch.rescan.lastPriority";
 
 function loadLastProfile(): NSEProfileSelection {
   try {
@@ -36,6 +38,11 @@ function loadLastNucleiProfile(): NucleiProfileSelection {
   return { kind: "off" };
 }
 
+function loadLastPriority(): ScanPriority {
+  const raw = localStorage.getItem(LAST_PRIORITY_KEY);
+  return raw === "high" || raw === "low" ? raw : "normal";
+}
+
 // Confirmation popup opened by every "Rescan" trigger (Dashboard single +
 // bulk, Host Detail single) instead of firing immediately - a rescan's
 // scope/intrusiveness can now vary a lot by profile, so this always shows
@@ -49,16 +56,18 @@ export default function RescanModal({
   onClose,
 }: {
   hostCount: number;
-  onConfirm: (profile: NSEProfileSelection, nucleiProfile: NucleiProfileSelection) => void;
+  onConfirm: (profile: NSEProfileSelection, nucleiProfile: NucleiProfileSelection, priority: ScanPriority) => void;
   onClose: () => void;
 }) {
   const [profile, setProfile] = useState<NSEProfileSelection>(loadLastProfile);
   const [nucleiProfile, setNucleiProfile] = useState<NucleiProfileSelection>(loadLastNucleiProfile);
+  const [priority, setPriority] = useState<ScanPriority>(loadLastPriority);
 
   function handleConfirm() {
     localStorage.setItem(LAST_PROFILE_KEY, JSON.stringify(profile));
     localStorage.setItem(LAST_NUCLEI_PROFILE_KEY, JSON.stringify(nucleiProfile));
-    onConfirm(profile, nucleiProfile);
+    localStorage.setItem(LAST_PRIORITY_KEY, priority);
+    onConfirm(profile, nucleiProfile, priority);
   }
 
   return (
@@ -73,6 +82,10 @@ export default function RescanModal({
       <label>
         Nuclei profile
         <NucleiProfilePicker value={nucleiProfile} onChange={setNucleiProfile} />
+      </label>
+      <label>
+        Queue priority
+        <ScanPriorityPicker value={priority} onChange={setPriority} />
       </label>
       <div className="inline-form" style={{ marginTop: "1rem" }}>
         <button type="button" className="btn-icon-label" onClick={handleConfirm}>

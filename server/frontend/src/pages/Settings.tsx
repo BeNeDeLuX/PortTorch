@@ -391,43 +391,45 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
         <p>Loading...</p>
       ) : info ? (
         <div className="callout">
-          <table>
-            <tbody>
-              <tr>
-                <th>Subject</th>
-                <td>
-                  {info.subjectCN ?? "-"}
-                  {info.selfSigned && <span className="chip-inline">self-signed</span>}
-                </td>
-              </tr>
-              <tr>
-                <th>Issuer</th>
-                <td>{info.issuerCN ?? "-"}</td>
-              </tr>
-              <tr>
-                <th>Valid from</th>
-                <td>{formatDateTime(info.validFrom, me.preferences)}</td>
-              </tr>
-              <tr>
-                <th>Valid to</th>
-                <td>
-                  {formatDateTime(info.validTo, me.preferences)}{" "}
-                  <span className={`expiry-label expiry-${certExpiryStatus(info.validTo)}`}>
-                    {certExpiryLabel(info.validTo)}
-                    {(() => {
-                      const days = certExpiryDaysLeft(info.validTo);
-                      if (days === null) return null;
-                      return days >= 0 ? ` (${days}d left)` : ` (${-days}d ago)`;
-                    })()}
-                  </span>
-                </td>
-              </tr>
-              <tr>
-                <th>Fingerprint (SHA-256)</th>
-                <td className="banner">{info.fingerprint256}</td>
-              </tr>
-            </tbody>
-          </table>
+          <div className="table-scroll">
+            <table>
+              <tbody>
+                <tr>
+                  <th>Subject</th>
+                  <td>
+                    {info.subjectCN ?? "-"}
+                    {info.selfSigned && <span className="chip-inline">self-signed</span>}
+                  </td>
+                </tr>
+                <tr>
+                  <th>Issuer</th>
+                  <td>{info.issuerCN ?? "-"}</td>
+                </tr>
+                <tr>
+                  <th>Valid from</th>
+                  <td>{formatDateTime(info.validFrom, me.preferences)}</td>
+                </tr>
+                <tr>
+                  <th>Valid to</th>
+                  <td>
+                    {formatDateTime(info.validTo, me.preferences)}{" "}
+                    <span className={`expiry-label expiry-${certExpiryStatus(info.validTo)}`}>
+                      {certExpiryLabel(info.validTo)}
+                      {(() => {
+                        const days = certExpiryDaysLeft(info.validTo);
+                        if (days === null) return null;
+                        return days >= 0 ? ` (${days}d left)` : ` (${-days}d ago)`;
+                      })()}
+                    </span>
+                  </td>
+                </tr>
+                <tr>
+                  <th>Fingerprint (SHA-256)</th>
+                  <td className="banner">{info.fingerprint256}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : (
         <p className="error">Could not load the current certificate.</p>
@@ -608,38 +610,40 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
         <IconRefresh /> {storage ? "Refresh" : "Show storage usage"}
       </button>
       {storage && (
-        <table className="sortable storage-table">
-          <thead>
-            <tr>
-              <th>Table</th>
-              <th>Rows</th>
-              <th>Size</th>
-            </tr>
-          </thead>
-          <tbody>
-            {storage.tables.map((t) => (
-              <tr key={t.table}>
-                <td>{t.table}</td>
-                <td>{t.rows.toLocaleString()}</td>
-                <td>{formatBytes(t.bytes)}</td>
+        <div className="table-scroll">
+          <table className="sortable storage-table">
+            <thead>
+              <tr>
+                <th>Table</th>
+                <th>Rows</th>
+                <th>Size</th>
               </tr>
-            ))}
-            <tr>
-              <td>screenshot files on disk</td>
-              <td>{storage.screenshots.files.toLocaleString()}</td>
-              <td>{formatBytes(storage.screenshots.bytes)}</td>
-            </tr>
-            <tr>
-              <td>
-                <strong>database total</strong>
-              </td>
-              <td>-</td>
-              <td>
-                <strong>{formatBytes(storage.databaseBytes)}</strong>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {storage.tables.map((t) => (
+                <tr key={t.table}>
+                  <td>{t.table}</td>
+                  <td>{t.rows.toLocaleString()}</td>
+                  <td>{formatBytes(t.bytes)}</td>
+                </tr>
+              ))}
+              <tr>
+                <td>screenshot files on disk</td>
+                <td>{storage.screenshots.files.toLocaleString()}</td>
+                <td>{formatBytes(storage.screenshots.bytes)}</td>
+              </tr>
+              <tr>
+                <td>
+                  <strong>database total</strong>
+                </td>
+                <td>-</td>
+                <td>
+                  <strong>{formatBytes(storage.databaseBytes)}</strong>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       )}
 
       <h3>Alerting</h3>

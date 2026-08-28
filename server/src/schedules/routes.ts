@@ -9,6 +9,7 @@ import { recordAudit } from "../audit/log";
 import { isValidCronExpression, nextCronRun } from "../lib/cron";
 import { ScanProfileNotFoundError, resolveNSEProfile } from "../scanProfiles/resolve";
 import { NucleiProfileNotFoundError, resolveNucleiProfile } from "../nucleiProfiles/resolve";
+import { DEFAULT_SCAN_PRIORITY, scanPrioritySchema } from "../scanPriority";
 
 export const schedulesRouter = Router();
 schedulesRouter.use(requireAuth);
@@ -39,6 +40,7 @@ schedulesRouter.get("/", asyncHandler(async (req, res) => {
       "scan_schedules.nuclei_tags as nuclei_tags",
       "scan_schedules.nuclei_profile_label as nuclei_profile_label",
       "scan_schedules.masscan_rate as masscan_rate",
+      "scan_schedules.priority as priority",
       "scanner_agents.name as scanner_agent_name",
     ]);
 
@@ -73,6 +75,8 @@ const baseScheduleFields = {
   // Optional per-scan masscan packet-rate override; omitted/null means
   // the target scanner keeps using its own configured masscanRate.
   masscanRate: z.number().int().min(1).max(10_000_000).optional(),
+  // Copied onto every request this schedule spawns - see src/scanPriority.ts.
+  priority: scanPrioritySchema.optional(),
 };
 
 const createScheduleSchema = z.discriminatedUnion("scheduleType", [
@@ -156,6 +160,7 @@ schedulesRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
       nuclei_tags: resolvedNucleiProfile.nucleiTags,
       nuclei_profile_label: resolvedNucleiProfile.nucleiProfileLabel,
       masscan_rate: parsed.data.masscanRate ?? null,
+      priority: parsed.data.priority ?? DEFAULT_SCAN_PRIORITY,
       created_by: req.session.username ?? null,
     })
     .returning(["id"])
@@ -208,6 +213,8 @@ const updateScheduleSchema = z.object({
   // Optional per-scan masscan packet-rate override; omitted/null means
   // the target scanner keeps using its own configured masscanRate.
   masscanRate: z.number().int().min(1).max(10_000_000).optional(),
+  // Copied onto every request this schedule spawns - see src/scanPriority.ts.
+  priority: scanPrioritySchema.optional(),
 });
 
 schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
@@ -381,6 +388,7 @@ schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
           }
         : {}),
       ...(parsed.data.masscanRate !== undefined ? { masscan_rate: parsed.data.masscanRate } : {}),
+      ...(parsed.data.priority !== undefined ? { priority: parsed.data.priority } : {}),
     })
     .where("id", "=", req.params.id)
     .executeTakeFirst();

@@ -1,6 +1,7 @@
 import { db } from "./db";
 import { NSEProfileSelection, ScanProfileNotFoundError, resolveNSEProfile } from "./scanProfiles/resolve";
 import { NucleiProfileSelection, NucleiProfileNotFoundError, resolveNucleiProfile } from "./nucleiProfiles/resolve";
+import { DEFAULT_SCAN_PRIORITY, ScanPriority } from "./scanPriority";
 
 export type RescanOutcome =
   | {
@@ -11,6 +12,7 @@ export type RescanOutcome =
         created_at: Date | string;
         nse_profile_label: string | null;
         nuclei_profile_label: string | null;
+        priority: string;
       };
     }
   | { ok: false; status: number; error: string };
@@ -24,12 +26,14 @@ export type RescanOutcome =
 // Both profile params default to their "off"/unchanged state so the
 // External API's rescan endpoint (which never sends either - neither
 // picker was ever asked for there) keeps behaving exactly as before
-// either feature existed.
+// either feature existed. priority defaults the same way, to the same
+// 'normal' the column itself defaults to.
 export async function requestRescan(
   hostId: string,
   requestedBy: string | null,
   profile: NSEProfileSelection = { kind: "default" },
-  nucleiProfile: NucleiProfileSelection = { kind: "off" }
+  nucleiProfile: NucleiProfileSelection = { kind: "off" },
+  priority: ScanPriority = DEFAULT_SCAN_PRIORITY
 ): Promise<RescanOutcome> {
   const host = await db.selectFrom("hosts").select(["id", "ip"]).where("id", "=", hostId).executeTakeFirst();
   if (!host) {
@@ -102,8 +106,9 @@ export async function requestRescan(
       nuclei_profile: resolvedNucleiProfile.nucleiProfile,
       nuclei_tags: resolvedNucleiProfile.nucleiTags,
       nuclei_profile_label: resolvedNucleiProfile.nucleiProfileLabel,
+      priority,
     })
-    .returning(["id", "status", "created_at", "nse_profile_label", "nuclei_profile_label"])
+    .returning(["id", "status", "created_at", "nse_profile_label", "nuclei_profile_label", "priority"])
     .executeTakeFirstOrThrow();
 
   return { ok: true, request };

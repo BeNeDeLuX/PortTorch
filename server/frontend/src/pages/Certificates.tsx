@@ -136,39 +136,41 @@ export default function Certificates({ me, onLogout }: { me: Me; onLogout: () =>
       ) : sortedCerts.length === 0 ? (
         <p className="empty">No certificates match the current search/filter.</p>
       ) : (
-        <table className="sortable">
-          <thead>
-            <tr>
-              <th onClick={() => setSort("host")}>Host{sortIndicator("host")}</th>
-              <th onClick={() => setSort("port")}>Port{sortIndicator("port")}</th>
-              <th onClick={() => setSort("subject_cn")}>CN{sortIndicator("subject_cn")}</th>
-              <th onClick={() => setSort("issuer_cn")}>Issuer{sortIndicator("issuer_cn")}</th>
-              <th onClick={() => setSort("not_after")}>Valid until{sortIndicator("not_after")}</th>
-              <th onClick={() => setSort("status")}>Status{sortIndicator("status")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sortedCerts.map((c) => (
-              <tr key={c.id}>
-                <td>
-                  <Link to={`/hosts/${c.host_id}`}>{c.host_hostname || c.host_ip}</Link>
-                </td>
-                <td>{c.port}</td>
-                <td>
-                  {c.subject_cn || "-"}
-                  {c.self_signed && <span className="chip-inline">self-signed</span>}
-                </td>
-                <td>{c.issuer_cn || "-"}</td>
-                <td>{c.not_after ? formatDateOnly(c.not_after, me.preferences) : "-"}</td>
-                <td>
-                  <span className={`expiry-label expiry-${certExpiryStatus(c.not_after)}`}>
-                    {certExpiryLabel(c.not_after)}
-                  </span>
-                </td>
+        <div className="table-scroll">
+          <table className="sortable">
+            <thead>
+              <tr>
+                <th onClick={() => setSort("host")}>Host{sortIndicator("host")}</th>
+                <th onClick={() => setSort("port")}>Port{sortIndicator("port")}</th>
+                <th onClick={() => setSort("subject_cn")}>CN{sortIndicator("subject_cn")}</th>
+                <th onClick={() => setSort("issuer_cn")}>Issuer{sortIndicator("issuer_cn")}</th>
+                <th onClick={() => setSort("not_after")}>Valid until{sortIndicator("not_after")}</th>
+                <th onClick={() => setSort("status")}>Status{sortIndicator("status")}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {sortedCerts.map((c) => (
+                <tr key={c.id}>
+                  <td>
+                    <Link to={`/hosts/${c.host_id}`}>{c.host_hostname || c.host_ip}</Link>
+                  </td>
+                  <td>{c.port}</td>
+                  <td>
+                    {c.subject_cn || "-"}
+                    {c.self_signed && <span className="chip-inline">self-signed</span>}
+                  </td>
+                  <td>{c.issuer_cn || "-"}</td>
+                  <td>{c.not_after ? formatDateOnly(c.not_after, me.preferences) : "-"}</td>
+                  <td>
+                    <span className={`expiry-label expiry-${certExpiryStatus(c.not_after)}`}>
+                      {certExpiryLabel(c.not_after)}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

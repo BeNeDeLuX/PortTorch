@@ -75,7 +75,6 @@ export default function App() {
 
   return (
     <>
-      {me && <div className="version-badge">v{me.version}</div>}
       <Routes>
       <Route
         path="/login"
@@ -166,6 +165,12 @@ export default function App() {
         element={routeElement(true, (m) => <Settings me={m} onLogout={() => setMe(null)} />)}
       />
       </Routes>
+      {/* After <Routes>, not before: on wide screens this is
+          position:fixed and out of flow entirely, so DOM order is
+          irrelevant - but narrow screens unpin it (styles.css) to stop it
+          covering the content, and then it has to be the last thing on
+          the page rather than the first. */}
+      {me && <div className="version-badge">v{me.version}</div>}
     </>
   );
 }
