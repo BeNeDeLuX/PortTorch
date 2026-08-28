@@ -168,6 +168,13 @@ export interface HostFilters {
   ports?: number[];
   services?: string[];
   tags?: string[];
+  // Negated counterparts - "exclude hosts that have this". Sent to the
+  // server inside the same query parameter with a "-" prefix
+  // (?port=443,-53), not as parameters of their own, so a filter reads
+  // the same way in a URL, a saved search and the chips below.
+  excludePorts?: number[];
+  excludeServices?: string[];
+  excludeTags?: string[];
   osFamily?: string;
   deviceType?: string;
   hideEmpty?: boolean;
@@ -767,9 +774,15 @@ export interface ScanHistoryResult {
 function hostsQueryString(filters: HostFilters, page?: number, pageSize?: number): string {
   const params = new URLSearchParams();
   if (filters.q) params.set("q", filters.q);
-  if (filters.ports?.length) params.set("port", filters.ports.join(","));
-  if (filters.services?.length) params.set("service", filters.services.join(","));
-  if (filters.tags?.length) params.set("tag", filters.tags.join(","));
+  // Included and excluded values share one parameter, minus-prefixed.
+  const withNegated = (include: (string | number)[] = [], exclude: (string | number)[] = []) =>
+    [...include.map(String), ...exclude.map((v) => `-${v}`)].join(",");
+  const portParam = withNegated(filters.ports, filters.excludePorts);
+  const serviceParam = withNegated(filters.services, filters.excludeServices);
+  const tagParam = withNegated(filters.tags, filters.excludeTags);
+  if (portParam) params.set("port", portParam);
+  if (serviceParam) params.set("service", serviceParam);
+  if (tagParam) params.set("tag", tagParam);
   if (filters.osFamily) params.set("osFamily", filters.osFamily);
   if (filters.deviceType) params.set("deviceType", filters.deviceType);
   if (filters.hideEmpty) params.set("hideEmpty", "true");

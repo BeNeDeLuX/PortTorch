@@ -111,6 +111,18 @@ The scanner reports its own version on every ingest request (`X-Scanner-Version`
 
 The Scanner Agents page groups agents into three sections — **Scanning** (has a row in `/api/scan-jobs/active`), **Idle** (neither scanning nor revoked), **Revoked** — computed client-side from the same `GET /api/agents`/`/api/scan-jobs/active` data the page already fetched, rather than a new endpoint. A scanning agent's Revoke button is hidden (not just disabled) - revoking mid-scan would leave it authenticated but permanently unable to report that job's outcome, so the scan has to be stopped first via the existing Stop button; idle agents keep Revoke unchanged.
 
+### Filters can be negated with a leading minus
+
+`?port=53` narrows to hosts with 53 open; `?port=-53` excludes them, and `?port=80,-53` does both at once. Same for `service` and `tag`. One parameter carries both directions rather than a second `excludePort=` parameter, so a filter reads identically in the address bar, in a saved search and in the External API - and an API caller doesn't have to discover that a second parameter name exists. `splitNegated` (`search/routes.ts`) does the split; nothing else here can legitimately begin with `-` (ports are unsigned, services are nmap service names, tags are validated on creation), and a bare `-` is dropped rather than becoming an empty exclusion.
+
+**The `state = 'open'` condition matters more on the negated side than the positive one, and in the less obvious direction.** A negated filter is the same `EXISTS` subquery with `NOT` in front - but without the state condition, `-53` would exclude any host that had *ever* had port 53 observed in any state, including hosts where it is recorded as **closed**. That's the exact opposite of what someone excluding an open DNS port is asking for, and it's the case the integration test pins down.
+
+Everything downstream inherits this for free, because `parseHostFilterParams`/`applyHostFilters` are already shared: the CSV export, saved searches (`savedSearches/checker.ts`) and the External API's `GET /api/v1/hosts` all gained negation without their own changes.
+
+**In the UI a facet click cycles through three states** - off → include → exclude → off - rather than growing a separate negate control. The second click on an already-active facet is the natural place for "actually, hide these", and the alternative (a modifier key) is invisible to anyone who doesn't already know it's there; a `title` on each facet spells the cycle out. The excluded state is struck through *and* recoloured rather than only recoloured, since include and exclude mean opposite things and a red/green pair alone would be indistinguishable to a red-green colourblind reader in a list this dense.
+
+The one trap worth naming: a chip's × must **clear** the value, not call the same toggle. Reusing `togglePortFacet` there would advance an included filter to *excluded* instead of removing it, leaving a chip that can't be dismissed - so `clearPortFacet`/`clearServiceFacet`/`clearTagFacet` exist separately, and the browser test drives the chip's × specifically to hold that down.
+
 ### Alerts for things that stop existing
 
 Every webhook event up to this point was additive - `host.new`, `port.opened`, `nuclei.finding` - so the platform was loud about what appeared and silent about what vanished. Three events close that (migration `1744000000000_presence_alerts.js`):

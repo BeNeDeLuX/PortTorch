@@ -43,18 +43,49 @@ function parseCommaList(value: string | null): string[] {
   return value.split(",").map((v) => v.trim()).filter(Boolean);
 }
 
+// A leading "-" means "exclude", in the URL exactly as the server reads
+// it (?port=443,-53) - one parameter carrying both directions, so a
+// filter looks the same in the address bar, in a saved search and in the
+// External API. A bare "-" is dropped rather than becoming an empty
+// exclusion, matching the server's own splitNegated.
+function splitNegated(values: string[]): { include: string[]; exclude: string[] } {
+  const include: string[] = [];
+  const exclude: string[] = [];
+  for (const value of values) {
+    if (value.startsWith("-")) {
+      const rest = value.slice(1).trim();
+      if (rest) exclude.push(rest);
+    } else {
+      include.push(value);
+    }
+  }
+  return { include, exclude };
+}
+
+// An empty list has to become undefined, not [], or the filter would stay
+// in the URL as an empty parameter and read as "still filtered".
+function orUndefined<T>(values: T[]): T[] | undefined {
+  return values.length ? values : undefined;
+}
+
 function filtersFromSearchParams(searchParams: URLSearchParams): HostFilters {
-  const ports = parseCommaList(searchParams.get("port"))
-    .map((p) => Number(p))
-    .filter((p) => !Number.isNaN(p));
-  const services = parseCommaList(searchParams.get("service"));
-  const tags = parseCommaList(searchParams.get("tag"));
+  const toPorts = (values: string[]) => values.map((p) => Number(p)).filter((p) => !Number.isNaN(p));
+  const port = splitNegated(parseCommaList(searchParams.get("port")));
+  const service = splitNegated(parseCommaList(searchParams.get("service")));
+  const tag = splitNegated(parseCommaList(searchParams.get("tag")));
+  const ports = toPorts(port.include);
+  const excludePorts = toPorts(port.exclude);
+  const services = service.include;
+  const tags = tag.include;
   const scannerAgentIds = parseCommaList(searchParams.get("scannerAgentId"));
   return {
     q: searchParams.get("q") ?? undefined,
     ports: ports.length ? ports : undefined,
     services: services.length ? services : undefined,
     tags: tags.length ? tags : undefined,
+    excludePorts: excludePorts.length ? excludePorts : undefined,
+    excludeServices: service.exclude.length ? service.exclude : undefined,
+    excludeTags: tag.exclude.length ? tag.exclude : undefined,
     osFamily: searchParams.get("osFamily") ?? undefined,
     deviceType: searchParams.get("deviceType") ?? undefined,
     hideEmpty: searchParams.get("hideEmpty") === "true" || undefined,
@@ -486,9 +517,14 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
     const merged = { ...filters, ...patch };
     const next = new URLSearchParams();
     if (merged.q) next.set("q", merged.q);
-    if (merged.ports?.length) next.set("port", merged.ports.join(","));
-    if (merged.services?.length) next.set("service", merged.services.join(","));
-    if (merged.tags?.length) next.set("tag", merged.tags.join(","));
+    const withNegated = (include: (string | number)[] = [], exclude: (string | number)[] = []) =>
+      [...include.map(String), ...exclude.map((v) => `-${v}`)].join(",");
+    const portParam = withNegated(merged.ports, merged.excludePorts);
+    const serviceParam = withNegated(merged.services, merged.excludeServices);
+    const tagParam = withNegated(merged.tags, merged.excludeTags);
+    if (portParam) next.set("port", portParam);
+    if (serviceParam) next.set("service", serviceParam);
+    if (tagParam) next.set("tag", tagParam);
     if (merged.osFamily) next.set("osFamily", merged.osFamily);
     if (merged.deviceType) next.set("deviceType", merged.deviceType);
     if (merged.hideEmpty) next.set("hideEmpty", "true");
@@ -511,10 +547,67 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
     updateFilters({ q: queryInput.trim() || undefined });
   }
 
+  // Clicking a facet cycles through three states rather than two:
+  // off -> include -> exclude -> off. There's no separate "negate" control
+  // to discover, and the second click on an already-active facet is the
+  // natural place for "actually, hide these" - the alternative (a modifier
+  // key) is invisible to anyone who doesn't already know it's there.
+  function cycleFacet<T>(
+    include: T[] | undefined,
+    exclude: T[] | undefined,
+    value: T
+  ): { include: T[] | undefined; exclude: T[] | undefined } {
+    const inc = include ?? [];
+    const exc = exclude ?? [];
+    if (inc.includes(value)) {
+      return { include: orUndefined(inc.filter((v) => v !== value)), exclude: orUndefined([...exc, value]) };
+    }
+    if (exc.includes(value)) {
+      return { include: orUndefined(inc), exclude: orUndefined(exc.filter((v) => v !== value)) };
+    }
+    return { include: orUndefined([...inc, value]), exclude: orUndefined(exc) };
+  }
+
+  // Three visual states to match the three click states. The title is
+  // what makes the cycle discoverable at all - without it, a second click
+  // turning a filter into its opposite would just look like a bug.
+  function facetClass(included: boolean, excluded: boolean): string {
+    return `facet-item ${included ? "active" : ""} ${excluded ? "excluded" : ""}`.trim();
+  }
+
+  function facetTitle(included: boolean, excluded: boolean): string {
+    if (included) return "Showing only hosts with this - click to exclude them instead";
+    if (excluded) return "Hiding hosts with this - click to clear";
+    return "Click to show only hosts with this";
+  }
+
   function togglePortFacet(port: number) {
-    const current = filters.ports ?? [];
-    const next = current.includes(port) ? current.filter((p) => p !== port) : [...current, port];
-    updateFilters({ ports: next.length ? next : undefined });
+    const next = cycleFacet(filters.ports, filters.excludePorts, port);
+    updateFilters({ ports: next.include, excludePorts: next.exclude });
+  }
+
+  // Removing a chip clears that value outright - deliberately not the
+  // toggle above, which would advance an included filter to *excluded*
+  // and leave the chip apparently un-removable.
+  function clearPortFacet(port: number) {
+    updateFilters({
+      ports: orUndefined((filters.ports ?? []).filter((p) => p !== port)),
+      excludePorts: orUndefined((filters.excludePorts ?? []).filter((p) => p !== port)),
+    });
+  }
+
+  function clearServiceFacet(service: string) {
+    updateFilters({
+      services: orUndefined((filters.services ?? []).filter((v) => v !== service)),
+      excludeServices: orUndefined((filters.excludeServices ?? []).filter((v) => v !== service)),
+    });
+  }
+
+  function clearTagFacet(tag: string) {
+    updateFilters({
+      tags: orUndefined((filters.tags ?? []).filter((v) => v !== tag)),
+      excludeTags: orUndefined((filters.excludeTags ?? []).filter((v) => v !== tag)),
+    });
   }
 
   async function handleShowAllPorts() {
@@ -525,15 +618,13 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
   }
 
   function toggleServiceFacet(service: string) {
-    const current = filters.services ?? [];
-    const next = current.includes(service) ? current.filter((s) => s !== service) : [...current, service];
-    updateFilters({ services: next.length ? next : undefined });
+    const next = cycleFacet(filters.services, filters.excludeServices, service);
+    updateFilters({ services: next.include, excludeServices: next.exclude });
   }
 
   function toggleTagFacet(tag: string) {
-    const current = filters.tags ?? [];
-    const next = current.includes(tag) ? current.filter((t) => t !== tag) : [...current, tag];
-    updateFilters({ tags: next.length ? next : undefined });
+    const next = cycleFacet(filters.tags, filters.excludeTags, tag);
+    updateFilters({ tags: next.include, excludeTags: next.exclude });
   }
 
 
@@ -572,21 +663,45 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
     activeChips.push({
       key: `port-${port}`,
       label: `Port: ${port}`,
-      onRemove: () => togglePortFacet(port),
+      onRemove: () => clearPortFacet(port),
     });
   }
   for (const service of filters.services ?? []) {
     activeChips.push({
       key: `service-${service}`,
       label: `Service: ${service}`,
-      onRemove: () => toggleServiceFacet(service),
+      onRemove: () => clearServiceFacet(service),
     });
   }
   for (const tag of filters.tags ?? []) {
     activeChips.push({
       key: `tag-${tag}`,
       label: `Tag: ${tag}`,
-      onRemove: () => toggleTagFacet(tag),
+      onRemove: () => clearTagFacet(tag),
+    });
+  }
+  // Exclusions get their own chips, labelled so the direction is
+  // unmistakable - an unlabelled "Port: 53" chip that meant the opposite
+  // of the one above it would be worse than no chip at all.
+  for (const port of filters.excludePorts ?? []) {
+    activeChips.push({
+      key: `exclude-port-${port}`,
+      label: `Not port: ${port}`,
+      onRemove: () => clearPortFacet(port),
+    });
+  }
+  for (const service of filters.excludeServices ?? []) {
+    activeChips.push({
+      key: `exclude-service-${service}`,
+      label: `Not service: ${service}`,
+      onRemove: () => clearServiceFacet(service),
+    });
+  }
+  for (const tag of filters.excludeTags ?? []) {
+    activeChips.push({
+      key: `exclude-tag-${tag}`,
+      label: `Not tag: ${tag}`,
+      onRemove: () => clearTagFacet(tag),
     });
   }
   if (filters.osFamily) {
@@ -854,7 +969,8 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                 {(showAllPorts && allPorts ? allPorts : facets.ports).map((p) => (
                   <li key={p.port}>
                     <button
-                      className={`facet-item ${filters.ports?.includes(p.port) ? "active" : ""}`}
+                      className={facetClass(filters.ports?.includes(p.port) ?? false, filters.excludePorts?.includes(p.port) ?? false)}
+                      title={facetTitle(filters.ports?.includes(p.port) ?? false, filters.excludePorts?.includes(p.port) ?? false)}
                       onClick={() => togglePortFacet(p.port)}
                     >
                       <span>{p.port}</span>
@@ -880,7 +996,8 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
               {facets.services.map((s) => (
                 <li key={s.service}>
                   <button
-                    className={`facet-item ${filters.services?.includes(s.service) ? "active" : ""}`}
+                    className={facetClass(filters.services?.includes(s.service) ?? false, filters.excludeServices?.includes(s.service) ?? false)}
+                    title={facetTitle(filters.services?.includes(s.service) ?? false, filters.excludeServices?.includes(s.service) ?? false)}
                     onClick={() => toggleServiceFacet(s.service)}
                   >
                     <span>{s.service}</span>
@@ -899,7 +1016,8 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
               {facets.tags.map((t) => (
                 <li key={t.tag}>
                   <button
-                    className={`facet-item ${filters.tags?.includes(t.tag) ? "active" : ""}`}
+                    className={facetClass(filters.tags?.includes(t.tag) ?? false, filters.excludeTags?.includes(t.tag) ?? false)}
+                    title={facetTitle(filters.tags?.includes(t.tag) ?? false, filters.excludeTags?.includes(t.tag) ?? false)}
                     onClick={() => toggleTagFacet(t.tag)}
                   >
                     <span>{t.tag}</span>

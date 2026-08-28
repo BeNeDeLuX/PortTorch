@@ -1072,6 +1072,22 @@ button.export-link {
   color: #04150b;
 }
 
+/* Excluded is the third click state (off -> include -> exclude). Struck
+   through rather than merely a different colour: the two states mean
+   opposite things, so they need to differ in more than hue - a
+   red-green pair alone would be invisible to a red-green colourblind
+   reader, and this list is dense. */
+.facet-item.excluded {
+  background: transparent;
+  color: var(--danger);
+  text-decoration: line-through;
+  border-color: var(--danger);
+}
+
+.facet-item.excluded .facet-count {
+  text-decoration: none;
+}
+
 .facet-count {
   color: var(--muted);
   font-size: 0.8rem;

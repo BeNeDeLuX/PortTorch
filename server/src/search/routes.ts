@@ -77,6 +77,10 @@ export interface HostFilterParams {
   ports: number[];
   services: string[];
   tags: string[];
+  // Negated counterparts, from the same query parameter - see splitNegated.
+  excludePorts: number[];
+  excludeServices: string[];
+  excludeTags: string[];
   osFamily: string;
   deviceType: string;
   hideEmpty: boolean;
@@ -104,16 +108,47 @@ function parseCommaList(value: unknown): string[] {
   return value.split(",").map((v) => v.trim()).filter(Boolean);
 }
 
+// A leading "-" negates an entry: ?port=443,-53 means "has 443 open and
+// does NOT have 53 open". One parameter carrying both directions rather
+// than a second excludePort=... parameter, so a filter reads the same way
+// in a URL, in a saved search, and in the dashboard's own chips - and so
+// an API caller doesn't have to know a second parameter name exists.
+//
+// Nothing else in this codebase can legitimately start with "-": ports
+// are unsigned, and service names/tags are nmap service names and
+// user-entered tags (tags are validated on creation). A value that is
+// *only* "-" is dropped rather than treated as an empty exclusion.
+function splitNegated(values: string[]): { include: string[]; exclude: string[] } {
+  const include: string[] = [];
+  const exclude: string[] = [];
+  for (const value of values) {
+    if (value.startsWith("-")) {
+      const rest = value.slice(1).trim();
+      if (rest) exclude.push(rest);
+    } else {
+      include.push(value);
+    }
+  }
+  return { include, exclude };
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function parseHostFilterParams(query: Record<string, unknown>): HostFilterParams {
+  const port = splitNegated(parseCommaList(query.port));
+  const service = splitNegated(parseCommaList(query.service));
+  const tag = splitNegated(parseCommaList(query.tag));
+  const toPorts = (values: string[]) =>
+    values.map((p) => parseInt(p, 10)).filter((p) => !Number.isNaN(p));
+
   return {
     q: typeof query.q === "string" ? query.q.trim() : "",
-    ports: parseCommaList(query.port)
-      .map((p) => parseInt(p, 10))
-      .filter((p) => !Number.isNaN(p)),
-    services: parseCommaList(query.service),
-    tags: parseCommaList(query.tag),
+    ports: toPorts(port.include),
+    services: service.include,
+    tags: tag.include,
+    excludePorts: toPorts(port.exclude),
+    excludeServices: service.exclude,
+    excludeTags: tag.exclude,
     osFamily: typeof query.osFamily === "string" ? query.osFamily.trim() : "",
     deviceType: typeof query.deviceType === "string" ? query.deviceType.trim() : "",
     hideEmpty: query.hideEmpty === "true" || query.hideEmpty === "1",
@@ -142,6 +177,9 @@ export function applyHostFilters(
     ports,
     services,
     tags,
+    excludePorts,
+    excludeServices,
+    excludeTags,
     osFamily,
     deviceType,
     hideEmpty,
@@ -274,6 +312,57 @@ export function applyHostFilters(
     query = query.where((eb: any) =>
       eb.exists(
         eb.selectFrom("host_tags as ht").select("ht.id").whereRef("ht.host_id", "=", "hosts.id").where("ht.tag", "=", tag)
+      )
+    );
+  }
+
+  // Negated filters (?port=-53) are the same EXISTS checks with NOT in
+  // front, AND'd in like every other condition here - so "-53" reads as
+  // "and does not have 53 open", and combining it with an included port
+  // ("443,-53") narrows on both at once.
+  //
+  // The state = 'open' condition matters as much on this side as on the
+  // include side, and in the less obvious direction: a host whose port 53
+  // is recorded as closed must NOT be excluded by "-53". Without that
+  // condition, any host that had ever had 53 observed in any state would
+  // vanish from the list - which is the opposite of what someone
+  // excluding an open DNS port is asking for.
+  for (const port of excludePorts) {
+    query = query.where((eb: any) =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom("current_host_ports as chp")
+            .select("chp.id")
+            .whereRef("chp.host_id", "=", "hosts.id")
+            .where("chp.port", "=", port)
+            .where("chp.state", "=", "open")
+        )
+      )
+    );
+  }
+
+  for (const service of excludeServices) {
+    query = query.where((eb: any) =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom("current_host_ports as chp")
+            .select("chp.id")
+            .whereRef("chp.host_id", "=", "hosts.id")
+            .where("chp.service_name", "=", service)
+            .where("chp.state", "=", "open")
+        )
+      )
+    );
+  }
+
+  for (const tag of excludeTags) {
+    query = query.where((eb: any) =>
+      eb.not(
+        eb.exists(
+          eb.selectFrom("host_tags as ht").select("ht.id").whereRef("ht.host_id", "=", "hosts.id").where("ht.tag", "=", tag)
+        )
       )
     );
   }

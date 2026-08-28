@@ -61,11 +61,13 @@ Each item below is a one-line summary - click **Details** to expand it.
   Free text across IP, hostname, service name/product, banners, known CVE ids (matched against the CVE correlation cache - see below), and text OCR'd from HTTP(S)/RDP screenshots (e.g. a login page's wording that never appears in any banner or header); also accepts a single IPv4 or IPv6 address, or a CIDR range of either (e.g. `10.0.0.0/24` or `2001:db8::/32`), to match all hosts in that subnet.
   </details>
 
-- :toolbox: **Facets & filters** - port, service, host tag, OS family, device type, scanner agent, and last-seen date range, all combinable.
+- :toolbox: **Facets & filters** - port, service, host tag, OS family, device type, scanner agent, and last-seen date range, all combinable - and negatable.
   <details>
   <summary>Details</summary>
 
   Filter by port, service, or host tag (multi-select, AND semantics: picking port 21 and 3389 means hosts with both open, not either), OS family, device type, or scanner agent (also multi-select, via a compact dropdown - useful once you're running more than one scanner, e.g. to look at a couple of network segments in isolation), and a last-seen date range; toggle "hide hosts without open ports" and "only hosts with a screenshot"; paginated (50/page) so large networks stay usable. Every filter combines with the free-text search box and with each other.
+  
+  Clicking a port, service or tag facet cycles through three states: first click shows only hosts that have it, second click hides them instead (struck through, with a "Not port: 53" chip), third click clears it. Exclusions combine with everything else, so "has 443 open but not 53" is two clicks. The same reads in the URL and in the External API as a leading minus (`?port=443,-53`), so a saved search or a scripted query expresses it identically.
   </details>
 
 - :card_index_dividers: **Grid or table view** - sortable/show-hide-able table columns, remembered per browser, with bulk-select actions.
@@ -962,6 +964,8 @@ aren't documented there.
 # (q, port, service, tag, osFamily, deviceType, scannerAgentId,
 # hasStalePorts, lastSeenAfter/Before) - use this to enumerate when you
 # don't already know an address. Paginated; pageSize caps at 200.
+# port/service/tag values can be negated with a leading "-":
+# ?port=80,-53 means "has 80 open and does not have 53 open".
 curl -H "Authorization: Bearer <token>" \
   "https://porttorch.internal/api/v1/hosts?port=443&pageSize=50"
 
