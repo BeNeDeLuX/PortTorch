@@ -10,6 +10,7 @@ import { isValidCronExpression, nextCronRun } from "../lib/cron";
 import { ScanProfileNotFoundError, resolveNSEProfile } from "../scanProfiles/resolve";
 import { NucleiProfileNotFoundError, resolveNucleiProfile } from "../nucleiProfiles/resolve";
 import { DEFAULT_SCAN_PRIORITY, scanPrioritySchema } from "../scanPriority";
+import { isWithinScanWindow } from "../lib/scanWindow";
 
 export const schedulesRouter = Router();
 schedulesRouter.use(requireAuth);
@@ -41,6 +42,10 @@ schedulesRouter.get("/", asyncHandler(async (req, res) => {
       "scan_schedules.nuclei_profile_label as nuclei_profile_label",
       "scan_schedules.masscan_rate as masscan_rate",
       "scan_schedules.priority as priority",
+      "scan_schedules.window_start_minute as window_start_minute",
+      "scan_schedules.window_end_minute as window_end_minute",
+      "scan_schedules.window_days as window_days",
+      "scan_schedules.window_timezone as window_timezone",
       "scanner_agents.name as scanner_agent_name",
     ]);
 
@@ -49,7 +54,27 @@ schedulesRouter.get("/", asyncHandler(async (req, res) => {
   }
 
   const schedules = await query.orderBy("scan_schedules.created_at", "desc").execute();
-  res.json(schedules);
+
+  // window_blocked is computed here rather than left to the client: it's
+  // the answer to "why hasn't this run yet", and the client's own clock
+  // and timezone aren't authoritative for a window stored in the
+  // schedule's own zone. Deliberately not persisted - it's a statement
+  // about right now, true or false purely as a function of the clock.
+  const now = new Date();
+  res.json(
+    schedules.map((s) => ({
+      ...s,
+      window_blocked:
+        s.enabled &&
+        new Date(s.next_run_at) <= now &&
+        !isWithinScanWindow(now, {
+          startMinute: s.window_start_minute,
+          endMinute: s.window_end_minute,
+          days: s.window_days,
+          timezone: s.window_timezone,
+        }),
+    }))
+  );
 }));
 
 const nseProfileSelectionSchema = z.discriminatedUnion("kind", [
@@ -77,6 +102,13 @@ const baseScheduleFields = {
   masscanRate: z.number().int().min(1).max(10_000_000).optional(),
   // Copied onto every request this schedule spawns - see src/scanPriority.ts.
   priority: scanPrioritySchema.optional(),
+  // Allowed run window. Null (or omitted) is unrestricted; the two
+  // minute fields must be given together, which the database also
+  // enforces (scan_schedules_window_pair_check). See src/lib/scanWindow.ts.
+  windowStartMinute: z.number().int().min(0).max(1439).nullable().optional(),
+  windowEndMinute: z.number().int().min(0).max(1439).nullable().optional(),
+  windowDays: z.array(z.number().int().min(0).max(6)).nullable().optional(),
+  windowTimezone: z.string().min(1).nullable().optional(),
 };
 
 const createScheduleSchema = z.discriminatedUnion("scheduleType", [
@@ -161,6 +193,10 @@ schedulesRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
       nuclei_profile_label: resolvedNucleiProfile.nucleiProfileLabel,
       masscan_rate: parsed.data.masscanRate ?? null,
       priority: parsed.data.priority ?? DEFAULT_SCAN_PRIORITY,
+      window_start_minute: parsed.data.windowStartMinute ?? null,
+      window_end_minute: parsed.data.windowEndMinute ?? null,
+      window_days: parsed.data.windowDays ?? null,
+      window_timezone: parsed.data.windowTimezone ?? null,
       created_by: req.session.username ?? null,
     })
     .returning(["id"])
@@ -215,6 +251,13 @@ const updateScheduleSchema = z.object({
   masscanRate: z.number().int().min(1).max(10_000_000).optional(),
   // Copied onto every request this schedule spawns - see src/scanPriority.ts.
   priority: scanPrioritySchema.optional(),
+  // Allowed run window. Null (or omitted) is unrestricted; the two
+  // minute fields must be given together, which the database also
+  // enforces (scan_schedules_window_pair_check). See src/lib/scanWindow.ts.
+  windowStartMinute: z.number().int().min(0).max(1439).nullable().optional(),
+  windowEndMinute: z.number().int().min(0).max(1439).nullable().optional(),
+  windowDays: z.array(z.number().int().min(0).max(6)).nullable().optional(),
+  windowTimezone: z.string().min(1).nullable().optional(),
 });
 
 schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
@@ -389,6 +432,10 @@ schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
         : {}),
       ...(parsed.data.masscanRate !== undefined ? { masscan_rate: parsed.data.masscanRate } : {}),
       ...(parsed.data.priority !== undefined ? { priority: parsed.data.priority } : {}),
+      ...(parsed.data.windowStartMinute !== undefined ? { window_start_minute: parsed.data.windowStartMinute } : {}),
+      ...(parsed.data.windowEndMinute !== undefined ? { window_end_minute: parsed.data.windowEndMinute } : {}),
+      ...(parsed.data.windowDays !== undefined ? { window_days: parsed.data.windowDays } : {}),
+      ...(parsed.data.windowTimezone !== undefined ? { window_timezone: parsed.data.windowTimezone } : {}),
     })
     .where("id", "=", req.params.id)
     .executeTakeFirst();

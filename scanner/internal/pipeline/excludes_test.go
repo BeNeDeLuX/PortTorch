@@ -95,3 +95,62 @@ func TestIsPortExcludedForHost(t *testing.T) {
 		})
 	}
 }
+
+func TestSubtractPortsPreservesTCPOnlyOutput(t *testing.T) {
+	// A spec with no UDP in it must serialize exactly as it always did -
+	// no T: prefix appearing on every existing deployment's scans.
+	got, err := subtractPorts("22,80,443", []string{"80"})
+	if err != nil {
+		t.Fatalf("subtractPorts: %v", err)
+	}
+	if got != "22,443" {
+		t.Fatalf("got %q, want 22,443", got)
+	}
+}
+
+func TestSubtractPortsKeepsProtocolsApart(t *testing.T) {
+	got, err := subtractPorts("80,443,U:53,U:161", nil)
+	if err != nil {
+		t.Fatalf("subtractPorts: %v", err)
+	}
+	if got != "T:80,443,U:53,161" {
+		t.Fatalf("got %q, want T:80,443,U:53,161", got)
+	}
+}
+
+func TestSubtractPortsExcludeAppliesToBothProtocols(t *testing.T) {
+	// A port exclude is protocol-agnostic on purpose: "never touch 53 on
+	// this network" has to cover UDP/53 as well, since scan_excludes has
+	// no way to express a protocol.
+	got, err := subtractPorts("53,80,U:53,U:161", []string{"53"})
+	if err != nil {
+		t.Fatalf("subtractPorts: %v", err)
+	}
+	if got != "T:80,U:161" {
+		t.Fatalf("got %q, want T:80,U:161 (both TCP/53 and UDP/53 removed)", got)
+	}
+}
+
+func TestSubtractPortsUDPRangeAndEmptyResult(t *testing.T) {
+	got, err := subtractPorts("U:1000-1002", nil)
+	if err != nil {
+		t.Fatalf("subtractPorts: %v", err)
+	}
+	if got != "U:1000-1002" {
+		t.Fatalf("got %q, want U:1000-1002", got)
+	}
+
+	got, err = subtractPorts("U:53", []string{"53"})
+	if err != nil {
+		t.Fatalf("subtractPorts: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("got %q, want empty (nothing left to scan)", got)
+	}
+}
+
+func TestParseProtoPortSetRejectsAnUnknownPrefix(t *testing.T) {
+	if _, err := parseProtoPortSet("S:53"); err == nil {
+		t.Fatal("expected an error for an unknown protocol prefix")
+	}
+}

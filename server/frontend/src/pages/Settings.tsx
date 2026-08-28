@@ -56,6 +56,8 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
   const [staleThresholdError, setStaleThresholdError] = useState<string | null>(null);
 
   const [queueThresholdInput, setQueueThresholdInput] = useState("");
+  const [offlineMinutesInput, setOfflineMinutesInput] = useState("");
+  const [disappearedDaysInput, setDisappearedDaysInput] = useState("");
   const [savingQueueThreshold, setSavingQueueThreshold] = useState(false);
   const [queueThresholdError, setQueueThresholdError] = useState<string | null>(null);
 
@@ -115,6 +117,8 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
         setDigestHourInput(String(s.digestEmailHourUtc));
         setEpssThresholdInput(String(s.epssAlertThreshold));
         setBacklogMinutesInput(String(s.queueBacklogThresholdMinutes));
+        setOfflineMinutesInput(String(s.scannerOfflineThresholdMinutes));
+        setDisappearedDaysInput(String(s.hostDisappearedThresholdDays));
         setSmtpHost(s.smtp.host ?? "");
         setSmtpPort(String(s.smtp.port));
         setSmtpSecure(s.smtp.secure);
@@ -208,6 +212,8 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
     const hour = parseInt(digestHourInput, 10);
     const epss = parseFloat(epssThresholdInput);
     const backlog = parseInt(backlogMinutesInput, 10);
+    const offline = parseInt(offlineMinutesInput, 10);
+    const disappeared = parseInt(disappearedDaysInput, 10);
     if (Number.isNaN(hour) || hour < 0 || hour > 23) {
       setAlertTunablesError("Digest hour must be between 0 and 23 (UTC).");
       return;
@@ -220,6 +226,14 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       setAlertTunablesError("Queue backlog minutes must be 1 or greater.");
       return;
     }
+    if (Number.isNaN(offline) || offline < 1) {
+      setAlertTunablesError("Scanner offline minutes must be 1 or greater.");
+      return;
+    }
+    if (Number.isNaN(disappeared) || disappeared < 1) {
+      setAlertTunablesError("Host disappeared days must be 1 or greater.");
+      return;
+    }
     setAlertTunablesError(null);
     setAlertTunablesSaved(false);
     setSavingAlertTunables(true);
@@ -228,6 +242,8 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
         digestEmailHourUtc: hour,
         epssAlertThreshold: epss,
         queueBacklogThresholdMinutes: backlog,
+        scannerOfflineThresholdMinutes: offline,
+        hostDisappearedThresholdDays: disappeared,
       });
       setAppSettings(updated);
       setAlertTunablesSaved(true);
@@ -649,8 +665,12 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       <h3>Alerting</h3>
       <p className="host-meta">
         When the daily digest email goes out, how likely a CVE has to be to exploit before it raises a
-        vulnerability.high_epss alert, and how long a scan request may sit unclaimed before a scan_queue.backlog alert
-        fires. All three used to be .env variables needing a redeploy; editing those now has no effect.
+        vulnerability.high_epss alert, how long a scan request may sit unclaimed before a scan_queue.backlog alert
+        fires, and the two thresholds for noticing that something stopped existing: how long a scanner may go without
+        reporting in before scanner.offline fires, and how long a host may go unseen before host.disappeared does. The
+        host threshold has to be comfortably longer than the interval of whatever schedule covers that host, or every
+        host alerts between scans. The first three used to be .env variables needing a redeploy; editing those now has
+        no effect.
       </p>
 
       {alertTunablesError && <p className="error">{alertTunablesError}</p>}
@@ -691,6 +711,28 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
               step={1}
               value={backlogMinutesInput}
               onChange={(e) => setBacklogMinutesInput(e.target.value)}
+            />
+          </label>
+          <label>
+            Scanner offline alert after (minutes)
+            <input
+              className="input-number"
+              type="number"
+              min={1}
+              step={1}
+              value={offlineMinutesInput}
+              onChange={(e) => setOfflineMinutesInput(e.target.value)}
+            />
+          </label>
+          <label>
+            Host disappeared alert after (days)
+            <input
+              className="input-number"
+              type="number"
+              min={1}
+              step={1}
+              value={disappearedDaysInput}
+              onChange={(e) => setDisappearedDaysInput(e.target.value)}
             />
           </label>
           <button type="submit" className="btn-icon-label" disabled={savingAlertTunables}>

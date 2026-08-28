@@ -29,6 +29,25 @@ export function IconWarning({ size = 15 }: { size?: number }) {
   );
 }
 
+// Feather's "sliders" - deliberately not the gear: a gear reads as
+// "settings for this page", and this one opens the tuning for one
+// specific scanner.
+export function IconSettings({ size = 15 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <line x1="4" y1="21" x2="4" y2="14" />
+      <line x1="4" y1="10" x2="4" y2="3" />
+      <line x1="12" y1="21" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12" y2="3" />
+      <line x1="20" y1="21" x2="20" y2="16" />
+      <line x1="20" y1="12" x2="20" y2="3" />
+      <line x1="1" y1="14" x2="7" y2="14" />
+      <line x1="9" y1="8" x2="15" y2="8" />
+      <line x1="17" y1="16" x2="23" y2="16" />
+    </svg>
+  );
+}
+
 export function IconRefresh({ size = 15 }: { size?: number }) {
   return (
     <svg {...iconProps(size)}>

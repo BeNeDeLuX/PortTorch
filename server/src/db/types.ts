@@ -56,6 +56,10 @@ export interface ScannerAgentsTable {
   // clears, since a queue backlog is a recurring condition, not a
   // one-time event like a certificate approaching expiry.
   queue_backlog_alert_sent_at: Date | null;
+  // Set when scanner.offline fired for this agent, cleared the moment it
+  // authenticates again - same come-and-go semantics as the backlog flag
+  // above, not the fire-once semantics of scan_jobs.stale_alert_sent_at.
+  offline_alert_sent_at: ColumnType<Date | null, string | undefined, string | null>;
   // Reported by the scanner on every ingest request
   // (X-Scanner-Submit-Queue-Pending header, alongside version above) -
   // the current size of that scanner's local internal/submitqueue retry
@@ -79,6 +83,12 @@ export interface ScannerAgentsTable {
   template_update_status: "pending" | "failed" | null;
   template_update_failure_reason: string | null;
   template_update_attempt_count: ColumnType<number, number | undefined, number>;
+  // Dashboard-managed overrides for a subset of this scanner's
+  // config.yaml (see src/scannerConfig/tunables.ts for which keys and
+  // why the rest are excluded). Null or {} means "use config.yaml as
+  // written". Applied in memory by the scanner, never written to its
+  // config file.
+  config_overrides: ColumnType<Record<string, number> | null, string | null | undefined, string | null>;
 }
 
 // Singleton (id always 1) cache of the latest published scanner-vX.Y.Z
@@ -209,6 +219,8 @@ export interface HostsTable {
   probe_hostname: string | null;
   first_seen_at: ColumnType<Date, string | undefined, never>;
   last_seen_at: ColumnType<Date, string | undefined, string>;
+  // Set when host.disappeared fired, cleared when the host is seen again.
+  disappeared_alert_sent_at: ColumnType<Date | null, string | undefined, string | null>;
 }
 
 export interface HostPortObservationsTable {
@@ -323,6 +335,18 @@ export interface ScanSchedulesTable {
   // Copied onto every scan_requests row this schedule spawns, same
   // snapshot idiom as the profile columns above - see src/scanPriority.ts.
   priority: ColumnType<"high" | "normal" | "low", "high" | "normal" | "low" | undefined, "high" | "normal" | "low">;
+  // Allowed run window - see src/lib/scanWindow.ts and the
+  // schedule_windows migration. All null means unrestricted, which is
+  // what every schedule created before this existed carries. The two
+  // minute columns are null together or set together
+  // (scan_schedules_window_pair_check). window_days uses JS getDay()
+  // numbering (0 = Sunday); null or empty means every day.
+  // window_timezone is an IANA name; null means UTC, matching how cron
+  // expressions are already evaluated.
+  window_start_minute: number | null;
+  window_end_minute: number | null;
+  window_days: number[] | null;
+  window_timezone: string | null;
 }
 
 export interface ScanRequestsTable {
@@ -640,6 +664,10 @@ export interface AppSettingsTable {
   digest_email_hour_utc: ColumnType<number, number | undefined, number>;
   epss_alert_threshold: ColumnType<number, number | undefined, number>;
   queue_backlog_threshold_minutes: ColumnType<number, number | undefined, number>;
+  // Thresholds for the two "something stopped existing" alerts - see the
+  // presence_alerts migration.
+  scanner_offline_threshold_minutes: ColumnType<number, number | undefined, number>;
+  host_disappeared_threshold_days: ColumnType<number, number | undefined, number>;
   // Was config.ts's SMTP_* env vars - moved here for the same reason as
   // the fields above, plus one specific to mail: it's the setting most
   // likely to be wrong on first setup and to need a few quick iterations,

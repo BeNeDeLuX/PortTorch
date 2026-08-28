@@ -7,6 +7,7 @@ import ScanProfilePicker from "../components/ScanProfilePicker";
 import NucleiProfilePicker from "../components/NucleiProfilePicker";
 import ScanPriorityPicker from "../components/ScanPriorityPicker";
 import ScanRateSupportNote from "../components/ScanRateSupportNote";
+import PortSpecHint from "../components/PortSpecHint";
 import { formatDateTime } from "../lib/formatDate";
 
 // A one-shot "scan this right now" page - Schedule Scans minus all the
@@ -127,6 +128,7 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
             Ports
             <input placeholder="1-1000" value={portSpec} onChange={(e) => setPortSpec(e.target.value)} />
           </label>
+          <PortSpecHint />
           <label>
             Scan profile
             <ScanProfilePicker value={profile} onChange={setProfile} />

@@ -61,6 +61,8 @@ export interface AppSettings {
   digestEmailHourUtc: number;
   epssAlertThreshold: number;
   queueBacklogThresholdMinutes: number;
+  scannerOfflineThresholdMinutes: number;
+  hostDisappearedThresholdDays: number;
   smtp: SmtpSettingsView;
 }
 
@@ -516,6 +518,21 @@ export interface ScannerAgent {
   template_update_requested_at: string | null;
   template_update_status: "pending" | "failed" | null;
   template_update_failure_reason: string | null;
+  // Dashboard-managed overrides for part of this scanner's config.yaml.
+  // null means it runs its file exactly as written. Applied by the
+  // scanner in memory on its next poll - never written to its disk.
+  config_overrides: Record<string, number> | null;
+}
+
+// One entry of the server's own allowlist of remotely-settable scanner
+// settings (GET /api/agents/config/tunables). Fetched rather than
+// duplicated here so the form and the validation can't drift on bounds.
+export interface ScannerTunable {
+  key: string;
+  label: string;
+  min: number;
+  max: number;
+  help: string;
 }
 
 export interface ScannerReleaseInfo {
@@ -701,6 +718,18 @@ export interface Schedule {
   // null = the target scanner uses its own configured masscanRate.
   masscan_rate: number | null;
   priority: ScanPriority;
+  // Allowed run window. All null = unrestricted, which is what every
+  // schedule created before windows existed carries. Minutes since local
+  // midnight in window_timezone (null = UTC); window_days uses
+  // getDay() numbering, 0 = Sunday.
+  window_start_minute: number | null;
+  window_end_minute: number | null;
+  window_days: number[] | null;
+  window_timezone: string | null;
+  // Server-computed, not stored: this schedule is due right now but its
+  // window won't let it run yet. The server's answer, not the browser's -
+  // the window lives in its own timezone.
+  window_blocked: boolean;
 }
 
 export interface AdhocScanResult {
@@ -886,6 +915,13 @@ export const api = {
   requestScannerUpdate: (id: string) => request<void>(`/api/agents/${id}/request-update`, { method: "POST" }),
   requestTemplateUpdate: (id: string) =>
     request<void>(`/api/agents/${id}/request-template-update`, { method: "POST" }),
+  scannerTunables: () => request<ScannerTunable[]>("/api/agents/config/tunables"),
+  // An empty object clears every override, restoring config.yaml.
+  setScannerConfig: (id: string, settings: Record<string, number>) =>
+    request<{ config_overrides: Record<string, number> | null }>(`/api/agents/${id}/config`, {
+      method: "PUT",
+      body: JSON.stringify(settings),
+    }),
   activeScanJobs: () => request<ActiveScanJob[]>("/api/scan-jobs/active"),
   scanJobProgress: (id: string) => request<ScanJobProgress>(`/api/scan-jobs/${id}/progress`),
   scanQueue: () => request<QueuedScanRequest[]>("/api/scan-jobs/queue"),
@@ -933,6 +969,10 @@ export const api = {
       nucleiProfile?: NucleiProfileSelection;
       masscanRate?: number;
       priority?: ScanPriority;
+      windowStartMinute?: number | null;
+      windowEndMinute?: number | null;
+      windowDays?: number[] | null;
+      windowTimezone?: string | null;
     }
   ) => request<{ id: string }>("/api/schedules", { method: "POST", body: JSON.stringify(input) }),
   setScheduleEnabled: (id: string, enabled: boolean) =>
@@ -950,6 +990,10 @@ export const api = {
       nucleiProfile?: NucleiProfileSelection;
       masscanRate?: number;
       priority?: ScanPriority;
+      windowStartMinute?: number | null;
+      windowEndMinute?: number | null;
+      windowDays?: number[] | null;
+      windowTimezone?: string | null;
     }
   ) => request<void>(`/api/schedules/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteSchedule: (id: string) => request<void>(`/api/schedules/${id}`, { method: "DELETE" }),

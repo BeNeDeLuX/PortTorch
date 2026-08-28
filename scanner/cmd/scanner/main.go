@@ -232,6 +232,13 @@ func newServeCmd(configPath *string) *cobra.Command {
 			go updater.StartTemplateUpdateWatcher(context.Background(), c, server, pollInterval, cfg.NucleiPath, log)
 			log.Info("nuclei template update watcher started", "event", "serve.template_update_watcher_started", "poll_interval", pollInterval.String())
 
+			// Dashboard-managed tuning (masscan rate, concurrency,
+			// timeouts). Applied in memory only - config.yaml on disk is
+			// never rewritten, so a restart falls back to the file and the
+			// override is simply fetched again.
+			go server.StartConfigWatcher(context.Background(), pollInterval)
+			log.Info("scanner config watcher started", "event", "serve.config_watcher_started", "poll_interval", pollInterval.String())
+
 			retryInterval := time.Duration(cfg.RetryIntervalSeconds) * time.Second
 			go server.StartRetryWatcher(context.Background(), retryInterval)
 			log.Info("submit retry watcher started", "event", "serve.retry_watcher_started", "retry_interval", retryInterval.String())

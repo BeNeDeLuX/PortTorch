@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { ActiveScanJob, api, Me, QueuedScanRequest, ScannerAgent, ScannerReleaseInfo } from "../api";
-import { IconBan, IconCheck, IconInfo, IconPlus, IconRefresh, IconRocket, IconStop, IconTrash, IconX } from "../components/icons";
+import { IconBan, IconCheck, IconInfo, IconPlus, IconRefresh, IconRocket, IconSettings, IconStop, IconTrash, IconX } from "../components/icons";
+import ScannerConfigModal from "../components/ScannerConfigModal";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanProgressModal from "../components/ScanProgressModal";
@@ -127,6 +128,7 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
   const [latestRelease, setLatestRelease] = useState<ScannerReleaseInfo | null>(null);
   const [checkingRelease, setCheckingRelease] = useState(false);
   const [checkReleaseError, setCheckReleaseError] = useState<string | null>(null);
+  const [configuringAgent, setConfiguringAgent] = useState<ScannerAgent | null>(null);
   // Forces a re-render every few seconds so elapsedLabel's "running for
   // Xm Ys" stays live between polls, not just when the job list changes.
   const [, setClockTick] = useState(0);
@@ -420,6 +422,26 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
             <span className="update-failed-badge">update failed</span>
             {a.update_failure_reason && <span className="update-failure-reason">{a.update_failure_reason}</span>}
           </>
+        )}
+
+        {/* Not gated on serve mode, unlike the two update actions: this
+            only stores a value. A scanner that isn't running picks it up
+            whenever it next starts polling, so there's no window in which
+            the click silently does nothing. */}
+        {isAdmin && !a.revoked_at && (
+          <button className="btn-icon-label" onClick={() => setConfiguringAgent(a)}>
+            <IconSettings /> Configure
+          </button>
+        )}
+        {a.config_overrides && Object.keys(a.config_overrides).length > 0 && (
+          <span
+            className="stale-badge"
+            title={Object.entries(a.config_overrides)
+              .map(([k, v]) => `${k}=${v}`)
+              .join(", ")}
+          >
+            {Object.keys(a.config_overrides).length} custom setting(s)
+          </span>
         )}
 
         {/* Unconditional for a serve-mode agent, unlike the binary update
@@ -722,6 +744,13 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
       )}
 
       {detailsJobId && <ScanProgressModal jobId={detailsJobId} onClose={() => setDetailsJobId(null)} />}
+      {configuringAgent && (
+        <ScannerConfigModal
+          agent={configuringAgent}
+          onSaved={load}
+          onClose={() => setConfiguringAgent(null)}
+        />
+      )}
     </div>
   );
 }

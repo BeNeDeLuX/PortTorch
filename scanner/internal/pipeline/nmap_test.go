@@ -574,3 +574,61 @@ func TestHostResultFromNmapHostTier2Scripts(t *testing.T) {
 		}
 	}
 }
+
+// UDP support hinges on two things staying true: a TCP-only scan must
+// produce exactly the argument it always did, and a mixed scan must reach
+// nmap in nmap's own T:/U: grammar with the right scan-type flags.
+func TestNmapPortSpecTCPOnlyIsUnchanged(t *testing.T) {
+	ports := []PortResult{
+		{Port: 22, Protocol: "tcp"},
+		{Port: 443, Protocol: "tcp"},
+	}
+	spec, needsUDP, needsTCP := nmapPortSpec(ports)
+	if spec != "22,443" {
+		t.Fatalf("TCP-only spec = %q, want the same bare list as before UDP existed", spec)
+	}
+	if needsUDP {
+		t.Fatal("needsUDP = true for a TCP-only set")
+	}
+	if !needsTCP {
+		t.Fatal("needsTCP = false for a TCP-only set")
+	}
+}
+
+func TestNmapPortSpecMixedProtocols(t *testing.T) {
+	ports := []PortResult{
+		{Port: 80, Protocol: "tcp"},
+		{Port: 53, Protocol: "udp"},
+		{Port: 161, Protocol: "UDP"}, // case shouldn't matter
+	}
+	spec, needsUDP, needsTCP := nmapPortSpec(ports)
+	if spec != "T:80,U:53,161" {
+		t.Fatalf("mixed spec = %q, want T:80,U:53,161", spec)
+	}
+	if !needsUDP || !needsTCP {
+		t.Fatalf("needsUDP=%v needsTCP=%v, want both true", needsUDP, needsTCP)
+	}
+}
+
+func TestNmapPortSpecUDPOnly(t *testing.T) {
+	spec, needsUDP, needsTCP := nmapPortSpec([]PortResult{{Port: 53, Protocol: "udp"}})
+	if spec != "U:53" {
+		t.Fatalf("UDP-only spec = %q, want U:53", spec)
+	}
+	if !needsUDP {
+		t.Fatal("needsUDP = false for a UDP-only set")
+	}
+	if needsTCP {
+		t.Fatal("needsTCP = true for a UDP-only set")
+	}
+}
+
+func TestNmapPortSpecTreatsEmptyProtocolAsTCP(t *testing.T) {
+	// PortResults built by parts of the pipeline other than masscan don't
+	// always set Protocol; defaulting to UDP there would silently turn a
+	// TCP enrichment into a UDP one.
+	spec, needsUDP, _ := nmapPortSpec([]PortResult{{Port: 8080}})
+	if spec != "8080" || needsUDP {
+		t.Fatalf("spec = %q needsUDP = %v, want 8080/false", spec, needsUDP)
+	}
+}

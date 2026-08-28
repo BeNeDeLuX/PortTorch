@@ -62,7 +62,7 @@ const maxPort = 65535
 // port excluded here never reaches nmap either. Returns "" if nothing is
 // left to scan.
 func subtractPorts(spec string, excludePorts []string) (string, error) {
-	included, err := parsePortSet(spec)
+	included, err := parseProtoPortSet(spec)
 	if err != nil {
 		return "", fmt.Errorf("parsing port spec %q: %w", spec, err)
 	}
@@ -70,10 +70,17 @@ func subtractPorts(spec string, excludePorts []string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parsing excluded ports: %w", err)
 	}
-	for port := range excluded {
-		delete(included, port)
+	// A port exclude is deliberately protocol-agnostic: excluding 53
+	// removes both TCP/53 and UDP/53. Excludes are a safety mechanism -
+	// "never touch this port on this network" - so the broader reading is
+	// the correct one, and an admin who meant only one protocol has no way
+	// to say so today anyway (scan_excludes stores a bare port spec).
+	for pp := range included {
+		if _, drop := excluded[pp.port]; drop {
+			delete(included, pp)
+		}
 	}
-	return serializePortSet(included), nil
+	return serializeProtoPortSet(included), nil
 }
 
 // filterIPPortExcludes removes masscan results matching an IP+port
@@ -153,6 +160,10 @@ func parsePortSet(spec string) (map[int]struct{}, error) {
 		if part == "" {
 			continue
 		}
+		// Tolerate a protocol prefix here as well: this parser is used for
+		// exclude lists, which are protocol-agnostic, but the same helper
+		// is reached with specs that may carry one.
+		part = stripProtoPrefix(part)
 		if before, after, ok := strings.Cut(part, "-"); ok {
 			lo, errLo := strconv.Atoi(strings.TrimSpace(before))
 			hi, errHi := strconv.Atoi(strings.TrimSpace(after))
@@ -171,6 +182,104 @@ func parsePortSet(spec string) (map[int]struct{}, error) {
 		}
 	}
 	return set, nil
+}
+
+// protoPort is one (protocol, port) pair. Scan port specs are
+// protocol-aware - "80,443,U:53,U:161" is a legitimate spec, and masscan
+// and nmap both accept that exact grammar - so subtracting excludes from
+// one and re-serializing it can't collapse the two protocols together.
+type protoPort struct {
+	proto string // "tcp" or "udp"
+	port  int
+}
+
+// stripProtoPrefix removes a leading "T:"/"U:" (masscan/nmap's own
+// grammar) from a single port-spec part, returning the bare remainder.
+func stripProtoPrefix(part string) string {
+	if len(part) > 2 && part[1] == ':' {
+		switch part[0] {
+		case 'T', 't', 'U', 'u':
+			return part[2:]
+		}
+	}
+	return part
+}
+
+// parseProtoPortSet parses a port spec keeping each part's protocol.
+// Bare parts are TCP, matching masscan's and nmap's own default and every
+// spec that existed before UDP scanning did. A "U:"/"T:" prefix applies to
+// that comma-separated part only, exactly as masscan reads it - "U:53,80"
+// is UDP/53 plus TCP/80, not two UDP ports.
+func parseProtoPortSet(spec string) (map[protoPort]struct{}, error) {
+	set := make(map[protoPort]struct{})
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return set, nil
+	}
+	for _, part := range strings.Split(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		proto := "tcp"
+		if len(part) > 2 && part[1] == ':' {
+			switch part[0] {
+			case 'U', 'u':
+				proto = "udp"
+			case 'T', 't':
+				proto = "tcp"
+			default:
+				return nil, fmt.Errorf("invalid port spec part %q", part)
+			}
+			part = part[2:]
+		}
+		if before, after, ok := strings.Cut(part, "-"); ok {
+			lo, errLo := strconv.Atoi(strings.TrimSpace(before))
+			hi, errHi := strconv.Atoi(strings.TrimSpace(after))
+			if errLo != nil || errHi != nil || lo < 1 || hi > maxPort || lo > hi {
+				return nil, fmt.Errorf("invalid port range %q", part)
+			}
+			for p := lo; p <= hi; p++ {
+				set[protoPort{proto, p}] = struct{}{}
+			}
+		} else {
+			p, errP := strconv.Atoi(part)
+			if errP != nil || p < 1 || p > maxPort {
+				return nil, fmt.Errorf("invalid port %q", part)
+			}
+			set[protoPort{proto, p}] = struct{}{}
+		}
+	}
+	return set, nil
+}
+
+// serializeProtoPortSet is serializePortSet's protocol-aware counterpart.
+// A TCP-only set is emitted as a bare list with no "T:" prefix, byte-for-
+// byte what serializePortSet always produced - so every spec that doesn't
+// mention UDP reaches masscan exactly as it did before UDP scanning
+// existed, and no existing scan changes shape.
+func serializeProtoPortSet(set map[protoPort]struct{}) string {
+	if len(set) == 0 {
+		return ""
+	}
+	tcp := make(map[int]struct{})
+	udp := make(map[int]struct{})
+	for pp := range set {
+		if pp.proto == "udp" {
+			udp[pp.port] = struct{}{}
+		} else {
+			tcp[pp.port] = struct{}{}
+		}
+	}
+	if len(udp) == 0 {
+		return serializePortSet(tcp)
+	}
+	var parts []string
+	if len(tcp) > 0 {
+		parts = append(parts, "T:"+serializePortSet(tcp))
+	}
+	parts = append(parts, "U:"+serializePortSet(udp))
+	return strings.Join(parts, ",")
 }
 
 func serializePortSet(set map[int]struct{}) string {

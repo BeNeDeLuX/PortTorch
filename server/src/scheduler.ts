@@ -1,6 +1,7 @@
 import { db } from "./db";
 import { logger } from "./logger";
 import { nextCronRun } from "./lib/cron";
+import { isWithinScanWindow } from "./lib/scanWindow";
 
 const TICK_INTERVAL_MS = 60_000;
 
@@ -16,7 +17,16 @@ export function startScheduler(): void {
   }, TICK_INTERVAL_MS);
 }
 
-async function tick(): Promise<void> {
+// Exported so the integration tests can drive one pass deterministically
+// rather than waiting on the 60-second interval - same shape as
+// runOperationalAlertChecks and runRetentionSweep. `now` is injectable
+// for the same reason: a window test that had to wait for real wall-clock
+// time to enter the window couldn't run at all.
+export async function runSchedulerTick(now: Date = new Date()): Promise<void> {
+  await tick(now);
+}
+
+async function tick(injectedNow?: Date): Promise<void> {
   const due = await db
     .selectFrom("scan_schedules")
     .selectAll()
@@ -24,7 +34,34 @@ async function tick(): Promise<void> {
     .where("next_run_at", "<=", new Date())
     .execute();
 
+  const now = injectedNow ?? new Date();
+
   for (const schedule of due) {
+    // Outside its allowed window this schedule is *deferred*, not
+    // skipped: next_run_at is deliberately left alone, so the run happens
+    // the moment the window opens rather than being silently dropped and
+    // waiting a whole interval/cron cycle for the next chance. A nightly
+    // sweep whose window opens at 22:00 therefore starts at 22:00 even if
+    // its cron said 21:00.
+    //
+    // Nothing is logged per deferral: this loop runs every 60 seconds, so
+    // a schedule waiting eight hours for its window would emit ~480
+    // identical lines into a stream every line of which is meant to be
+    // worth shipping to a SIEM. The dashboard shows the window and marks
+    // the schedule as waiting instead (schedules/routes.ts's
+    // window_blocked), and the run that eventually happens is logged
+    // normally.
+    if (
+      !isWithinScanWindow(now, {
+        startMinute: schedule.window_start_minute,
+        endMinute: schedule.window_end_minute,
+        days: schedule.window_days,
+        timezone: schedule.window_timezone,
+      })
+    ) {
+      continue;
+    }
+
     await db.transaction().execute(async (trx) => {
       await trx
         .insertInto("scan_requests")

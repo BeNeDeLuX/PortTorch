@@ -11,6 +11,7 @@ import { recordAudit } from "../audit/log";
 import { requestScannerUpdate } from "../scannerUpdate/requestUpdate";
 import { requestTemplateUpdate } from "../scannerUpdate/requestTemplateUpdate";
 import { syncScannerRelease } from "../scannerUpdate/githubSync";
+import { SCANNER_TUNABLES, validateOverrides } from "../scannerConfig/tunables";
 
 export const agentsRouter = Router();
 agentsRouter.use(requireAuth);
@@ -83,6 +84,7 @@ agentsRouter.get("/", asyncHandler(async (req, res) => {
       "template_update_requested_at",
       "template_update_status",
       "template_update_failure_reason",
+      "config_overrides",
     ]);
   if (allowed) {
     query = query.where("id", "in", allowed);
@@ -151,6 +153,76 @@ agentsRouter.post("/:id/revoke", requireAdmin, asyncHandler(async (req, res) => 
   recordAudit("agent.revoked", req.session.username, req.ip, { scanner_agent_id: req.params.id, name: result.name });
 
   res.status(204).end();
+}));
+
+// Dashboard-managed overrides for a subset of this scanner's config.yaml
+// (see scannerConfig/tunables.ts for the allowlist and why everything
+// else is excluded). Like every other remote action here the webserver
+// can't push this - it's stored, and the scanner's own config watcher
+// picks it up on its next poll and applies it in memory. The scanner's
+// config.yaml on disk is never touched, so a restart falls back to the
+// file and the override is simply re-fetched.
+//
+// An empty object clears every override, which is the "go back to
+// config.yaml" action - distinct from sending a partial object, which
+// only changes the keys it names.
+agentsRouter.put("/:id/config", requireAdmin, asyncHandler(async (req, res) => {
+  if (!uuidSchema.safeParse(req.params.id).success) {
+    res.status(400).json({ error: "invalid scanner agent id" });
+    return;
+  }
+  if (typeof req.body !== "object" || req.body === null || Array.isArray(req.body)) {
+    res.status(400).json({ error: "body must be an object of setting -> value" });
+    return;
+  }
+
+  const validated = validateOverrides(req.body as Record<string, unknown>);
+  if (!validated.ok) {
+    res.status(400).json({ error: "invalid settings", details: validated.errors });
+    return;
+  }
+
+  const agent = await db
+    .selectFrom("scanner_agents")
+    .select(["id", "name"])
+    .where("id", "=", req.params.id)
+    .where("revoked_at", "is", null)
+    .executeTakeFirst();
+  if (!agent) {
+    res.status(404).json({ error: "scanner agent not found" });
+    return;
+  }
+
+  const isEmpty = Object.keys(validated.value).length === 0;
+  await db
+    .updateTable("scanner_agents")
+    .set({ config_overrides: isEmpty ? null : JSON.stringify(validated.value) })
+    .where("id", "=", req.params.id)
+    .execute();
+
+  logger.info({
+    event: "scanner.config_updated",
+    scanner_agent_id: agent.id,
+    scanner_agent_name: agent.name,
+    settings: validated.value,
+    updated_by: req.session.username,
+    source_ip: req.ip,
+  });
+  recordAudit("scanner.config_updated", req.session.username, req.ip, {
+    scanner_agent_id: agent.id,
+    scanner_agent_name: agent.name,
+    settings: validated.value,
+  });
+
+  res.json({ config_overrides: isEmpty ? null : validated.value });
+}));
+
+// The allowlist itself, so the dashboard's form is generated from the
+// same definition the server validates against and the two can't drift
+// on bounds or labels. Not admin-gated - it's a static description of
+// what exists, with no agent's actual values in it.
+agentsRouter.get("/config/tunables", asyncHandler(async (_req, res) => {
+  res.json(SCANNER_TUNABLES);
 }));
 
 // Flags the agent for its own update watcher (serve mode only, see

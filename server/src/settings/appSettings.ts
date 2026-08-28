@@ -9,6 +9,8 @@ export interface AppSettings {
   digestEmailHourUtc: number;
   epssAlertThreshold: number;
   queueBacklogThresholdMinutes: number;
+  scannerOfflineThresholdMinutes: number;
+  hostDisappearedThresholdDays: number;
   smtp: SmtpSettings;
 }
 
@@ -49,6 +51,8 @@ export async function getAppSettings(): Promise<AppSettings> {
       "digest_email_hour_utc",
       "epss_alert_threshold",
       "queue_backlog_threshold_minutes",
+      "scanner_offline_threshold_minutes",
+      "host_disappeared_threshold_days",
       "smtp_host",
       "smtp_port",
       "smtp_secure",
@@ -67,6 +71,8 @@ export async function getAppSettings(): Promise<AppSettings> {
     digestEmailHourUtc: row.digest_email_hour_utc,
     epssAlertThreshold: row.epss_alert_threshold,
     queueBacklogThresholdMinutes: row.queue_backlog_threshold_minutes,
+    scannerOfflineThresholdMinutes: row.scanner_offline_threshold_minutes,
+    hostDisappearedThresholdDays: row.host_disappeared_threshold_days,
     smtp: {
       host: row.smtp_host,
       port: row.smtp_port,
@@ -97,6 +103,14 @@ export async function setEpssAlertThreshold(value: number): Promise<void> {
 
 export async function setQueueBacklogThresholdMinutes(value: number): Promise<void> {
   await db.updateTable("app_settings").set({ queue_backlog_threshold_minutes: value }).where("id", "=", 1).execute();
+}
+
+export async function setScannerOfflineThresholdMinutes(value: number): Promise<void> {
+  await db.updateTable("app_settings").set({ scanner_offline_threshold_minutes: value }).where("id", "=", 1).execute();
+}
+
+export async function setHostDisappearedThresholdDays(value: number): Promise<void> {
+  await db.updateTable("app_settings").set({ host_disappeared_threshold_days: value }).where("id", "=", 1).execute();
 }
 
 export async function setSmtpSettings(input: SmtpSettingsInput): Promise<void> {

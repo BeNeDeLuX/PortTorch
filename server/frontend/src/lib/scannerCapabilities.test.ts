@@ -19,6 +19,7 @@ function agent(version: string | null): ScannerAgent {
     template_update_requested_at: null,
     template_update_status: null,
     template_update_failure_reason: null,
+    config_overrides: null,
   };
 }
 

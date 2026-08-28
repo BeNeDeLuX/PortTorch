@@ -261,10 +261,7 @@ func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult, nseScr
 		return &HostResult{IP: ip}, nil
 	}
 
-	portList := make([]string, len(ports))
-	for i, p := range ports {
-		portList[i] = strconv.Itoa(p.Port)
-	}
+	portSpec, needsUDP, needsTCP := nmapPortSpec(ports)
 
 	scripts := nseScripts
 	if len(scripts) == 0 {
@@ -273,6 +270,17 @@ func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult, nseScr
 	args := []string{
 		"-Pn", "-R", "--privileged",
 		"-sV", "--script=" + strings.Join(scripts, ","),
+	}
+	// Scan-type flags are only added when UDP is actually involved. With
+	// TCP alone, nmap's own privileged default (-sS) is what has always
+	// run here, and passing it explicitly would change the command line
+	// for every existing scan to no purpose - the enrichment stage stays
+	// byte-identical for any host whose discovered ports are all TCP.
+	if needsUDP {
+		args = append(args, "-sU")
+		if needsTCP {
+			args = append(args, "-sS")
+		}
 	}
 	if os.Geteuid() == 0 {
 		args = append(args, "-O")
@@ -285,7 +293,7 @@ func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult, nseScr
 		args = append(args, "-6")
 	}
 	args = append(args,
-		"-p", strings.Join(portList, ","),
+		"-p", portSpec,
 		"-oX", "-",
 		ip,
 	)
@@ -297,6 +305,40 @@ func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult, nseScr
 		return &HostResult{IP: ip}, nil
 	}
 	return hostResultFromNmapHost(ip, run.Hosts[0]), nil
+}
+
+// nmapPortSpec turns the ports masscan discovered into nmap's -p argument,
+// keeping each port's protocol. Returns the spec plus whether UDP and TCP
+// ports are present, which decides the scan-type flags.
+//
+// A TCP-only set is emitted as a plain comma-separated list with no "T:"
+// prefix - exactly the string this built before UDP scanning existed, so
+// nothing changes for the overwhelmingly common case. The prefixes only
+// appear once there is genuinely more than one protocol to distinguish.
+func nmapPortSpec(ports []PortResult) (spec string, needsUDP bool, needsTCP bool) {
+	var tcp, udp []string
+	for _, p := range ports {
+		if strings.EqualFold(p.Protocol, "udp") {
+			udp = append(udp, strconv.Itoa(p.Port))
+		} else {
+			// Anything not explicitly UDP is treated as TCP, including an
+			// empty protocol: masscan always sets it, but a PortResult
+			// built elsewhere in the pipeline might not, and defaulting to
+			// TCP matches what every caller meant before this existed.
+			tcp = append(tcp, strconv.Itoa(p.Port))
+		}
+	}
+	needsUDP = len(udp) > 0
+	needsTCP = len(tcp) > 0
+	if !needsUDP {
+		return strings.Join(tcp, ","), false, needsTCP
+	}
+	var parts []string
+	if needsTCP {
+		parts = append(parts, "T:"+strings.Join(tcp, ","))
+	}
+	parts = append(parts, "U:"+strings.Join(udp, ","))
+	return strings.Join(parts, ","), true, needsTCP
 }
 
 // isSMBPort decides, based on the service name reported by nmap (with a

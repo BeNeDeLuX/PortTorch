@@ -19,6 +19,8 @@ import {
   setDigestEmailHourUtc,
   setEpssAlertThreshold,
   setQueueBacklogThresholdMinutes,
+  setScannerOfflineThresholdMinutes,
+  setHostDisappearedThresholdDays,
   setScanLogRetentionDays,
   setScanQueueWarningThreshold,
   setSmtpSettings,
@@ -130,6 +132,11 @@ const appSettingsSchema = z.object({
   digestEmailHourUtc: z.number().int().min(0).max(23).optional(),
   epssAlertThreshold: z.number().min(0).max(1).optional(),
   queueBacklogThresholdMinutes: z.number().int().min(1).optional(),
+  scannerOfflineThresholdMinutes: z.number().int().min(1).optional(),
+  // Days, not minutes - the signal is only as fast as whatever schedule
+  // covers that host, so anything under a day would alert on every host
+  // between scans. See the presence_alerts migration.
+  hostDisappearedThresholdDays: z.number().int().min(1).optional(),
   // Saved as one object rather than field-by-field: these only make sense
   // together (a host without its port/auth is not a usable half-state),
   // and the form submits them as one section. password is the exception -
@@ -225,7 +232,7 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
     });
   }
 
-  // These three share one shape, so they share one loop rather than three
+  // These share one shape, so they share one loop rather than five
   // near-identical blocks - each still gets its own log line and audit
   // entry, which is what actually matters for traceability.
   const simpleSettings: Array<[keyof typeof parsed.data, string, (v: never) => Promise<void>]> = [
@@ -235,6 +242,16 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
       "queueBacklogThresholdMinutes",
       "settings.queue_backlog_threshold_updated",
       setQueueBacklogThresholdMinutes as (v: never) => Promise<void>,
+    ],
+    [
+      "scannerOfflineThresholdMinutes",
+      "settings.scanner_offline_threshold_updated",
+      setScannerOfflineThresholdMinutes as (v: never) => Promise<void>,
+    ],
+    [
+      "hostDisappearedThresholdDays",
+      "settings.host_disappeared_threshold_updated",
+      setHostDisappearedThresholdDays as (v: never) => Promise<void>,
     ],
   ];
   for (const [key, event, setter] of simpleSettings) {

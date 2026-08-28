@@ -16,6 +16,7 @@ import { singleParam } from "../lib/reqParams";
 import { deriveServiceTags } from "../lib/serviceTags";
 import { recordAudit } from "../audit/log";
 import { scanPriorityOrder } from "../scanPriority";
+import { parsePortSpec, portSpecCovers } from "../lib/portSpec";
 
 export const ingestRouter = Router();
 ingestRouter.use(asyncHandler(apiKeyAuth));
@@ -163,6 +164,25 @@ ingestRouter.get("/update-requested", asyncHandler(async (req, res) => {
     .where("id", "=", req.scannerAgentId!)
     .executeTakeFirstOrThrow();
   res.json({ requested: agent.update_requested_at !== null });
+}));
+
+// Polled by "serve" mode's config watcher. Returns only the overrides an
+// admin has actually set for this agent; an empty object means "use your
+// config.yaml as written", which is what every agent returns until
+// somebody changes something. Scoped implicitly to the authenticated
+// agent, same as every other endpoint in this file.
+//
+// Deliberately no merging with the scanner's own defaults here: the
+// webserver has no idea what's in that scanner's config.yaml, so
+// answering with a complete config would mean inventing the values it
+// doesn't know. The scanner overlays what it gets onto its own config.
+ingestRouter.get("/config", asyncHandler(async (req, res) => {
+  const agent = await db
+    .selectFrom("scanner_agents")
+    .select(["config_overrides"])
+    .where("id", "=", req.scannerAgentId!)
+    .executeTakeFirstOrThrow();
+  res.json(agent.config_overrides ?? {});
 }));
 
 // The cached latest-release row (see scannerUpdate/githubSync.ts) - the
@@ -558,13 +578,37 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
   const portOpenedEvents: Array<{ ip: string; hostname: string | null; port: number; serviceName: string | null }> = [];
   const nucleiFindingEvents: Array<{ ip: string; hostname: string | null; templateId: string; name: string; severity: string }> = [];
   const autoTagEvents: Array<{ hostId: string; ip: string; tag: string }> = [];
+  const portClosedEvents: Array<{
+    ip: string;
+    hostname: string | null;
+    port: number;
+    protocol: string;
+    serviceName: string | null;
+  }> = [];
+
+  // What this scan actually asked for. A previously-open port missing
+  // from this payload only means "closed" if the scan covered it in the
+  // first place - a rescan of 443 says nothing whatsoever about port 22,
+  // and claiming otherwise would fire a wrong port.closed on every
+  // targeted rescan. parsePortSpec returns null for anything it can't
+  // parse, and null here disables the check entirely rather than guessing.
+  const scanJob = await db
+    .selectFrom("scan_jobs")
+    .select(["port_spec"])
+    .where("id", "=", parsed.data.scanJobId)
+    .executeTakeFirst();
+  const scannedPorts = scanJob ? parsePortSpec(scanJob.port_spec) : null;
 
   await db.transaction().execute(async (trx) => {
     for (const host of parsed.data.hosts) {
       const existingOpenPorts = await trx
         .selectFrom("current_host_ports")
         .innerJoin("hosts", "hosts.id", "current_host_ports.host_id")
-        .select(["current_host_ports.port as port"])
+        .select([
+          "current_host_ports.port as port",
+          "current_host_ports.protocol as protocol",
+          "current_host_ports.service_name as service_name",
+        ])
         .where("hosts.ip", "=", host.ip)
         .where("hosts.scanner_agent_id", "=", req.scannerAgentId!)
         .where("current_host_ports.state", "=", "open")
@@ -621,11 +665,77 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
         }
       }
 
-      if (host.ports.length > 0) {
+      // A port that was open and isn't in this payload, on a host this
+      // scan did reach, with the scan's own port spec covering it: the
+      // scan looked and it wasn't open.
+      //
+      // Recorded as a real 'closed' observation rather than only firing
+      // an event, for two reasons. It's what the data actually means -
+      // neither masscan nor nmap ever reports a closed port, so without
+      // this the port keeps its old 'open' row forever and only shows up
+      // as "unconfirmed". And without it the event would repeat on every
+      // subsequent scan, since current_host_ports would still say open.
+      //
+      // The honest caveat: masscan is a rate-limited stateless prober and
+      // a dropped packet is indistinguishable from a closed port, so a
+      // single lost probe produces a port.closed now and a port.opened on
+      // the next scan. Both are truthful statements about what each scan
+      // saw; anyone who finds that too noisy simply doesn't subscribe to
+      // port.closed. Nothing here touches the existing 'unconfirmed'
+      // concept, which still covers the genuinely different case of a
+      // port the latest scan never looked at.
+      // Keyed on protocol as well as port: host_port_observations is keyed
+      // that way, and a UDP scan finding nothing on UDP/53 says nothing
+      // whatsoever about TCP/53 (nor the reverse).
+      const portKey = (port: number, protocol: string) => `${protocol.toLowerCase() === "udp" ? "udp" : "tcp"}:${port}`;
+      const reportedOpen = new Set(
+        host.ports.filter((p) => p.state === "open").map((p) => portKey(p.port, p.protocol))
+      );
+      const closedRows =
+        upserted.inserted || !scannedPorts
+          ? []
+          : existingOpenPorts.filter(
+              (prior) =>
+                !reportedOpen.has(portKey(prior.port, prior.protocol)) &&
+                portSpecCovers(scannedPorts, prior.port, prior.protocol)
+            );
+      for (const prior of closedRows) {
+        portClosedEvents.push({
+          ip: host.ip,
+          hostname: host.hostname ?? null,
+          port: prior.port,
+          protocol: prior.protocol,
+          serviceName: prior.service_name,
+        });
+      }
+
+      if (host.ports.length > 0 || closedRows.length > 0) {
         await trx
           .insertInto("host_port_observations")
-          .values(
-            host.ports.map((p) => ({
+          .values([
+            ...closedRows.map((prior) => ({
+              host_id: upserted.id,
+              scan_job_id: parsed.data.scanJobId,
+              port: prior.port,
+              protocol: prior.protocol,
+              state: "closed",
+              // Everything else is deliberately null rather than carried
+              // over from the previous observation: a closed port has no
+              // current service, banner or CPE, and copying the stale
+              // ones forward would keep it matching service/CVE queries
+              // it no longer belongs in.
+              service_name: null,
+              service_product: null,
+              service_version: null,
+              extra_info: null,
+              os_type: null,
+              cpes: null,
+              banner: null,
+              ftp_anon_listing: null,
+              smb_shares: null,
+              nse_extra: null,
+            })),
+            ...host.ports.map((p) => ({
               host_id: upserted.id,
               scan_job_id: parsed.data.scanJobId,
               port: p.port,
@@ -641,8 +751,8 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
               ftp_anon_listing: p.ftpAnonListing ?? null,
               smb_shares: p.smbShares ?? null,
               nse_extra: p.extraScripts && p.extraScripts.length > 0 ? JSON.stringify(p.extraScripts) : null,
-            }))
-          )
+            })),
+          ])
           .execute();
       }
 
@@ -750,6 +860,13 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
       "port.opened",
       `Port ${e.port}${e.serviceName ? `/${e.serviceName}` : ""} newly open on ${e.hostname || e.ip}`,
       { ip: e.ip, hostname: e.hostname, port: e.port, service_name: e.serviceName }
+    );
+  }
+  for (const e of portClosedEvents) {
+    dispatchWebhook(
+      "port.closed",
+      `Port ${e.port}/${e.protocol}${e.serviceName ? ` (${e.serviceName})` : ""} no longer open on ${e.hostname || e.ip}`,
+      { ip: e.ip, hostname: e.hostname, port: e.port, protocol: e.protocol, service_name: e.serviceName }
     );
   }
   for (const e of nucleiFindingEvents) {

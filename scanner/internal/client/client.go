@@ -650,6 +650,26 @@ func (c *Client) GetExcludes(ctx context.Context) (pipeline.Excludes, error) {
 	return pipeline.Excludes{IPs: out.IPs, Ports: out.Ports, IPPorts: ipPorts}, nil
 }
 
+// GetConfigOverrides fetches this agent's dashboard-managed config
+// overrides (GET /api/ingest/config). A map rather than a struct on
+// purpose: the webserver only ever sends the keys an admin actually set,
+// and the scanner ignores anything it doesn't recognise - so adding a
+// tunable on the dashboard side doesn't need a matching scanner release
+// to avoid an unmarshalling error.
+//
+// An empty map is the normal answer and means "use config.yaml as
+// written" - it is not an error and must not be treated as one.
+func (c *Client) GetConfigOverrides(ctx context.Context) (map[string]int, error) {
+	var out map[string]int
+	if err := c.doJSON(ctx, http.MethodGet, "/api/ingest/config", nil, &out); err != nil {
+		return nil, fmt.Errorf("fetching config overrides: %w", err)
+	}
+	if out == nil {
+		out = map[string]int{}
+	}
+	return out, nil
+}
+
 // GetProbeHostnames fetches the manual per-host SNI/screenshot-URL
 // hostname overrides (see CLAUDE.md's "Manual probe hostname override"
 // section) for hosts owned by this scanner agent - a plain map is enough

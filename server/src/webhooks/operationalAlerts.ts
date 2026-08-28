@@ -14,9 +14,10 @@ import { getAppSettings } from "../settings/appSettings";
 const CHECK_INTERVAL_MS = 5 * 60_000;
 
 // The Fleet Health page (frontend/src/pages/FleetHealth.tsx) surfaces
-// these same two conditions passively, for whoever happens to load that
-// page - this is the active counterpart, pushing scan.stale and
-// scan_queue.backlog webhooks so nobody has to be looking.
+// most of these conditions passively, for whoever happens to load that
+// page - this is the active counterpart, pushing scan.stale,
+// scan_queue.backlog, scanner.offline and host.disappeared webhooks so
+// nobody has to be looking.
 export function startOperationalAlerts(): void {
   setInterval(() => {
     tick().catch((err) =>
@@ -25,9 +26,18 @@ export function startOperationalAlerts(): void {
   }, CHECK_INTERVAL_MS);
 }
 
+// Exported so the integration tests can drive one full pass
+// deterministically instead of waiting on the five-minute interval - same
+// "expose the scheduled job's own logic" shape as runRetentionSweep.
+export async function runOperationalAlertChecks(): Promise<void> {
+  await tick();
+}
+
 async function tick(): Promise<void> {
   await checkStaleScans();
   await checkQueueBacklog();
+  await checkOfflineScanners();
+  await checkDisappearedHosts();
 }
 
 // Fires scan.stale once per scan_jobs row (stale_alert_sent_at) - a job
@@ -146,4 +156,145 @@ async function checkQueueBacklog(): Promise<void> {
     clearQuery = clearQuery.where("id", "not in", stillBackloggedIds);
   }
   await clearQuery.execute();
+}
+
+// Fires scanner.offline once per agent whose last authenticated request
+// is older than app_settings.scanner_offline_threshold_minutes.
+//
+// This is the gap the other two checks above leave open: scan.stale only
+// covers a job already stuck mid-run, and scan_queue.backlog only fires
+// once work has actually piled up for that scanner - so an agent with no
+// running scan and nothing queued (no schedules pointed at it, or all of
+// them already fired) could be dead indefinitely with nothing said. Fleet
+// Health shows it passively; this is the push counterpart.
+//
+// last_seen_at is written by apiKeyAuth.ts on *every* authenticated
+// request, and a serve-mode scanner polls several endpoints continuously
+// (StartPolling, StartCancelWatcher, StartUpdateWatcher), so a live
+// scanner refreshes this far more often than any plausible threshold.
+//
+// A null last_seen_at is deliberately skipped rather than treated as
+// infinitely stale: that means an agent whose API key was created but
+// which has never once connected - an install in progress, not an
+// outage. Same "absence is its own third state, not the extreme of the
+// scale" reasoning as scanner_agents.version elsewhere.
+//
+// Come-and-go, like checkQueueBacklog: the flag is cleared once the agent
+// reports in again, so a future outage alerts rather than being silenced
+// forever by one past one.
+async function checkOfflineScanners(): Promise<void> {
+  const { scannerOfflineThresholdMinutes } = await getAppSettings();
+  const threshold = new Date(Date.now() - scannerOfflineThresholdMinutes * 60_000);
+
+  const offline = await db
+    .selectFrom("scanner_agents")
+    .select(["id", "name", "last_seen_at", "version", "offline_alert_sent_at"])
+    .where("revoked_at", "is", null)
+    .where("last_seen_at", "is not", null)
+    .where("last_seen_at", "<", threshold)
+    .execute();
+
+  for (const agent of offline) {
+    if (agent.offline_alert_sent_at) continue; // already alerted, still offline
+
+    const lastSeen = new Date(agent.last_seen_at!).toISOString();
+    const message = `Scanner "${agent.name}" has not reported in since ${lastSeen} (threshold ${scannerOfflineThresholdMinutes} minutes) - it may be stopped, crashed, or cut off from this webserver`;
+
+    await dispatchWebhook("scanner.offline", message, {
+      scanner_agent_id: agent.id,
+      scanner_agent_name: agent.name,
+      last_seen_at: agent.last_seen_at,
+      version: agent.version,
+      threshold_minutes: scannerOfflineThresholdMinutes,
+    });
+
+    await db.updateTable("scanner_agents").set({ offline_alert_sent_at: new Date().toISOString() }).where("id", "=", agent.id).execute();
+    logger.info({ event: "webhook.scanner_offline_alerted", scanner_agent_id: agent.id, scanner_agent_name: agent.name });
+  }
+
+  // Anything previously alerted whose last_seen_at is now inside the
+  // threshold has come back - clear it so the next outage alerts again.
+  // Expressed as its own UPDATE rather than derived from the query above,
+  // which only ever selected agents that are *currently* offline.
+  const recovered = await db
+    .updateTable("scanner_agents")
+    .set({ offline_alert_sent_at: null })
+    .where("offline_alert_sent_at", "is not", null)
+    .where((eb) => eb.or([eb("last_seen_at", ">=", threshold), eb("last_seen_at", "is", null)]))
+    .returning(["id", "name"])
+    .execute();
+  for (const agent of recovered) {
+    logger.info({ event: "scanner.back_online", scanner_agent_id: agent.id, scanner_agent_name: agent.name });
+  }
+}
+
+// Fires host.disappeared once per host not seen for
+// app_settings.host_disappeared_threshold_days.
+//
+// Deliberately a periodic check rather than an ingest-time one, unlike
+// port.closed: a host that has stopped responding produces no ingest
+// request at all, so there is no write path that could ever notice it.
+//
+// The threshold is in days, not minutes like the scanner one, because the
+// signal is fundamentally slower: hosts are only re-seen as often as
+// something scans their range, so "not seen in 30 minutes" says nothing
+// about a host, while "not seen in two weeks" does. It has to be
+// comfortably longer than the interval of whatever schedule covers that
+// host, or every host alerts between scans - which is exactly why it's an
+// admin-visible setting rather than a constant.
+//
+// Only hosts that were seen at least once *before* the threshold are
+// considered, via first_seen_at: a host discovered five minutes ago by a
+// one-off ad-hoc scan of a range nothing else covers hasn't "disappeared"
+// just because nothing has scanned it since.
+async function checkDisappearedHosts(): Promise<void> {
+  const { hostDisappearedThresholdDays } = await getAppSettings();
+  const threshold = new Date(Date.now() - hostDisappearedThresholdDays * 24 * 60 * 60_000);
+
+  const gone = await db
+    .selectFrom("hosts")
+    .leftJoin("scanner_agents", "scanner_agents.id", "hosts.scanner_agent_id")
+    .select([
+      "hosts.id as id",
+      "hosts.ip as ip",
+      "hosts.hostname as hostname",
+      "hosts.last_seen_at as last_seen_at",
+      "scanner_agents.name as scanner_agent_name",
+    ])
+    .where("hosts.disappeared_alert_sent_at", "is", null)
+    .where("hosts.last_seen_at", "<", threshold)
+    .where("hosts.first_seen_at", "<", threshold)
+    .execute();
+
+  for (const host of gone) {
+    const label = host.hostname || host.ip;
+    const message = `Host ${label} has not been seen since ${new Date(host.last_seen_at).toISOString()} (threshold ${hostDisappearedThresholdDays} days) - decommissioned, or down`;
+
+    await dispatchWebhook("host.disappeared", message, {
+      host_id: host.id,
+      ip: host.ip,
+      hostname: host.hostname,
+      last_seen_at: host.last_seen_at,
+      scanner_agent_name: host.scanner_agent_name,
+      threshold_days: hostDisappearedThresholdDays,
+    });
+
+    await db.updateTable("hosts").set({ disappeared_alert_sent_at: new Date().toISOString() }).where("id", "=", host.id).execute();
+    logger.info({ event: "webhook.host_disappeared_alerted", host_id: host.id, ip: host.ip });
+  }
+
+  // Came back - a later scan updated last_seen_at. Cleared here rather
+  // than in the ingest path so the reset lives next to the rule that set
+  // it, and so it can't be missed by a code path that writes last_seen_at
+  // without going through the host upsert.
+  const returned = await db
+    .updateTable("hosts")
+    .set({ disappeared_alert_sent_at: null })
+    .where("disappeared_alert_sent_at", "is not", null)
+    .where("last_seen_at", ">=", threshold)
+    .returning(["id", "ip"])
+    .execute();
+  for (const host of returned) {
+    logger.info({ event: "host.reappeared", host_id: host.id, ip: host.ip });
+  }
 }

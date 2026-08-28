@@ -8,6 +8,7 @@ import NucleiProfilePicker from "../components/NucleiProfilePicker";
 import ScanPriorityPicker from "../components/ScanPriorityPicker";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanRateSupportNote from "../components/ScanRateSupportNote";
+import PortSpecHint from "../components/PortSpecHint";
 import { formatDateTime } from "../lib/formatDate";
 import {
   resolveTimezone,
@@ -22,6 +23,34 @@ type SortKey = "target_spec" | "port_spec" | "schedule" | "scanner_agent_name" |
 type SortDirection = "asc" | "desc";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// The window is stored as minutes since local midnight (see the server's
+// lib/scanWindow.ts), while <input type="time"> speaks "HH:MM".
+function timeToMinutes(value: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return h * 60 + min;
+}
+
+function minutesToTime(total: number): string {
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function describeWindow(s: Schedule): string | null {
+  if (s.window_start_minute === null || s.window_end_minute === null) {
+    if (!s.window_days || s.window_days.length === 0 || s.window_days.length === 7) return null;
+    return `${s.window_days.map((d) => DAY_LABELS[d]).join(", ")} only`;
+  }
+  const range = `${minutesToTime(s.window_start_minute)}-${minutesToTime(s.window_end_minute)}`;
+  const days =
+    s.window_days && s.window_days.length > 0 && s.window_days.length < 7
+      ? ` ${s.window_days.map((d) => DAY_LABELS[d]).join(", ")}`
+      : "";
+  return `${range}${days} ${s.window_timezone ?? "UTC"}`;
+}
 const DEFAULT_WEEKDAYS = new Set([1, 2, 3, 4, 5]); // Mon-Fri
 
 // A fired "once" schedule (schedule_type='once', auto-disabled by
@@ -187,6 +216,13 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
   // of something editable elsewhere, so handleEdit can just pre-select the
   // stored value with no risk of silently reverting anything.
   const [priority, setPriority] = useState<ScanPriority>("normal");
+  // The run window is off unless explicitly enabled: all-null is what
+  // every existing schedule carries and what "no restriction" means, so
+  // the form must never silently impose one.
+  const [windowEnabled, setWindowEnabled] = useState(false);
+  const [windowStart, setWindowStart] = useState("22:00");
+  const [windowEnd, setWindowEnd] = useState("06:00");
+  const [windowDays, setWindowDays] = useState<Set<number>>(new Set([0, 1, 2, 3, 4, 5, 6]));
   const [editingNucleiProfileLabel, setEditingNucleiProfileLabel] = useState<string | null>(null);
   const [scheduleType, setScheduleType] = useState<"interval" | "cron" | "once">("interval");
   const [intervalMinutes, setIntervalMinutes] = useState(60);
@@ -275,6 +311,10 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     setEditingNucleiProfileLabel(null);
     setMasscanRate("");
     setPriority("normal");
+    setWindowEnabled(false);
+    setWindowStart("22:00");
+    setWindowEnd("06:00");
+    setWindowDays(new Set([0, 1, 2, 3, 4, 5, 6]));
     setScheduleType("interval");
     setIntervalMinutes(60);
     setRepeatMode("daily");
@@ -308,6 +348,11 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     setEditingNucleiProfileLabel(s.nuclei_profile_label);
     setMasscanRate(s.masscan_rate != null ? String(s.masscan_rate) : "");
     setPriority(s.priority);
+    const hasWindow = s.window_start_minute !== null || (s.window_days !== null && s.window_days.length > 0);
+    setWindowEnabled(hasWindow);
+    setWindowStart(minutesToTime(s.window_start_minute ?? 22 * 60));
+    setWindowEnd(minutesToTime(s.window_end_minute ?? 6 * 60));
+    setWindowDays(new Set(s.window_days && s.window_days.length > 0 ? s.window_days : [0, 1, 2, 3, 4, 5, 6]));
     setScheduleType(s.schedule_type);
 
     if (s.schedule_type === "interval") {
@@ -341,6 +386,18 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     e.preventDefault();
     if (!scannerAgentId || !targetSpec.trim() || !portSpec.trim()) return;
 
+      const windowPayload = windowEnabled
+        ? {
+            windowStartMinute: timeToMinutes(windowStart),
+            windowEndMinute: timeToMinutes(windowEnd),
+            windowDays: windowDays.size === 7 ? null : [...windowDays].sort((a, b) => a - b),
+            // The window is authored in whatever zone the admin is
+            // looking at, so that zone travels with it - evaluating it in
+            // UTC server-side would silently shift it by the offset.
+            windowTimezone: timezone,
+          }
+        : { windowStartMinute: null, windowEndMinute: null, windowDays: null, windowTimezone: null };
+
     if (editingId) {
       const base = {
         targetSpec: targetSpec.trim(),
@@ -350,6 +407,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         ...(nucleiProfileTouched ? { nucleiProfile } : {}),
         ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
         priority,
+        ...windowPayload,
       };
       if (scheduleType === "interval") {
         await api.updateSchedule(editingId, { ...base, intervalMinutes });
@@ -378,6 +436,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         nucleiProfile,
         ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
         priority,
+        ...windowPayload,
       });
     } else if (scheduleType === "once") {
       if (!runAt) return;
@@ -397,6 +456,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         nucleiProfile,
         ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
         priority,
+        ...windowPayload,
       });
     } else {
       const cronExpression = advancedCron ? rawCronExpression.trim() : generatedCron;
@@ -411,6 +471,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         nucleiProfile,
         ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
         priority,
+        ...windowPayload,
       });
     }
     setTargetSpec("");
@@ -422,6 +483,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     setNucleiProfileTouched(false);
     setMasscanRate("");
     setPriority("normal");
+    setWindowEnabled(false);
     await load();
   }
 
@@ -483,6 +545,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
               </span>
             </>
           )}
+          {describeWindow(s) && <div className="host-meta">only {describeWindow(s)}</div>}
         </td>
         <td>{s.scanner_agent_name ?? "?"}</td>
         <td>
@@ -491,6 +554,9 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
               date under "Next run" would look like a bug, so once it's
               done, there simply isn't one. */}
           {scheduleStatus(s) === "done" ? "-" : formatDateTime(s.next_run_at, me.preferences)}
+          {/* Answers "it's past the time I set, why hasn't it run" without
+              needing the reader to work the window out themselves. */}
+          {s.window_blocked && <div className="host-meta">waiting for its time window</div>}
         </td>
         <td>{s.last_run_at ? formatDateTime(s.last_run_at, me.preferences) : "never"}</td>
         {isAdmin && (
@@ -550,6 +616,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
             Ports
             <input placeholder="1-1000" value={portSpec} onChange={(e) => setPortSpec(e.target.value)} />
           </label>
+          <PortSpecHint />
           <label>
             Scan profile
             <ScanProfilePicker
@@ -596,6 +663,47 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
             Queue priority
             <ScanPriorityPicker value={priority} onChange={setPriority} />
           </label>
+          <label className="hide-empty-toggle window-toggle">
+            <input type="checkbox" checked={windowEnabled} onChange={(e) => setWindowEnabled(e.target.checked)} />
+            Only run inside a time window
+          </label>
+          {windowEnabled && (
+            <>
+              <label>
+                From ({timezone})
+                <input type="time" value={windowStart} onChange={(e) => setWindowStart(e.target.value)} />
+              </label>
+              <label>
+                Until ({timezone})
+                <input type="time" value={windowEnd} onChange={(e) => setWindowEnd(e.target.value)} />
+              </label>
+              <div className="day-picker">
+                {DAY_LABELS.map((label, day) => (
+                  <label key={day} className="day-picker-item">
+                    <input
+                      type="checkbox"
+                      checked={windowDays.has(day)}
+                      onChange={() =>
+                        setWindowDays((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(day)) next.delete(day);
+                          else next.add(day);
+                          return next;
+                        })
+                      }
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              <p className="empty">
+                A run that comes due outside this window waits for the window to open rather than being skipped - so a
+                nightly sweep whose window starts at 22:00 starts at 22:00, it doesn't lose the night. An end time
+                earlier than the start crosses midnight; on those, the selected days are the days the window
+                <em> starts</em> on.
+              </p>
+            </>
+          )}
           <ScanRateSupportNote agent={agents.find((a) => a.id === scannerAgentId)} rate={masscanRate} />
           <label>
             Schedule type

@@ -374,6 +374,22 @@ header h1 {
   align-items: center;
 }
 
+/* Same treatment for the schedule form's own checkbox row (the run-window
+   toggle) - .schedule-form stacks label text above its control, which
+   would put the tick underneath the words. */
+.schedule-form label.hide-empty-toggle {
+  flex-direction: row;
+  align-items: center;
+}
+
+/* ...and it takes a row of its own. As a short flex item it otherwise
+   slots in beside whatever fits next to it - which put "Only run inside a
+   time window" alongside the Schedule type dropdown, reading as if the
+   two belonged together. */
+.schedule-form label.window-toggle {
+  flex-basis: 100%;
+}
+
 .settings-form button {
   align-self: flex-start;
 }
@@ -2346,6 +2362,26 @@ th {
 .modal-body label {
   display: block;
   margin-bottom: 1rem;
+}
+
+/* The scanner Configure modal reuses .settings-form, whose own
+   `label { display: flex; flex-direction: column }` loses to
+   .modal-body label above - same specificity, declared earlier - so the
+   label text, field and help note all ran together inline. Restated here
+   with one more class of specificity rather than reordering the file,
+   which would change how every other modal's labels stack. */
+.modal-body .settings-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0;
+}
+
+/* Wide enough for the "config.yaml" placeholder these fields use to say
+   "no override, whatever the file says" - .input-number's 6.5rem cut it
+   off mid-word, which read as a rendering bug rather than as a hint. */
+.modal-body .settings-form input.input-number {
+  width: 9rem;
 }
 
 /* Export modal (components/ExportModal.tsx) */

@@ -26,7 +26,13 @@ import (
 type Server struct {
 	echo     *echo.Echo
 	client   *client.Client
-	pcfg     pipeline.Config
+	pcfg pipeline.Config
+	// baseCfg is config.yaml exactly as loaded at startup. Dashboard
+	// overrides are always applied on top of this rather than on top of
+	// whatever pcfg currently holds, so clearing an override on the
+	// dashboard genuinely restores the file's value instead of leaving
+	// the last pushed one in place until a restart.
+	baseCfg  pipeline.Config
 	queueDir string
 	// auditLog is shared across every scan this process ever runs (unlike
 	// "scan"/"menu", which each open their own for a single scan) - see
@@ -40,6 +46,12 @@ type Server struct {
 	mu      sync.RWMutex
 	scans   map[string]*scanState
 	cancels map[string]context.CancelFunc
+
+	// pcfg is read by every scan and written by the config watcher
+	// (StartConfigWatcher), so it needs its own lock. Deliberately not
+	// s.mu: that one is held around scan bookkeeping, and a scan starting
+	// shouldn't have to wait on, or block, a config poll.
+	cfgMu sync.RWMutex
 
 	metricsMu    sync.Mutex
 	scansTotal   map[string]int // keyed by terminal status: completed/failed/cancelled
@@ -60,6 +72,7 @@ func NewServer(c *client.Client, pcfg pipeline.Config, queueDir, token string, a
 		echo:       echo.New(),
 		client:     c,
 		pcfg:       pcfg,
+		baseCfg:    pcfg,
 		queueDir:   queueDir,
 		auditLog:   auditLog,
 		token:      token,
@@ -217,6 +230,134 @@ func (s *Server) StartCancelWatcher(ctx context.Context, interval time.Duration)
 			s.checkCancellations(ctx)
 		}
 	}
+}
+
+// pipelineConfig returns a snapshot of the current pipeline config.
+// Config is a plain struct of value types, so the copy is complete and
+// the caller can hold it for the whole scan without further locking.
+func (s *Server) pipelineConfig() pipeline.Config {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return s.pcfg
+}
+
+// StartConfigWatcher periodically fetches this agent's dashboard-managed
+// config overrides and applies them in memory. Same shape and reasoning
+// as StartCancelWatcher/StartUpdateWatcher: the webserver can never push
+// anything to a scanner, so anything set on the dashboard has to be
+// noticed by the scanner itself on its next poll.
+//
+// Its own loop rather than a step inside pollOnce, because that loop
+// blocks for the entire duration of a queue-triggered scan - and "lower
+// the rate on this scanner, it's hammering a fragile segment" is exactly
+// the instruction you want to land during a long scan, not after it.
+//
+// Overrides are applied to the in-memory config only; config.yaml on disk
+// is never rewritten. A restart therefore falls back to the file, and the
+// override is simply fetched again on the next tick - which also means a
+// bad override can always be undone by clearing it on the dashboard, with
+// no risk of having corrupted the file in the meantime.
+func (s *Server) StartConfigWatcher(ctx context.Context, interval time.Duration) {
+	s.refreshConfigOverrides(ctx)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.refreshConfigOverrides(ctx)
+		}
+	}
+}
+
+func (s *Server) refreshConfigOverrides(ctx context.Context) {
+	overrides, err := s.client.GetConfigOverrides(ctx)
+	if err != nil {
+		// Best-effort: a webserver that's briefly unreachable must not
+		// change how this scanner is configured, so the previous values
+		// simply stay in force.
+		s.logger.Warn("fetching config overrides failed", "event", "scanner.config_fetch_failed", "err", err.Error())
+		return
+	}
+
+	s.cfgMu.Lock()
+	changed := applyConfigOverrides(&s.pcfg, s.baseCfg, overrides)
+	s.cfgMu.Unlock()
+
+	if len(changed) > 0 {
+		s.logger.Info("applied dashboard config overrides", "event", "scanner.config_applied", "settings", changed)
+	}
+}
+
+// applyConfigOverrides overlays overrides onto cfg, starting from base -
+// the config as loaded from config.yaml at startup.
+//
+// Resetting to base first is what makes *removing* an override on the
+// dashboard actually take effect: without it, clearing a setting would
+// leave the last pushed value in memory until the process restarted,
+// which is the opposite of what clearing it means. Returns the settings
+// whose value actually changed, so the log line only appears when
+// something really did.
+//
+// An unknown key is ignored rather than rejected: the dashboard validates
+// against its own allowlist, and a scanner older than a newly added
+// tunable should keep working, not fail.
+func applyConfigOverrides(cfg *pipeline.Config, base pipeline.Config, overrides map[string]int) map[string]int {
+	before := *cfg
+	*cfg = base
+
+	targets := map[string]*int{
+		"masscanRate":              &cfg.MasscanRate,
+		"masscanRetries":           &cfg.MasscanRetries,
+		"concurrency":              &cfg.Concurrency,
+		"gowitnessConcurrency":     &cfg.GowitnessConcurrency,
+		"screenshotTimeoutSeconds": &cfg.ScreenshotTimeoutSeconds,
+		"rdpConcurrency":           &cfg.RDPConcurrency,
+		"nucleiConcurrency":        &cfg.NucleiConcurrency,
+		"nucleiTimeoutSeconds":     &cfg.NucleiTimeoutSeconds,
+		"tlsCertTimeoutSeconds":    &cfg.TLSCertTimeoutSeconds,
+	}
+	for key, value := range overrides {
+		if target, ok := targets[key]; ok {
+			*target = value
+		}
+	}
+
+	changed := map[string]int{}
+	for key, target := range targets {
+		if wasDifferent(before, *cfg, key) {
+			changed[key] = *target
+		}
+	}
+	return changed
+}
+
+// wasDifferent compares one named field across two configs. Written out
+// rather than done with reflection: nine fields, and an explicit list
+// can't silently start reporting on a field nobody meant to expose.
+func wasDifferent(a, b pipeline.Config, key string) bool {
+	switch key {
+	case "masscanRate":
+		return a.MasscanRate != b.MasscanRate
+	case "masscanRetries":
+		return a.MasscanRetries != b.MasscanRetries
+	case "concurrency":
+		return a.Concurrency != b.Concurrency
+	case "gowitnessConcurrency":
+		return a.GowitnessConcurrency != b.GowitnessConcurrency
+	case "screenshotTimeoutSeconds":
+		return a.ScreenshotTimeoutSeconds != b.ScreenshotTimeoutSeconds
+	case "rdpConcurrency":
+		return a.RDPConcurrency != b.RDPConcurrency
+	case "nucleiConcurrency":
+		return a.NucleiConcurrency != b.NucleiConcurrency
+	case "nucleiTimeoutSeconds":
+		return a.NucleiTimeoutSeconds != b.NucleiTimeoutSeconds
+	case "tlsCertTimeoutSeconds":
+		return a.TLSCertTimeoutSeconds != b.TLSCertTimeoutSeconds
+	}
+	return false
 }
 
 // IsScanning reports whether this process currently has a scan in
@@ -446,8 +587,10 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, nucle
 	// A per-scan rate override applies to this scan only - s.pcfg is
 	// copied (Config is a plain struct passed by value), never mutated, so
 	// a slow one-off scan can't quietly re-rate every later scan this
-	// long-running serve process handles.
-	scanCfg := s.pcfg
+	// long-running serve process handles. Taking the copy under the lock
+	// also means a scan runs against one coherent config even if the
+	// config watcher updates it mid-scan.
+	scanCfg := s.pipelineConfig()
 	if masscanRate != nil && *masscanRate > 0 {
 		scanCfg.MasscanRate = *masscanRate
 	}
