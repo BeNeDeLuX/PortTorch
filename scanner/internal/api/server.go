@@ -24,9 +24,9 @@ import (
 // remotely. Uses the same orchestrator as the TUI and the "scan" CLI
 // subcommand.
 type Server struct {
-	echo     *echo.Echo
-	client   *client.Client
-	pcfg pipeline.Config
+	echo   *echo.Echo
+	client *client.Client
+	pcfg   pipeline.Config
 	// baseCfg is config.yaml exactly as loaded at startup. Dashboard
 	// overrides are always applied on top of this rather than on top of
 	// whatever pcfg currently holds, so clearing an override on the
