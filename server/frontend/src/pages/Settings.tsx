@@ -58,6 +58,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
   const [queueThresholdInput, setQueueThresholdInput] = useState("");
   const [offlineMinutesInput, setOfflineMinutesInput] = useState("");
   const [disappearedDaysInput, setDisappearedDaysInput] = useState("");
+  const [coverageDaysInput, setCoverageDaysInput] = useState("");
   const [savingQueueThreshold, setSavingQueueThreshold] = useState(false);
   const [queueThresholdError, setQueueThresholdError] = useState<string | null>(null);
 
@@ -119,6 +120,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
         setBacklogMinutesInput(String(s.queueBacklogThresholdMinutes));
         setOfflineMinutesInput(String(s.scannerOfflineThresholdMinutes));
         setDisappearedDaysInput(String(s.hostDisappearedThresholdDays));
+        setCoverageDaysInput(String(s.networkCoverageStaleDays));
         setSmtpHost(s.smtp.host ?? "");
         setSmtpPort(String(s.smtp.port));
         setSmtpSecure(s.smtp.secure);
@@ -214,6 +216,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
     const backlog = parseInt(backlogMinutesInput, 10);
     const offline = parseInt(offlineMinutesInput, 10);
     const disappeared = parseInt(disappearedDaysInput, 10);
+    const coverageDays = parseInt(coverageDaysInput, 10);
     if (Number.isNaN(hour) || hour < 0 || hour > 23) {
       setAlertTunablesError("Digest hour must be between 0 and 23 (UTC).");
       return;
@@ -234,6 +237,10 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       setAlertTunablesError("Host disappeared days must be 1 or greater.");
       return;
     }
+    if (Number.isNaN(coverageDays) || coverageDays < 1) {
+      setAlertTunablesError("Network coverage window must be 1 day or greater.");
+      return;
+    }
     setAlertTunablesError(null);
     setAlertTunablesSaved(false);
     setSavingAlertTunables(true);
@@ -244,6 +251,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
         queueBacklogThresholdMinutes: backlog,
         scannerOfflineThresholdMinutes: offline,
         hostDisappearedThresholdDays: disappeared,
+        networkCoverageStaleDays: coverageDays,
       });
       setAppSettings(updated);
       setAlertTunablesSaved(true);
@@ -733,6 +741,17 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
               step={1}
               value={disappearedDaysInput}
               onChange={(e) => setDisappearedDaysInput(e.target.value)}
+            />
+          </label>
+          <label>
+            Network coverage window (days)
+            <input
+              className="input-number"
+              type="number"
+              min={1}
+              step={1}
+              value={coverageDaysInput}
+              onChange={(e) => setCoverageDaysInput(e.target.value)}
             />
           </label>
           <button type="submit" className="btn-icon-label" disabled={savingAlertTunables}>

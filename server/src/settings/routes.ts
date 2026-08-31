@@ -21,6 +21,7 @@ import {
   setQueueBacklogThresholdMinutes,
   setScannerOfflineThresholdMinutes,
   setHostDisappearedThresholdDays,
+  setNetworkCoverageStaleDays,
   setScanLogRetentionDays,
   setScanQueueWarningThreshold,
   setSmtpSettings,
@@ -137,6 +138,10 @@ const appSettingsSchema = z.object({
   // covers that host, so anything under a day would alert on every host
   // between scans. See the presence_alerts migration.
   hostDisappearedThresholdDays: z.number().int().min(1).optional(),
+  // Days as well, and for the same reason: coverage is measured against
+  // how often a range is actually swept, which is a schedule-scale
+  // interval, not a minutes-scale one.
+  networkCoverageStaleDays: z.number().int().min(1).optional(),
   // Saved as one object rather than field-by-field: these only make sense
   // together (a host without its port/auth is not a usable half-state),
   // and the form submits them as one section. password is the exception -
@@ -252,6 +257,11 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
       "hostDisappearedThresholdDays",
       "settings.host_disappeared_threshold_updated",
       setHostDisappearedThresholdDays as (v: never) => Promise<void>,
+    ],
+    [
+      "networkCoverageStaleDays",
+      "settings.network_coverage_stale_days_updated",
+      setNetworkCoverageStaleDays as (v: never) => Promise<void>,
     ],
   ];
   for (const [key, event, setter] of simpleSettings) {

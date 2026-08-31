@@ -196,7 +196,7 @@ func newServeCmd(configPath *string) *cobra.Command {
 				log.Warn("could not open scan audit log, continuing without it", "event", "auditlog.open_failed", "path", cfg.ScanAuditLogPath, "error", err.Error())
 			}
 
-			server := api.NewServer(c, cfg.Pipeline(), cfg.SubmitQueueDir, cfg.ControlAPIToken, auditLog, log)
+			server := api.NewServer(c, cfg.Pipeline(), cfg.MaxConcurrentScans, cfg.SubmitQueueDir, cfg.ControlAPIToken, auditLog, log)
 
 			// Flushes any backlog left behind by a prior run before this
 			// process starts serving - the periodic StartRetryWatcher
@@ -211,11 +211,11 @@ func newServeCmd(configPath *string) *cobra.Command {
 
 			pollInterval := time.Duration(cfg.PollIntervalSeconds) * time.Second
 			go server.StartPolling(context.Background(), pollInterval)
-			log.Info("polling for pending scan requests started", "event", "serve.polling_started", "poll_interval", pollInterval.String())
+			log.Info("polling for pending scan requests started", "event", "serve.polling_started", "poll_interval", pollInterval.String(), "max_concurrent_scans", cfg.MaxConcurrentScans)
 
-			// Separate loop from StartPolling above: that one blocks for
-			// the whole duration of a queue-triggered scan, so it can't
-			// also notice a cancellation request in the meantime.
+			// Separate loop from StartPolling above so that a cancellation
+			// is noticed on its own fixed interval regardless of what the
+			// queue loop is doing.
 			go server.StartCancelWatcher(context.Background(), pollInterval)
 			log.Info("scan cancellation watcher started", "event", "serve.cancel_watcher_started", "poll_interval", pollInterval.String())
 

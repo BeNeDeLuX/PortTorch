@@ -20,8 +20,15 @@
 //    very loop that fetches the correction.
 //
 // What's left is the operational tuning that actually gets changed in
-// practice: how fast and how hard this scanner probes. Every one is a
-// bounded integer, so a bad value is self-limiting rather than dangerous.
+// practice: how fast and how hard this scanner probes, plus how many
+// scans it takes on at once. Every one is a bounded integer, so a bad
+// value is self-limiting rather than dangerous.
+//
+// maxConcurrentScans is the one that isn't a pipeline setting - on the
+// scanner it lives on the serve-mode config rather than pipeline.Config,
+// and is applied by applyServeOverrides instead of applyConfigOverrides.
+// It travels over the same wire in the same map, so nothing here needs to
+// know the difference.
 export interface ScannerTunable {
   key: string;
   label: string;
@@ -31,6 +38,13 @@ export interface ScannerTunable {
 }
 
 export const SCANNER_TUNABLES: ScannerTunable[] = [
+  {
+    key: "maxConcurrentScans",
+    label: "Concurrent scans",
+    min: 1,
+    max: 8,
+    help: "How many queued scan requests this scanner works on at once. 1 (the default) means a wide or UDP sweep blocks every other request until it finishes. Each concurrent scan runs its own masscan/nmap and its own screenshot/nuclei workers, so this multiplies load rather than dividing it.",
+  },
   {
     key: "masscanRate",
     label: "masscan rate (packets/sec)",

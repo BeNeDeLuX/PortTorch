@@ -11,6 +11,7 @@ export interface AppSettings {
   queueBacklogThresholdMinutes: number;
   scannerOfflineThresholdMinutes: number;
   hostDisappearedThresholdDays: number;
+  networkCoverageStaleDays: number;
   smtp: SmtpSettings;
 }
 
@@ -53,6 +54,7 @@ export async function getAppSettings(): Promise<AppSettings> {
       "queue_backlog_threshold_minutes",
       "scanner_offline_threshold_minutes",
       "host_disappeared_threshold_days",
+      "network_coverage_stale_days",
       "smtp_host",
       "smtp_port",
       "smtp_secure",
@@ -73,6 +75,7 @@ export async function getAppSettings(): Promise<AppSettings> {
     queueBacklogThresholdMinutes: row.queue_backlog_threshold_minutes,
     scannerOfflineThresholdMinutes: row.scanner_offline_threshold_minutes,
     hostDisappearedThresholdDays: row.host_disappeared_threshold_days,
+    networkCoverageStaleDays: row.network_coverage_stale_days,
     smtp: {
       host: row.smtp_host,
       port: row.smtp_port,
@@ -111,6 +114,10 @@ export async function setScannerOfflineThresholdMinutes(value: number): Promise<
 
 export async function setHostDisappearedThresholdDays(value: number): Promise<void> {
   await db.updateTable("app_settings").set({ host_disappeared_threshold_days: value }).where("id", "=", 1).execute();
+}
+
+export async function setNetworkCoverageStaleDays(value: number): Promise<void> {
+  await db.updateTable("app_settings").set({ network_coverage_stale_days: value }).where("id", "=", 1).execute();
 }
 
 export async function setSmtpSettings(input: SmtpSettingsInput): Promise<void> {

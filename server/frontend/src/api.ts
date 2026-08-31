@@ -63,6 +63,7 @@ export interface AppSettings {
   queueBacklogThresholdMinutes: number;
   scannerOfflineThresholdMinutes: number;
   hostDisappearedThresholdDays: number;
+  networkCoverageStaleDays: number;
   smtp: SmtpSettingsView;
 }
 
@@ -427,6 +428,51 @@ export interface ExpiringCertificate {
   not_after: string | null;
   self_signed: boolean;
   fingerprint_sha256: string;
+}
+
+export interface MonitoredNetwork {
+  id: string;
+  label: string;
+  cidr: string;
+  scanner_agent_id: string | null;
+  scanner_agent_name: string | null;
+  created_by: string;
+  created_at: string;
+}
+
+export interface NetworkCoverage extends MonitoredNetwork {
+  // Full address span of the CIDR, network/broadcast included.
+  address_count: number;
+  host_count: number;
+  recent_host_count: number;
+  last_covered_at: string | null;
+  // Share of the range swept within the configured window, 0-1.
+  covered_fraction: number;
+  // Completed scans whose target the webserver cannot resolve to
+  // addresses (a DNS hostname, an IPv6 target) - excluded from
+  // covered_fraction rather than guessed at.
+  opaque_scan_count: number;
+}
+
+export interface NetworkCoverageResult {
+  staleDays: number;
+  networks: NetworkCoverage[];
+}
+
+export interface FleetSshHostKey {
+  id: string;
+  host_id: string;
+  host_ip: string;
+  host_hostname: string | null;
+  port: number;
+  key_type: string;
+  bits: number | null;
+  fingerprint_sha256: string;
+  fingerprint_md5: string | null;
+  captured_at: string;
+  // Distinct addresses this exact fingerprint was seen on - 1 means the
+  // key is unique to this host, anything higher is the finding.
+  shared_ip_count: number;
 }
 
 export interface TLSCertificate {
@@ -896,6 +942,14 @@ export const api = {
   deleteHost: (id: string) => request<void>(`/api/hosts/${id}`, { method: "DELETE" }),
 
   expiringCertificates: () => request<ExpiringCertificate[]>("/api/certificates"),
+  sshHostKeys: () => request<FleetSshHostKey[]>("/api/ssh-keys"),
+  networkCoverage: () => request<NetworkCoverageResult>("/api/networks"),
+  createNetwork: (label: string, cidr: string, scannerAgentId: string | null) =>
+    request<MonitoredNetwork>("/api/networks", {
+      method: "POST",
+      body: JSON.stringify({ label, cidr, scannerAgentId }),
+    }),
+  deleteNetwork: (id: string) => request<void>(`/api/networks/${id}`, { method: "DELETE" }),
   vulnerabilities: () => request<FleetVulnerability[]>("/api/vulnerabilities"),
   digest: (from: string, to: string) =>
     request<DigestResult>(`/api/digest?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),

@@ -46,12 +46,25 @@ type Server struct {
 	mu      sync.RWMutex
 	scans   map[string]*scanState
 	cancels map[string]context.CancelFunc
+	// runningScans is the number of scans currently occupying a slot.
+	// Deliberately its own counter rather than len(cancels): the queue
+	// loop has to reserve a slot *before* it claims a request from the
+	// webserver (claiming mutates scan_requests), so there is a window
+	// where a slot is taken but no cancel func exists yet.
+	runningScans int
 
-	// pcfg is read by every scan and written by the config watcher
-	// (StartConfigWatcher), so it needs its own lock. Deliberately not
-	// s.mu: that one is held around scan bookkeeping, and a scan starting
-	// shouldn't have to wait on, or block, a config poll.
+	// pcfg and maxScans are read by every scan and written by the config
+	// watcher (StartConfigWatcher), so they need their own lock.
+	// Deliberately not s.mu: that one is held around scan bookkeeping,
+	// and a scan starting shouldn't have to wait on, or block, a config
+	// poll.
 	cfgMu sync.RWMutex
+	// maxScans is how many queued scan requests may run at once, and
+	// baseMaxScans is config.yaml's own value - same base/override split
+	// as pcfg/baseCfg, for the same reason (clearing a dashboard override
+	// must restore the file's value, not the last pushed one).
+	maxScans     int
+	baseMaxScans int
 
 	metricsMu    sync.Mutex
 	scansTotal   map[string]int // keyed by terminal status: completed/failed/cancelled
@@ -66,21 +79,27 @@ type Server struct {
 // of "serve" mode remains consistently machine-readable. queueDir is
 // where a failed submission is durably queued for retry - see
 // internal/submitqueue. auditLog may be nil (see the field's own doc
-// comment).
-func NewServer(c *client.Client, pcfg pipeline.Config, queueDir, token string, auditLog *auditlog.AuditLog, logger *slog.Logger) *Server {
+// comment). maxConcurrentScans caps how many queued scan requests run at
+// once (see Config.MaxConcurrentScans); anything below 1 is treated as 1.
+func NewServer(c *client.Client, pcfg pipeline.Config, maxConcurrentScans int, queueDir, token string, auditLog *auditlog.AuditLog, logger *slog.Logger) *Server {
+	if maxConcurrentScans < 1 {
+		maxConcurrentScans = 1
+	}
 	s := &Server{
-		echo:       echo.New(),
-		client:     c,
-		pcfg:       pcfg,
-		baseCfg:    pcfg,
-		queueDir:   queueDir,
-		auditLog:   auditLog,
-		token:      token,
-		logger:     logger,
-		started:    time.Now(),
-		scans:      make(map[string]*scanState),
-		cancels:    make(map[string]context.CancelFunc),
-		scansTotal: make(map[string]int),
+		echo:         echo.New(),
+		client:       c,
+		pcfg:         pcfg,
+		baseCfg:      pcfg,
+		maxScans:     maxConcurrentScans,
+		baseMaxScans: maxConcurrentScans,
+		queueDir:     queueDir,
+		auditLog:     auditLog,
+		token:        token,
+		logger:       logger,
+		started:      time.Now(),
+		scans:        make(map[string]*scanState),
+		cancels:      make(map[string]context.CancelFunc),
+		scansTotal:   make(map[string]int),
 	}
 	s.echo.HideBanner = true
 	s.echo.HidePort = true
@@ -178,7 +197,14 @@ func (s *Server) handleCreateScan(c echo.Context) error {
 	// webserver's scan_requests queue entirely) has no scan-profile
 	// concept - always runs DefaultNSEScripts and never runs nuclei, same
 	// as before nuclei existed.
-	go s.runScan(jobID, req.Target, req.Ports, nil, nil, nil, state)
+	// Occupies a slot like a queued scan does (see reserveScanSlot): this
+	// one is never refused, but the queue loop must not pile more work on
+	// top of a scan already running on this host.
+	s.reserveScanSlot()
+	go func() {
+		defer s.releaseScanSlot()
+		s.runScan(jobID, req.Target, req.Ports, nil, nil, nil, state)
+	}()
 
 	return c.JSON(http.StatusAccepted, map[string]string{"id": jobID, "status": "running"})
 }
@@ -207,18 +233,24 @@ func (s *Server) StartPolling(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.pollOnce(ctx)
+			// Keeps claiming until the slots are full or the queue is
+			// empty. pollOnce returns as soon as the scan is *started*
+			// (it runs in its own goroutine), so this loop costs one HTTP
+			// poll per claimed request and exactly one - as before - when
+			// there is nothing queued.
+			for s.pollOnce(ctx) {
+			}
 		}
 	}
 }
 
 // StartCancelWatcher periodically checks whether an operator has
 // requested that any currently-running, cancellable scan stop, and if so
-// cancels its context - this has to run as a separate goroutine/loop from
-// StartPolling, since that loop blocks for the entire duration of a
-// queue-triggered scan (inside s.runScan) and couldn't notice anything
-// else in the meantime. Blocks until ctx is done - typically started
-// alongside s.Start() and StartPolling().
+// cancels its context. Its own goroutine/loop rather than a step inside
+// StartPolling so that a cancellation is noticed on its own fixed
+// interval, independently of how busy the queue loop happens to be.
+// Blocks until ctx is done - typically started alongside s.Start() and
+// StartPolling().
 func (s *Server) StartCancelWatcher(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -247,10 +279,10 @@ func (s *Server) pipelineConfig() pipeline.Config {
 // anything to a scanner, so anything set on the dashboard has to be
 // noticed by the scanner itself on its next poll.
 //
-// Its own loop rather than a step inside pollOnce, because that loop
-// blocks for the entire duration of a queue-triggered scan - and "lower
-// the rate on this scanner, it's hammering a fragile segment" is exactly
-// the instruction you want to land during a long scan, not after it.
+// Its own loop rather than a step inside pollOnce, so that "lower the
+// rate on this scanner, it's hammering a fragile segment" lands on a
+// fixed interval during a long scan rather than whenever the queue loop
+// next happens to have something to do.
 //
 // Overrides are applied to the in-memory config only; config.yaml on disk
 // is never rewritten. A restart therefore falls back to the file, and the
@@ -283,11 +315,33 @@ func (s *Server) refreshConfigOverrides(ctx context.Context) {
 
 	s.cfgMu.Lock()
 	changed := applyConfigOverrides(&s.pcfg, s.baseCfg, overrides)
+	if maxScans, ok := applyServeOverrides(&s.maxScans, s.baseMaxScans, overrides); ok {
+		changed["maxConcurrentScans"] = maxScans
+	}
 	s.cfgMu.Unlock()
 
 	if len(changed) > 0 {
 		s.logger.Info("applied dashboard config overrides", "event", "scanner.config_applied", "settings", changed)
 	}
+}
+
+// applyServeOverrides is applyConfigOverrides' counterpart for the
+// serve-mode tunables that aren't pipeline settings. Kept separate rather
+// than folded into pipeline.Config: maxConcurrentScans governs how many
+// scans this process runs at once, and putting it on the struct that gets
+// handed to RunScan would give every scan a field about the queue it
+// knows nothing about.
+//
+// Same base-first semantics: clearing the override on the dashboard
+// restores config.yaml's own value. Reports the new value and whether it
+// actually changed.
+func applyServeOverrides(maxScans *int, base int, overrides map[string]int) (int, bool) {
+	before := *maxScans
+	*maxScans = base
+	if value, ok := overrides["maxConcurrentScans"]; ok && value >= 1 {
+		*maxScans = value
+	}
+	return *maxScans, *maxScans != before
 }
 
 // applyConfigOverrides overlays overrides onto cfg, starting from base -
@@ -372,6 +426,48 @@ func (s *Server) IsScanning() bool {
 	return len(s.cancels) > 0
 }
 
+// tryAcquireScanSlot reserves one of the maxScans slots for a scan the
+// queue loop is about to claim, or reports false if they are all busy.
+//
+// Reserved before the claim rather than after, because claiming mutates
+// scan_requests on the webserver: a request claimed and then not run
+// would sit there looking like this scanner was working on it.
+func (s *Server) tryAcquireScanSlot() bool {
+	limit := s.maxConcurrentScans()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.runningScans >= limit {
+		return false
+	}
+	s.runningScans++
+	return true
+}
+
+// reserveScanSlot takes a slot without checking the limit. Used by the
+// local REST endpoint, which is an explicit action taken by someone on
+// this host and so is never refused - but it still occupies a slot, so
+// the queue loop backs off while it runs rather than piling more work on
+// top of it.
+func (s *Server) reserveScanSlot() {
+	s.mu.Lock()
+	s.runningScans++
+	s.mu.Unlock()
+}
+
+func (s *Server) releaseScanSlot() {
+	s.mu.Lock()
+	if s.runningScans > 0 {
+		s.runningScans--
+	}
+	s.mu.Unlock()
+}
+
+func (s *Server) maxConcurrentScans() int {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return s.maxScans
+}
+
 // StartRetryWatcher periodically drains the submit queue (see
 // internal/submitqueue) in the background - the "serve" process is the
 // only entry point long-running enough for this to matter; "scan"/"menu"
@@ -433,18 +529,35 @@ func (s *Server) checkCancellations(ctx context.Context) {
 	}
 }
 
-func (s *Server) pollOnce(ctx context.Context) {
+// pollOnce claims at most one queued scan request and starts it in the
+// background, reporting whether it actually claimed one.
+//
+// Slot ownership: the slot is taken here and, once a scan has been
+// started, handed to that scan's own goroutine, which releases it when
+// the scan finishes. Every path that returns without starting a scan
+// releases it itself.
+func (s *Server) pollOnce(ctx context.Context) bool {
+	if !s.tryAcquireScanSlot() {
+		return false
+	}
+	slotHandedOver := false
+	defer func() {
+		if !slotHandedOver {
+			s.releaseScanSlot()
+		}
+	}()
+
 	pollCtx, cancel := context.WithTimeout(ctx, timeoutCreateJob)
 	scanReq, err := s.client.PollNextScanRequest(pollCtx)
 	cancel()
 	if err != nil {
 		s.recordPollResult(false)
 		s.logger.Error("polling scan requests failed", "event", "poll.failed", "error", err.Error())
-		return
+		return false
 	}
 	s.recordPollResult(true)
 	if scanReq == nil {
-		return
+		return false
 	}
 
 	jobCtx, jobCancel := context.WithTimeout(ctx, timeoutCreateJob)
@@ -453,7 +566,7 @@ func (s *Server) pollOnce(ctx context.Context) {
 	jobCancel()
 	if err != nil {
 		s.logger.Error("creating scan job for scan request failed", "event", "poll.create_job_failed", "scan_request_id", scanReq.ID, "error", err.Error())
-		return
+		return false
 	}
 
 	s.logger.Info("scan request claimed", "event", "scan_request.claimed", "scan_request_id", scanReq.ID, "scan_job_id", jobID, "target", scanReq.TargetSpec, "ports", scanReq.PortSpec)
@@ -463,14 +576,24 @@ func (s *Server) pollOnce(ctx context.Context) {
 	s.scans[jobID] = state
 	s.mu.Unlock()
 
-	s.runScan(jobID, scanReq.TargetSpec, scanReq.PortSpec, resolveNSEScripts(scanReq.NSEProfile, scanReq.NSEScripts), resolveNucleiProfile(scanReq.NucleiProfile, scanReq.NucleiTags), scanReq.MasscanRate, state)
+	slotHandedOver = true
+	go func() {
+		defer s.releaseScanSlot()
 
-	snapshot := state.snapshot()
-	completeCtx, completeCancel := context.WithTimeout(context.Background(), timeoutCreateJob)
-	defer completeCancel()
-	if err := s.client.CompleteScanRequest(completeCtx, scanReq.ID, jobID, snapshot.Status); err != nil {
-		s.logger.Error("reporting scan request completion failed", "event", "poll.complete_report_failed", "scan_request_id", scanReq.ID, "error", err.Error())
-	}
+		s.runScan(jobID, scanReq.TargetSpec, scanReq.PortSpec, resolveNSEScripts(scanReq.NSEProfile, scanReq.NSEScripts), resolveNucleiProfile(scanReq.NucleiProfile, scanReq.NucleiTags), scanReq.MasscanRate, state)
+
+		snapshot := state.snapshot()
+		// context.Background(), not ctx: the scan is over either way and
+		// the webserver still needs to be told, even if the process is
+		// shutting down and ctx has already been cancelled.
+		completeCtx, completeCancel := context.WithTimeout(context.Background(), timeoutCreateJob)
+		defer completeCancel()
+		if err := s.client.CompleteScanRequest(completeCtx, scanReq.ID, jobID, snapshot.Status); err != nil {
+			s.logger.Error("reporting scan request completion failed", "event", "poll.complete_report_failed", "scan_request_id", scanReq.ID, "error", err.Error())
+		}
+	}()
+
+	return true
 }
 
 // resolveNSEScripts turns a webserver-provided scan-profile kind + optional

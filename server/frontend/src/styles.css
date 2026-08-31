@@ -2750,3 +2750,49 @@ th {
     display: block !important;
   }
 }
+
+/* Compact at-a-glance counts above a list page's own table (SSH Host
+   Keys). Deliberately not .health-card: those are per-check status tiles
+   that link somewhere, these are plain numbers. */
+.summary-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.summary-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 1rem;
+  min-width: 9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.summary-card.summary-card-warn {
+  border-left-color: var(--danger);
+}
+
+.summary-card-value {
+  font-size: 1.4rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.summary-card-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+/* A SHA-256 fingerprint is ~50 characters with no natural break point -
+   without this it forces the table wider than every other column
+   combined. (The whole app is already monospace, so no font-family here.) */
+.fingerprint-cell {
+  font-size: 0.8rem;
+  word-break: break-all;
+  max-width: 26rem;
+}

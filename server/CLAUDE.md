@@ -143,6 +143,26 @@ Minutes since local midnight rather than a `time` column: the only operation is 
 
 **Out-of-window runs are deferred, not skipped.** `scheduler.ts`'s `tick()` `continue`s without touching `next_run_at`, so the run stays owed and happens the moment the window opens - a nightly sweep whose window starts at 22:00 starts at 22:00 rather than losing the night and waiting a full cycle. Nothing is logged per deferral (that loop runs every 60 seconds, so a schedule waiting eight hours would emit ~480 identical lines into a stream every line of which is meant to be worth shipping to a SIEM); instead `GET /api/schedules` computes a `window_blocked` flag server-side - the answer to "why hasn't this run yet", and not something the browser's own clock and timezone could authoritatively decide for a window stored in the schedule's zone.
 
+### SSH host keys, fleet-wide
+
+`ssh_host_keys` had been populated since the TLS/SSH fingerprint work but was only ever rendered on one host's detail page, which structurally cannot show the finding that matters: **a host key identifies one machine, so the same fingerprint on more than one address means a cloned VM, a golden image that shipped its keys, or a genuinely shared private key.** `GET /api/ssh-keys` (`sshKeys/routes.ts`) is the certificates router's counterpart - same `distinctOn` "newest per identity" shape, identity here being `(host_id, port, key_type)`.
+
+**Sharing is counted in distinct addresses, not distinct `hosts` rows.** Host identity is `(ip, scanner_agent_id)` (see the `hostIdentity` integration test), so one physical machine reachable from two scanners is two rows legitimately serving the same key - counting rows would report a clone on every multi-scanner deployment. The grouping also runs over the scanner-scoped result set, so a restricted user never sees a count that includes hosts they can't open.
+
+Weak-key classification lives in `frontend/src/lib/sshKeyRisk.ts` (mirroring `certExpiry.ts`, which is likewise frontend-side) and is deliberately narrow: `ssh-dss` always (fixed at 1024 bits, disabled by default in OpenSSH since 7.0) and RSA below 2048 bits. Nothing else is called out - a badge that fires on healthy keys is one people learn to ignore - and a **null** `bits` is missing data, not a small key, so it stays unflagged. The honest caveat is on the page itself: a multi-homed host serving the same key on two of its own addresses is indistinguishable here from a clone.
+
+### Network coverage: the one question a findings-only inventory can't answer
+
+Everything else in this database exists because a scan found it, which makes "which of my ranges has nobody scanned?" unanswerable - a range never scanned produces no rows and looks exactly like a range with nothing in it. `monitored_networks` (migration `1744300000000_monitored_networks.js`) is the declared side of that: label, `cidr`, optional `scanner_agent_id` with the same NULL-means-global convention and the same two partial unique indexes as `scan_excludes`, and `ON DELETE CASCADE` rather than `SET NULL` (promoting a scanner-scoped range to a global one would change what it counts, not just who owns it).
+
+**Coverage is derived on read, never stored**, so it cannot drift from the scan history: `GET /api/networks` groups `scan_jobs` by `(target_spec, scanner_agent_id)` - schedules re-run a handful of specs over and over, so the distinct-spec count is tiny next to the job count - parses each spec with `lib/ipRange.ts`, and merges the overlapping intervals against the tracked range. Merging is what makes the number honest: a `/32` rescan inside a `/24` is 1/256 covered, not "covered", and two overlapping sweeps count their shared addresses once instead of exceeding 100%.
+
+`parseTargetSpecRanges` returns **null, not an empty list**, for anything it can't interpret exactly - a DNS hostname (resolved on the scanner, so the webserver genuinely doesn't know what it hit), an IPv6 target, a malformed part. Those are surfaced as `opaque_scan_count` rather than counted either way, so a low coverage figure can be read for what it is; the UI shows that chip only where coverage is already incomplete, since on a fully-covered range it's pure noise. Host counts come from Postgres's own `hosts.ip <<= monitored_networks.cidr` - `<<=`, not `<<`: strict containment would return nothing for a tracked `/32`.
+
+**`normaliseCidr` is not cosmetic.** Postgres's `cidr` type *rejects* a value with host bits set (`invalid cidr value`) rather than normalising it, while masscan and nmap both accept `10.0.0.37/24` happily - so a form an operator legitimately types would be a 500 on the way in without it. Normalising before the DB also makes the duplicate check catch `10.0.0.37/24` against an existing `10.0.0.0/24`.
+
+`app_settings.network_coverage_stale_days` (default 30) is the window coverage is measured over, alongside the other alerting tunables on the Settings page.
+
 ### Dashboard-managed scanner tuning
 
 A scanner's baseline config lived only in `config.yaml` on its host, so changing concurrency or a timeout meant SSH, an editor and a service restart - out of step with a scanner that can already update its own binary and refresh its nuclei templates from the dashboard. `scanner_agents.config_overrides` (jsonb, migration `1744200000000_scanner_config_overrides.js`) holds allowlisted keys only; `PUT /api/agents/:id/config` (admin) validates against `scannerConfig/tunables.ts` and `GET /api/ingest/config` (scanner-authenticated) is what the scanner polls.
@@ -150,6 +170,8 @@ A scanner's baseline config lived only in `config.yaml` on its host, so changing
 **The allowlist's exclusions are the design.** `webserverUrl`/`apiKey`/`serverCaCertPath`/`insecureSkipVerify` would orphan the scanner permanently on a wrong value - the one class of mistake that can never be fixed remotely, since fixing it needs the connection it just broke. Every `*Path` breaks scanning outright and is equally unfixable from here. `listenAddr`/`controlApiToken` are a local security surface. `submitQueueDir`/`scanAuditLogPath` are filesystem paths on a host this webserver knows nothing about. `pollIntervalSeconds`/`retryIntervalSeconds` are read once when `serve` builds its tickers, and a bad value would throttle the very loop that fetches the correction. What's left is bounded-integer tuning where a bad value is self-limiting. An unknown key is **rejected**, not dropped - silently ignoring a misspelling would render as a successful save that did nothing.
 
 `GET /api/agents/config/tunables` serves the allowlist itself so the dashboard's form is generated from the same definition the server validates against, and the two can't drift on bounds or labels.
+
+`maxConcurrentScans` is the one entry that isn't a pipeline setting - on the scanner it lives on the serve-mode config and is applied by `applyServeOverrides` rather than `applyConfigOverrides`. It travels in the same map over the same wire, so nothing on this side knows the difference. See `scanner/CLAUDE.md` for what it actually changes.
 
 ### Narrow viewports: two breakpoints, added after measuring
 

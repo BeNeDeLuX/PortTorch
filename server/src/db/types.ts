@@ -573,6 +573,18 @@ export interface DigestEmailStateTable {
   last_sent_date: ColumnType<Date | null, string | null | undefined, string | null>;
 }
 
+export interface MonitoredNetworksTable {
+  id: Generated<string>;
+  label: string;
+  // Postgres cidr - comes back as a normalised string ("10.0.0.0/24").
+  cidr: string;
+  // Same convention as ScanExcludesTable.scanner_agent_id: null = tracked
+  // across every scanner, set = scoped to that one scanner's network.
+  scanner_agent_id: string | null;
+  created_by: string;
+  created_at: ColumnType<Date, string | undefined, never>;
+}
+
 export interface ScanExcludesTable {
   id: Generated<string>;
   kind: string;
@@ -668,6 +680,7 @@ export interface AppSettingsTable {
   // presence_alerts migration.
   scanner_offline_threshold_minutes: ColumnType<number, number | undefined, number>;
   host_disappeared_threshold_days: ColumnType<number, number | undefined, number>;
+  network_coverage_stale_days: ColumnType<number, number | undefined, number>;
   // Was config.ts's SMTP_* env vars - moved here for the same reason as
   // the fields above, plus one specific to mail: it's the setting most
   // likely to be wrong on first setup and to need a few quick iterations,
@@ -707,6 +720,7 @@ export interface Database {
   host_tags: HostTagsTable;
   host_comments: HostCommentsTable;
   scan_excludes: ScanExcludesTable;
+  monitored_networks: MonitoredNetworksTable;
   saved_searches: SavedSearchesTable;
   saved_search_matches: SavedSearchMatchesTable;
   user_scanner_agents: UserScannerAgentsTable;

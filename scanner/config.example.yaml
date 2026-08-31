@@ -134,6 +134,15 @@ controlApiToken: "REPLACE_ME"
 # How often "scanner serve" asks the webserver for pending scan requests
 # (dashboard rescan button or recurring schedules).
 pollIntervalSeconds: 15
+# How many queued scan requests "scanner serve" works on at the same time.
+# 1 is the historical behaviour: the poll loop picks up one request and
+# does nothing else until it finishes, so a wide or UDP sweep blocks every
+# other queued request - including a high-priority one - for as long as it
+# runs. Raising it is a resource decision, not a free speedup: concurrency,
+# gowitnessConcurrency, nucleiConcurrency and the rest are per-scan, so two
+# scans at once means twice the processes and twice the bandwidth. Also
+# settable per scanner from the dashboard (Scanner Agents -> Configure).
+maxConcurrentScans: 1
 
 # If a host's result fails to submit (e.g. the webserver is briefly
 # unreachable mid-scan), it's durably queued here instead of being lost -

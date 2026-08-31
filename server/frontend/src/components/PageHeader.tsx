@@ -38,6 +38,7 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
             { to: "/schedules", label: "Schedule Scans" },
             { to: "/agents", label: "Scanner Agents" },
             { to: "/scan-history", label: "Scan History" },
+            { to: "/networks", label: "Network Coverage" },
             ...(me.role === "admin"
               ? [
                   { to: "/scan-profiles", label: "Scan Profiles" },
@@ -48,6 +49,7 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
           ]}
         />
         <NavLink to="/certificates">Certificates</NavLink>
+        <NavLink to="/ssh-keys">SSH Keys</NavLink>
         <NavLink to="/vulnerabilities">Vulnerabilities</NavLink>
         <NavLink to="/web-findings">Web Findings</NavLink>
         <NavLink to="/digest">Digest</NavLink>

@@ -91,6 +91,20 @@ type Config struct {
 	// webserver for pending scan requests (rescan button/schedules).
 	PollIntervalSeconds int `yaml:"pollIntervalSeconds"`
 
+	// MaxConcurrentScans is how many queued scan requests "scanner serve"
+	// will work on at the same time. Defaults to 1, which is exactly the
+	// behaviour that existed before this setting: the poll loop picked up
+	// one request and did nothing else until it finished, so a wide or
+	// UDP sweep could block every other queued request - including a
+	// high-priority one - for hours.
+	//
+	// Raising it is genuinely a resource decision, not a free speedup:
+	// each concurrent scan runs its own masscan/nmap plus its own
+	// gowitness/nuclei worker pools (concurrency, gowitnessConcurrency,
+	// ... are per-scan, not global), so two scans at once means twice the
+	// processes and twice the bandwidth.
+	MaxConcurrentScans int `yaml:"maxConcurrentScans"`
+
 	// SubmitQueueDir holds host results that failed to submit to the
 	// webserver (see internal/submitqueue) until they can be retried -
 	// defaults to a "submit-queue" directory next to the config file
@@ -144,6 +158,7 @@ func defaults() Config {
 
 		ListenAddr:          ":9090",
 		PollIntervalSeconds: 15,
+		MaxConcurrentScans:  1,
 
 		RetryIntervalSeconds: 60,
 	}
@@ -178,6 +193,14 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.ScanAuditLogPath == "" {
 		cfg.ScanAuditLogPath = filepath.Join(filepath.Dir(absPath), "scan-audit.jsonl")
+	}
+	// Clamped rather than rejected. A config that predates this field
+	// simply keeps the default of 1 (yaml.Unmarshal only overwrites keys
+	// the file actually has), so this only ever catches an explicit 0 or
+	// a negative - where silently refusing to run any scan at all would
+	// be a far worse failure than quietly meaning "one".
+	if cfg.MaxConcurrentScans < 1 {
+		cfg.MaxConcurrentScans = 1
 	}
 
 	return &cfg, nil

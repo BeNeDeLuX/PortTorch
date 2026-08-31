@@ -128,13 +128,29 @@ Supports two distro families, detected from `/etc/os-release`'s `ID`/`ID_LIKE` (
 
 
 
+### The queue loop runs several scans at once (`maxConcurrentScans`)
+
+`StartPolling` used to call `pollOnce` inline, so the loop blocked for the entire duration of a queue-triggered scan: a `/16` or a wide UDP sweep held the queue for hours, and the webserver's scan priority could only decide *who's next*, never *who gets in now*. `config.yaml`'s `maxConcurrentScans` (default **1** - byte-for-byte the old behaviour) caps how many queued requests this process works on at once, and the ticker branch keeps claiming until the slots are full or the queue is empty.
+
+**Nothing in the pipeline needed changing for this.** The local REST endpoint has always done `go s.runScan(...)`, so concurrent scans were already possible on this process and every temp file involved is already `os.CreateTemp`/`os.MkdirTemp` with a random suffix (masscan output, exclude files, gowitness/RDP shot dirs, nuclei JSONL, `submitqueue`'s own entry dirs), and `CleanupScreenshots` only ever removes the dirs belonging to its own result. The change is entirely in who is allowed to start a scan.
+
+**A slot is reserved *before* the claim, not after.** `PollNextScanRequest` mutates `scan_requests` on the webserver, so claiming a request this process then can't run would leave it looking like this scanner was working on it. That's also why `runningScans` is its own counter rather than `len(s.cancels)`: there's a window where a slot is taken but no cancel func exists yet. `pollOnce` owns the slot and hands it to the scan's goroutine once one is actually started; every path that returns without starting a scan releases it itself.
+
+A **REST-triggered** scan (`handleCreateScan`) takes a slot too, but via `reserveScanSlot`, which doesn't check the limit: someone running a scan locally on that host is an explicit action and is never refused - it just means the queue loop backs off rather than piling more work on top of it.
+
+An empty queue still costs exactly one poll per tick, not one per free slot, so raising the limit doesn't multiply the request rate against the webserver for an idle scanner - pinned down by its own test, alongside tests that the default of 1 claims exactly one request while a scan is running, that a limit of 3 genuinely runs three in parallel, and that freed slots are reusable (a leaked slot would leave the scanner permanently unable to pick up work). All run under `-race`.
+
+Raising it is a resource decision, not a free speedup: `concurrency`, `gowitnessConcurrency`, `nucleiConcurrency` and the rest are **per-scan**, so two scans at once means twice the processes and twice the bandwidth.
+
 ## Dashboard-managed config overrides
 
-`serve` mode runs a fifth watcher alongside `StartPolling`/`StartCancelWatcher`/`StartUpdateWatcher`/`StartTemplateUpdateWatcher`: `Server.StartConfigWatcher` polls `GET /api/ingest/config` and overlays the returned tuning onto the in-memory pipeline config. Its own loop rather than a step inside `pollOnce` for the same reason as the others - that loop blocks for the entire duration of a queue-triggered scan, and "lower the rate on this scanner, it's hammering a fragile segment" is exactly the instruction you want to land *during* a long scan, not after it.
+`serve` mode runs a fifth watcher alongside `StartPolling`/`StartCancelWatcher`/`StartUpdateWatcher`/`StartTemplateUpdateWatcher`: `Server.StartConfigWatcher` polls `GET /api/ingest/config` and overlays the returned tuning onto the in-memory pipeline config. Its own loop rather than a step inside `pollOnce` for the same reason as the others: "lower the rate on this scanner, it's hammering a fragile segment" should land on a fixed interval *during* a long scan, not whenever the queue loop next happens to have something to do.
 
 **Overrides are applied in memory only; `config.yaml` on disk is never rewritten.** A restart therefore falls back to the file and the override is simply fetched again on the next tick - which is also what makes a bad override always undoable from the dashboard, with no risk of having corrupted the file in the meantime.
 
 `applyConfigOverrides` resets to `Server.baseCfg` (the config as loaded at startup) before applying, and that reset is the load-bearing part: without it, *clearing* a setting on the dashboard would leave the last pushed value in memory until the process restarted, which is the opposite of what clearing means. It returns only the settings whose value actually changed, so `scanner.config_applied` appears when something really did rather than on every poll. An unknown key is ignored rather than erroring, so a scanner older than a newly added tunable keeps working.
+
+`maxConcurrentScans` is the one override that isn't a pipeline setting - it governs how many scans this process runs at once, and putting it on the struct handed to `RunScan` would give every scan a field about a queue it knows nothing about. `applyServeOverrides` handles it with the identical base-first semantics; the webserver sends it in the same map and knows no difference.
 
 `s.pcfg` gained its own `cfgMu` now that a watcher writes it - deliberately not `s.mu`, which is held around scan bookkeeping; a scan starting shouldn't block, or be blocked by, a config poll. `runScan` takes its copy via `s.pipelineConfig()` under that lock, so a scan runs against one coherent config even if the watcher updates it mid-scan.
 
