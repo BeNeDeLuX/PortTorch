@@ -84,6 +84,11 @@ export interface HostFilterParams {
   osFamily: string;
   deviceType: string;
   hideEmpty: boolean;
+  // Retired hosts (hosts.retired_at) stay in the list by default rather
+  // than vanishing: hiding rows silently would make the fleet look
+  // smaller than it is, and someone has to be able to find a host again
+  // to un-retire it. This is the opt-in way to get them out of the way.
+  hideRetired: boolean;
   hasScreenshot: boolean;
   hasStalePorts: boolean;
   lastSeenAfter: string;
@@ -152,6 +157,7 @@ export function parseHostFilterParams(query: Record<string, unknown>): HostFilte
     osFamily: typeof query.osFamily === "string" ? query.osFamily.trim() : "",
     deviceType: typeof query.deviceType === "string" ? query.deviceType.trim() : "",
     hideEmpty: query.hideEmpty === "true" || query.hideEmpty === "1",
+    hideRetired: query.hideRetired === "true" || query.hideRetired === "1",
     hasScreenshot: query.hasScreenshot === "true" || query.hasScreenshot === "1",
     hasStalePorts: query.hasStalePorts === "true" || query.hasStalePorts === "1",
     lastSeenAfter: typeof query.lastSeenAfter === "string" ? query.lastSeenAfter.trim() : "",
@@ -183,6 +189,7 @@ export function applyHostFilters(
     osFamily,
     deviceType,
     hideEmpty,
+    hideRetired,
     hasScreenshot,
     hasStalePorts,
     lastSeenAfter,
@@ -391,6 +398,10 @@ export function applyHostFilters(
     query = query.where("hosts.id", "in", ids);
   }
 
+  if (hideRetired) {
+    query = query.where("hosts.retired_at", "is", null);
+  }
+
   if (hideEmpty) {
     query = query.where((eb: any) =>
       eb.exists(
@@ -489,6 +500,7 @@ hostsRouter.get("/", asyncHandler(async (req, res) => {
       "hosts.device_type as device_type",
       "hosts.mac_address as mac_address",
       "hosts.mac_vendor as mac_vendor",
+      "hosts.retired_at as retired_at",
       // A host's identity is (ip, scanner_agent_id), not ip alone - two
       // different scanners (different networks) can each have a real
       // device at the same ip, so this is surfaced here to tell those
@@ -829,6 +841,7 @@ function hasActiveHostFilters(f: HostFilterParams): boolean {
       f.osFamily ||
       f.deviceType ||
       f.hideEmpty ||
+      f.hideRetired ||
       f.hasScreenshot ||
       f.hasStalePorts ||
       f.lastSeenAfter ||
@@ -1240,6 +1253,40 @@ hostsRouter.patch("/:id/probe-hostname", requireOperator, asyncHandler(async (re
   });
 
   res.status(200).json({ probe_hostname: parsed.data.hostname });
+}));
+
+const retiredSchema = z.object({ retired: z.boolean() });
+
+// "I know this one is gone, stop telling me" - the answer host.disappeared
+// never had. Deliberately narrow: it suppresses that one alert and nothing
+// else, and the host keeps its full observation history rather than being
+// deleted to silence it. Retiring also clears any outstanding
+// disappeared_alert_sent_at, so un-retiring it later starts from a clean
+// slate instead of staying silent because the flag was already set.
+hostsRouter.patch("/:id/retired", requireOperator, asyncHandler(async (req, res) => {
+  const parsed = retiredSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const retiredAt = parsed.data.retired ? new Date().toISOString() : null;
+  const updated = await db
+    .updateTable("hosts")
+    .set({ retired_at: retiredAt, ...(parsed.data.retired ? { disappeared_alert_sent_at: null } : {}) })
+    .where("id", "=", req.params.id)
+    .returning(["id", "ip", "retired_at"])
+    .executeTakeFirst();
+  if (!updated) {
+    res.status(404).json({ error: "host not found" });
+    return;
+  }
+
+  const event = parsed.data.retired ? "host.retired" : "host.unretired";
+  logger.info({ event, host_id: updated.id, ip: updated.ip, set_by: req.session.username });
+  recordAudit(event, req.session.username, req.ip, { host_id: updated.id, ip: updated.ip });
+
+  res.status(200).json({ retired_at: updated.retired_at });
 }));
 
 const nseProfileSelectionSchema = z.discriminatedUnion("kind", [

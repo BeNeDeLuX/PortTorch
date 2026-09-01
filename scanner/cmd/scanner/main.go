@@ -209,6 +209,11 @@ func newServeCmd(configPath *string) *cobra.Command {
 				log.Info("submit queue drained", "event", "submitqueue.drained", "succeeded", drained.Succeeded, "gave_up", drained.GaveUp, "pending", drained.Pending, "dropped", drained.Dropped, "rejected", drained.Rejected)
 			}
 
+			// Reported from the very first request, so an idle scanner
+			// shows its capacity on the dashboard rather than "unknown"
+			// until it happens to run something.
+			server.PublishScanSlots()
+
 			pollInterval := time.Duration(cfg.PollIntervalSeconds) * time.Second
 			go server.StartPolling(context.Background(), pollInterval)
 			log.Info("polling for pending scan requests started", "event", "serve.polling_started", "poll_interval", pollInterval.String(), "max_concurrent_scans", cfg.MaxConcurrentScans)

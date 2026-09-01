@@ -39,6 +39,7 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
             { to: "/agents", label: "Scanner Agents" },
             { to: "/scan-history", label: "Scan History" },
             { to: "/networks", label: "Network Coverage" },
+            { to: "/import", label: "Import Scan" },
             ...(me.role === "admin"
               ? [
                   { to: "/scan-profiles", label: "Scan Profiles" },

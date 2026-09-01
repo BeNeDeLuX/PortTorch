@@ -143,6 +143,40 @@ Minutes since local midnight rather than a `time` column: the only operation is 
 
 **Out-of-window runs are deferred, not skipped.** `scheduler.ts`'s `tick()` `continue`s without touching `next_run_at`, so the run stays owed and happens the moment the window opens - a nightly sweep whose window starts at 22:00 starts at 22:00 rather than losing the night and waiting a full cycle. Nothing is logged per deferral (that loop runs every 60 seconds, so a schedule waiting eight hours would emit ~480 identical lines into a stream every line of which is meant to be worth shipping to a SIEM); instead `GET /api/schedules` computes a `window_blocked` flag server-side - the answer to "why hasn't this run yet", and not something the browser's own clock and timezone could authoritatively decide for a window stored in the schedule's zone.
 
+### Importing an nmap XML report
+
+Everything else in this database exists because a PortTorch scanner found it, which left no way in for an nmap run from a network with no agent, or a scan predating the platform. `POST /api/imports/nmap` (operator, multipart) is that way in.
+
+**The imported results go through `ingestHostPayload` - the same function `POST /api/ingest/hosts` uses** - rather than their own insert path, so an import is indistinguishable from a scanner submission once it lands: same upsert semantics, same auto-tags, same `host.new`/`port.opened`/`port.closed` webhooks, same audit trail. That function is the ~330-line body of the ingest route, extracted verbatim and made to take the payload plus `{scannerAgentId, scannerAgentName, sourceIp}` instead of reading them off the request; the route is now a thin wrapper mapping its result back to 400/404/204. A second insert path would drift, and the half nobody exercises daily is the half that would be wrong. The whole existing integration suite covers that path, which is what made the extraction safe.
+
+`imports/nmapXml.ts` uses a real XML parser (`fast-xml-parser`, no transitive dependencies) rather than regexes - deliberately, since the input is an uploaded file and therefore attacker-influenceable, and nmap's own output already contains the awkward cases: the very first real sample captured for the tests had a `servicefp` attribute full of `&quot;`-escaped probe transcripts. `tests/fixtures/nmap-real-sample.xml` is genuine `nmap -sV` output (7.99, against two local listeners plus one closed port), not a hand-written approximation; the shapes one sample can't cover - a down host, a single port vs. several, `open|filtered`, a combined TCP+UDP run, MAC/OS classification - have their own constructed cases.
+
+Three decisions worth keeping:
+
+- **A scanner agent is required, not optional.** Host identity is `(ip, scanner_agent_id)`, so an unattributed host couldn't be told apart from the same private address on a different scanner's network.
+- **`port_spec` comes from `<scaninfo>`**, not from the discovered ports and not from re-parsing nmap's `args` string. That's what lets an import close ports the way a real scan does - the ingest path only concludes "closed" for ports the job actually covered, so deriving the spec from what was *found* would make every port look covered and close nothing. Ports nmap reports as closed/filtered are dropped from the payload for the same reason: the ingest path derives closures itself, protocol-aware.
+- **The scanned range is the importer's to state.** A /24 sweep that found three hosts covered 256 addresses, not three, and only Network Coverage can use that distinction - so `targetSpec` is an optional field that wins over the addresses in the file, which are the fallback.
+
+### network.coverage_stale and ssh_key.shared
+
+The two pages above could only tell you something if somebody opened them - and for "nobody is scanning this range", a forgotten range is precisely what nobody thinks to go and look at. Both are come-and-go checks in `operationalAlerts.ts`, following `scanner.offline` rather than the fire-once `scan.stale` idiom.
+
+`network.coverage_stale` fires when **no completed scan touched a tracked range within `network_coverage_stale_days`** - deliberately that rather than a coverage percentage below some threshold. Partial coverage has a hundred legitimate shapes (a /16 whose populated half is swept nightly while the empty half never is), and any cutoff would be a number nobody could justify. It calls the same `computeNetworkCoverage` the page does, which is why that computation was extracted to `networks/coverage.ts`: an alert reaching its verdict via a second "equivalent" query is how the two end up disagreeing.
+
+`ssh_key.shared` fires when one fingerprint turns up on more than one **address** (same distinct-addresses reasoning as the page). Its state lives in its own `ssh_shared_key_alerts` table because the subject of the alert is a fingerprint, which belongs to no single row anywhere; storing `ip_count` alongside means a *growing* group alerts again - a third machine with a key already reported on two is news - without re-firing every five minutes on an unchanged one. A group that stops being shared is forgotten, so the same key reappearing later is reported as new.
+
+### Retiring a host
+
+`host.disappeared` says "decommissioned, or down" and had no answer for the first case: a deliberately switched-off server alerted indefinitely, and the only way to stop it was deleting the host and losing its entire observation history. `hosts.retired_at` (`PATCH /api/hosts/:id/retired`, operator) is that answer, and is **deliberately narrow - it suppresses that one alert and nothing else.** If something on a retired host opens a port again, that is still worth hearing about. Retiring also clears any outstanding `disappeared_alert_sent_at`, so un-retiring starts from a clean slate rather than staying silent because the flag was already set.
+
+Retired hosts **stay in the list by default**; `hideRetired` is opt-in. Hiding them silently would make the fleet look smaller than it is, and someone has to be able to find a host again to un-retire it.
+
+### Knowing how busy a scanner is
+
+`maxConcurrentScans` made a scanner's capacity a real number, but the webserver had no way to know it - the setting lives in that host's `config.yaml`, and the webserver only ever sees it when an admin happens to have set it as a dashboard override. So "is this scanner saturated or idle?", the question you need answered before queueing more work, was unanswerable from here.
+
+The scanner reports both numbers on every authenticated request (`X-Scanner-Scan-Slots: running/max`), the same piggyback mechanism already carrying `version` and `submit_queue_pending`. `parseScanSlotsHeader` validates rather than trusts - an authenticated scanner is still an untrusted source of header values - and returns null for a malformed pair, a `max` below 1, or a `running` above `max` (only reachable as a transient while a lowered limit is being applied, and not worth recording as a permanent-looking "3/1"). Null means **unknown**, deliberately distinct from a reported 0, and is written like `nuclei_templates_updated_at` rather than like `submit_queue_pending`: a scanner build without the header, or a one-shot `scan`/`menu` process that has no slots and omits it, must not erase a capacity a serve-mode process previously reported.
+
 ### SSH host keys, fleet-wide
 
 `ssh_host_keys` had been populated since the TLS/SSH fingerprint work but was only ever rendered on one host's detail page, which structurally cannot show the finding that matters: **a host key identifies one machine, so the same fingerprint on more than one address means a cloned VM, a golden image that shipped its keys, or a genuinely shared private key.** `GET /api/ssh-keys` (`sshKeys/routes.ts`) is the certificates router's counterpart - same `distinctOn` "newest per identity" shape, identity here being `(host_id, port, key_type)`.

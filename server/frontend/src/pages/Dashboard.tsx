@@ -89,6 +89,7 @@ function filtersFromSearchParams(searchParams: URLSearchParams): HostFilters {
     osFamily: searchParams.get("osFamily") ?? undefined,
     deviceType: searchParams.get("deviceType") ?? undefined,
     hideEmpty: searchParams.get("hideEmpty") === "true" || undefined,
+    hideRetired: searchParams.get("hideRetired") === "true" || undefined,
     hasScreenshot: searchParams.get("hasScreenshot") === "true" || undefined,
     hasStalePorts: searchParams.get("hasStalePorts") === "true" || undefined,
     lastSeenAfter: searchParams.get("lastSeenAfter") ?? undefined,
@@ -528,6 +529,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
     if (merged.osFamily) next.set("osFamily", merged.osFamily);
     if (merged.deviceType) next.set("deviceType", merged.deviceType);
     if (merged.hideEmpty) next.set("hideEmpty", "true");
+    if (merged.hideRetired) next.set("hideRetired", "true");
     if (merged.hasScreenshot) next.set("hasScreenshot", "true");
     if (merged.hasStalePorts) next.set("hasStalePorts", "true");
     if (merged.lastSeenAfter) next.set("lastSeenAfter", merged.lastSeenAfter);
@@ -849,6 +851,14 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
           <label className="hide-empty-toggle">
             <input
               type="checkbox"
+              checked={filters.hideRetired ?? false}
+              onChange={(e) => updateFilters({ hideRetired: e.target.checked || undefined })}
+            />
+            Hide retired hosts
+          </label>
+          <label className="hide-empty-toggle">
+            <input
+              type="checkbox"
               checked={filters.hasScreenshot ?? false}
               onChange={(e) => updateFilters({ hasScreenshot: e.target.checked || undefined })}
             />
@@ -1156,7 +1166,10 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                           <input type="checkbox" checked={selected.has(h.id)} onChange={() => toggleSelected(h.id)} />
                         </td>
                       )}
-                      <td>{h.ip}</td>
+                      <td>
+                        {h.ip}
+                        {h.retired_at && <span className="chip-inline">retired</span>}
+                      </td>
                       {tablePrefs.columns.includes("hostname") && <td>{h.hostname ?? "-"}</td>}
                       {tablePrefs.columns.includes("open_port_count") && (
                         <td>
@@ -1247,7 +1260,10 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                   ) : (
                     <div className="host-thumb host-thumb-placeholder">no screenshot</div>
                   )}
-                  <div className="host-ip">{h.ip}</div>
+                  <div className="host-ip">
+                    {h.ip}
+                    {h.retired_at && <span className="chip-inline">retired</span>}
+                  </div>
                   {h.hostname && <div className="host-hostname">{h.hostname}</div>}
                   {h.scanner_agent_name && h.scanner_agent_id && (
                     <div className="host-meta">

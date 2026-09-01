@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<?xml-stylesheet href="file:///usr/bin/../share/nmap/nmap.xsl" type="text/xsl"?>
+<!-- Nmap 7.99 scan initiated Tue Sep  1 07:26:03 2026 as: nmap -sV -p 8080,2222,9999 -oX /out/nmap-sample.xml 127.0.0.1 -->
+<nmaprun scanner="nmap" args="nmap -sV -p 8080,2222,9999 -oX /out/nmap-sample.xml 127.0.0.1" start="1788247563" startstr="Tue Sep  1 07:26:03 2026" version="7.99" xmloutputversion="1.05">
+<scaninfo type="syn" protocol="tcp" numservices="3" services="2222,8080,9999"/>
+<verbose level="0"/>
+<debugging level="0"/>
+<host starttime="1788247563" endtime="1788247563"><status state="up" reason="localhost-response" reason_ttl="0"/>
+<address addr="127.0.0.1" addrtype="ipv4"/>
+<hostnames>
+<hostname name="localhost" type="PTR"/>
+</hostnames>
+<ports><port protocol="tcp" portid="2222"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="ssh" product="OpenSSH" version="9.2p1 Debian 2" extrainfo="protocol 2.0" ostype="Linux" method="probed" conf="10"><cpe>cpe:/a:openbsd:openssh:9.2p1</cpe><cpe>cpe:/o:linux:linux_kernel</cpe></service></port>
+<port protocol="tcp" portid="8080"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="http-proxy" servicefp="SF-Port8080-TCP:V=7.99%I=7%D=9/1%Time=6A967E0B%P=x86_64-alpine-linux-musl%r(NULL,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(GetRequest,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(HTTPOptions,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(RTSPRequest,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(FourOhFourRequest,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(Socks5,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(Socks4,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(GenericLines,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(RPCCheck,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(DNSVersionBindReqTCP,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(DNSStatusRequestTCP,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(Help,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(SSLSessionReq,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(TerminalServerCookie,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(TLSSessionReq,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(Kerberos,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(SMBProgNeg,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(X11Probe,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(LPDString,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(LDAPSearchReq,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(LDAPBindReq,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(SIPOptions,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(LANDesk-RC,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(TerminalServer,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(NCP,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(NotesRPC,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(JavaRMI,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(WMSRequest,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(oracle-tns,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(ms-sql-s,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(afp,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;)%r(giop,11,&quot;HTTP/1\.0\x20200\x20OK\r\n&quot;);" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="9999"><state state="closed" reason="reset" reason_ttl="64"/><service name="abyss" method="table" conf="3"/></port>
+</ports>
+<times srtt="30" rttvar="2825" to="100000"/>
+</host>
+<runstats><finished time="1788247563" timestr="Tue Sep  1 07:26:03 2026" summary="Nmap done at Tue Sep  1 07:26:03 2026; 1 IP address (1 host up) scanned in 0.42 seconds" elapsed="0.42" exit="success"/><hosts up="1" down="0" total="1"/>
+</runstats>
+</nmaprun>

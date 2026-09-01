@@ -145,6 +145,7 @@ export interface HostSummary {
   device_type: string | null;
   mac_address: string | null;
   mac_vendor: string | null;
+  retired_at: string | null;
   // A host's identity is (ip, scanner_agent_id), not ip alone - two
   // different scanners (different, non-interconnected networks) can each
   // have a real device at the same ip, so this is shown to tell those
@@ -179,6 +180,9 @@ export interface HostFilters {
   osFamily?: string;
   deviceType?: string;
   hideEmpty?: boolean;
+  // Retired hosts stay in the list unless this is set - see the server
+  // side's own note on why hiding them by default would be wrong.
+  hideRetired?: boolean;
   hasScreenshot?: boolean;
   hasStalePorts?: boolean;
   // yyyy-mm-dd, matching <input type="date">
@@ -219,6 +223,7 @@ export interface HostDetail {
     // hop, which is most targets in a typical internal network scan.
     mac_address: string | null;
     mac_vendor: string | null;
+    retired_at: string | null;
     scanner_agent_name: string | null;
     // Manual override - see api.setHostProbeHostname. Used by the scanner
     // instead of the bare IP for TLS SNI and the gowitness screenshot URL.
@@ -430,6 +435,16 @@ export interface ExpiringCertificate {
   fingerprint_sha256: string;
 }
 
+export interface NmapImportResult {
+  scanJobId: string;
+  hostsImported: number;
+  openPortsFound: number;
+  hostsDown: number;
+  targetSpec: string;
+  portSpec: string | null;
+  nmapArgs: string | null;
+}
+
 export interface MonitoredNetwork {
   id: string;
   label: string;
@@ -560,6 +575,10 @@ export interface ScannerAgent {
   // on every request - null until a scanner build with this support has
   // made at least one request (see apiKeyAuth.ts).
   submit_queue_pending: number | null;
+  // Reported by a serve-mode scanner on every request. null = unknown
+  // (older build, or a one-shot process that has no slots).
+  scan_slots_running: number | null;
+  scan_slots_max: number | null;
   // When this scanner last updated its nuclei templates. null = unknown
   // (nuclei not installed, or a scanner build that doesn't report it).
   nuclei_templates_updated_at: string | null;
@@ -832,6 +851,7 @@ function hostsQueryString(filters: HostFilters, page?: number, pageSize?: number
   if (filters.osFamily) params.set("osFamily", filters.osFamily);
   if (filters.deviceType) params.set("deviceType", filters.deviceType);
   if (filters.hideEmpty) params.set("hideEmpty", "true");
+  if (filters.hideRetired) params.set("hideRetired", "true");
   if (filters.hasScreenshot) params.set("hasScreenshot", "true");
   if (filters.hasStalePorts) params.set("hasStalePorts", "true");
   if (filters.lastSeenAfter) params.set("lastSeenAfter", filters.lastSeenAfter);
@@ -930,6 +950,11 @@ export const api = {
     request<{ tag: string }>(`/api/hosts/${id}/tags`, { method: "POST", body: JSON.stringify({ tag }) }),
   removeHostTag: (id: string, tag: string) =>
     request<void>(`/api/hosts/${id}/tags/${encodeURIComponent(tag)}`, { method: "DELETE" }),
+  setHostRetired: (id: string, retired: boolean) =>
+    request<{ retired_at: string | null }>(`/api/hosts/${id}/retired`, {
+      method: "PATCH",
+      body: JSON.stringify({ retired }),
+    }),
   setHostProbeHostname: (id: string, hostname: string | null) =>
     request<{ probe_hostname: string | null }>(`/api/hosts/${id}/probe-hostname`, {
       method: "PATCH",
@@ -1102,6 +1127,23 @@ export const api = {
     }),
   clearFindingTriage: (target: TriageTarget) =>
     request<void>("/api/finding-triage", { method: "DELETE", body: JSON.stringify(target) }),
+
+  // Same multipart caveat as uploadTlsCertificate below: the browser has
+  // to set its own Content-Type boundary, so this bypasses request().
+  importNmapXml: async (file: File, scannerAgentId: string, targetSpec: string) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("scannerAgentId", scannerAgentId);
+    if (targetSpec) formData.append("targetSpec", targetSpec);
+    const res = await fetch("/api/imports/nmap", { method: "POST", credentials: "include", body: formData });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const message =
+        typeof body.error === "string" ? body.error : body.error ? JSON.stringify(body.error) : `Request failed: ${res.status}`;
+      throw new Error(message);
+    }
+    return res.json() as Promise<NmapImportResult>;
+  },
 
   tlsCertificate: () => request<TlsCertificateInfo>("/api/settings/tls-certificate"),
   // Bypasses request()'s JSON-only helper - a multipart body needs the

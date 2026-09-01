@@ -68,6 +68,11 @@ export interface ScannerAgentsTable {
   // as version itself, so a never-reported scanner isn't shown as having
   // an empty queue.
   submit_queue_pending: number | null;
+  // Reported via X-Scanner-Scan-Slots. null = unknown (an older scanner
+  // build, or a one-shot process with no queue loop), deliberately
+  // distinct from a reported 0.
+  scan_slots_running: number | null;
+  scan_slots_max: number | null;
   // When that scanner's nuclei template tree was last written, reported
   // via the same piggyback header as version above. Null until a scanner
   // build with this support reports one - templates are fetched once at
@@ -221,6 +226,10 @@ export interface HostsTable {
   last_seen_at: ColumnType<Date, string | undefined, string>;
   // Set when host.disappeared fired, cleared when the host is seen again.
   disappeared_alert_sent_at: ColumnType<Date | null, string | undefined, string | null>;
+  // Operator-set "I know this one is gone, stop telling me". Suppresses
+  // host.disappeared and nothing else - see the
+  // retired_hosts_and_new_alerts migration.
+  retired_at: ColumnType<Date | null, string | null | undefined, string | null>;
 }
 
 export interface HostPortObservationsTable {
@@ -573,6 +582,12 @@ export interface DigestEmailStateTable {
   last_sent_date: ColumnType<Date | null, string | null | undefined, string | null>;
 }
 
+export interface SshSharedKeyAlertsTable {
+  fingerprint_sha256: string;
+  ip_count: number;
+  alerted_at: ColumnType<Date, string | undefined, string>;
+}
+
 export interface MonitoredNetworksTable {
   id: Generated<string>;
   label: string;
@@ -583,6 +598,9 @@ export interface MonitoredNetworksTable {
   scanner_agent_id: string | null;
   created_by: string;
   created_at: ColumnType<Date, string | undefined, never>;
+  // Come-and-go alert flag (see the retired_hosts_and_new_alerts
+  // migration), cleared again once the range is covered.
+  coverage_alert_sent_at: ColumnType<Date | null, string | null | undefined, string | null>;
 }
 
 export interface ScanExcludesTable {
@@ -721,6 +739,7 @@ export interface Database {
   host_comments: HostCommentsTable;
   scan_excludes: ScanExcludesTable;
   monitored_networks: MonitoredNetworksTable;
+  ssh_shared_key_alerts: SshSharedKeyAlertsTable;
   saved_searches: SavedSearchesTable;
   saved_search_matches: SavedSearchMatchesTable;
   user_scanner_agents: UserScannerAgentsTable;

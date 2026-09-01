@@ -52,6 +52,12 @@ func (c *Client) setAuthHeaders(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("X-Scanner-Version", version.Version)
 	req.Header.Set("X-Scanner-Submit-Queue-Pending", strconv.Itoa(int(atomic.LoadInt32(&c.submitQueuePending))))
+	// Omitted entirely rather than sent as "0/0" when this process has no
+	// scan slots at all ("scan"/"menu"), so the webserver's own
+	// "unknown" (a missing header) keeps its meaning.
+	if max := atomic.LoadInt32(&c.scanSlotsMax); max > 0 {
+		req.Header.Set("X-Scanner-Scan-Slots", strconv.Itoa(int(atomic.LoadInt32(&c.scanSlotsRunning)))+"/"+strconv.Itoa(int(max)))
+	}
 	// Omitted entirely when unknown (nuclei not installed, templates
 	// never fetched) rather than sent as an empty or epoch value - the
 	// webserver distinguishes "no templates" from "templates from 1970",
@@ -86,9 +92,29 @@ type Client struct {
 	// any Enqueue call, from whichever goroutine is running the scan at
 	// the time, hence the atomic access rather than a plain int.
 	submitQueuePending int32
+	// scanSlotsRunning/scanSlotsMax mirror serve mode's own scan-slot
+	// accounting (see SetScanSlots). Packed as two atomics rather than a
+	// mutex-guarded pair because they are only ever read together to
+	// build one header line, and a momentarily mismatched pair - "2/1"
+	// during the instant a lowered limit is being applied - is a
+	// cosmetically odd number on a dashboard, not a correctness problem.
+	//
+	// max stays 0 until something sets it, which is how "unknown" is
+	// expressed: the one-shot "scan"/"menu" modes have no queue loop and
+	// no slots, so they send no header at all rather than claiming 0/1.
+	scanSlotsRunning int32
+	scanSlotsMax     int32
 	// nil until known - see SetNucleiTemplatesUpdatedAt. atomic.Value
 	// rather than a plain field for the same reason as the counter above.
 	nucleiTemplatesUpdatedAt atomic.Value
+}
+
+// SetScanSlots records how many scans this process is running and how many
+// it will run at once, reported on every subsequent request via the
+// X-Scanner-Scan-Slots header. Safe to call concurrently.
+func (c *Client) SetScanSlots(running, max int) {
+	atomic.StoreInt32(&c.scanSlotsRunning, int32(running))
+	atomic.StoreInt32(&c.scanSlotsMax, int32(max))
 }
 
 // SetSubmitQueuePending records the scanner's current internal/submitqueue

@@ -5,6 +5,7 @@ import { isStaleScanJob } from "../lib/staleness";
 import { logger } from "../logger";
 import { dispatchWebhook } from "./dispatch";
 import { getAppSettings } from "../settings/appSettings";
+import { computeNetworkCoverage } from "../networks/coverage";
 
 // Far more frequent than the hourly certificate-expiry checks
 // (webhooks/expiryAlerts.ts, settings/certExpiryAlert.ts) - unlike a
@@ -38,6 +39,8 @@ async function tick(): Promise<void> {
   await checkQueueBacklog();
   await checkOfflineScanners();
   await checkDisappearedHosts();
+  await checkNetworkCoverage();
+  await checkSharedSSHKeys();
 }
 
 // Fires scan.stale once per scan_jobs row (stale_alert_sent_at) - a job
@@ -264,6 +267,10 @@ async function checkDisappearedHosts(): Promise<void> {
     .where("hosts.disappeared_alert_sent_at", "is", null)
     .where("hosts.last_seen_at", "<", threshold)
     .where("hosts.first_seen_at", "<", threshold)
+    // A retired host is one an operator has already accounted for. It
+    // stays in the inventory with its full history; it just stops being
+    // news that it isn't answering.
+    .where("hosts.retired_at", "is", null)
     .execute();
 
   for (const host of gone) {
@@ -296,5 +303,162 @@ async function checkDisappearedHosts(): Promise<void> {
     .execute();
   for (const host of returned) {
     logger.info({ event: "host.reappeared", host_id: host.id, ip: host.ip });
+  }
+}
+
+// Fires network.coverage_stale once per tracked range that no completed
+// scan has touched within app_settings.network_coverage_stale_days.
+//
+// This is the one alert whose whole point is that nobody is looking: the
+// Network Coverage page answers "which of my ranges is nobody scanning",
+// and a range going unscanned is precisely the condition where nobody
+// thinks to open that page. Every other check here has a passive
+// counterpart on Fleet Health that someone might stumble across; this one
+// does not.
+//
+// The rule is deliberately "not touched at all in the window" rather than
+// a coverage percentage below some threshold. Partial coverage has a
+// hundred legitimate shapes (a /16 whose populated half is swept nightly
+// while the empty half never is), and any percentage cutoff would be a
+// number nobody could justify. "Nothing scanned this range for N days" is
+// unambiguous and actionable, and N is already an admin-visible setting.
+//
+// Coverage is computed by the same computeNetworkCoverage the page uses -
+// deliberately not a second query that "checks the same thing", which is
+// how the alert and the page would end up disagreeing.
+//
+// Come-and-go, like checkOfflineScanners: cleared once the range is
+// covered again, so the next gap alerts rather than being silenced by
+// this one.
+async function checkNetworkCoverage(): Promise<void> {
+  // null: an alert is not sent on any particular user's behalf, so it
+  // sees every tracked range regardless of per-user scanner restrictions.
+  const { staleDays, networks } = await computeNetworkCoverage(null);
+
+  for (const network of networks) {
+    const stale = network.covered_fraction === 0;
+    if (!stale || network.coverage_alert_sent_at) continue;
+
+    const lastCovered = network.last_covered_at
+      ? `last covered ${new Date(network.last_covered_at).toISOString()}`
+      : "never covered by any completed scan";
+    const scope = network.scanner_agent_name ? ` (scanner "${network.scanner_agent_name}")` : "";
+    const message = `Network "${network.label}" (${network.cidr})${scope} has not been scanned in the last ${staleDays} days - ${lastCovered}`;
+
+    await dispatchWebhook("network.coverage_stale", message, {
+      network_id: network.id,
+      label: network.label,
+      cidr: network.cidr,
+      scanner_agent_name: network.scanner_agent_name,
+      last_covered_at: network.last_covered_at,
+      host_count: network.host_count,
+      threshold_days: staleDays,
+      // An unresolvable target (a DNS hostname, resolved scanner-side)
+      // may in fact have covered this range - passed on so the alert is
+      // as honest as the page is, rather than asserting more than the
+      // webserver actually knows.
+      opaque_scan_count: network.opaque_scan_count,
+    });
+
+    await db
+      .updateTable("monitored_networks")
+      .set({ coverage_alert_sent_at: new Date().toISOString() })
+      .where("id", "=", network.id)
+      .execute();
+    logger.info({ event: "webhook.network_coverage_stale_alerted", network_id: network.id, cidr: network.cidr });
+  }
+
+  // Covered again - clear so a future gap alerts. Derived from the same
+  // computed rows rather than a separate query, for the same reason the
+  // alert itself is.
+  const recovered = networks.filter((n) => n.covered_fraction > 0 && n.coverage_alert_sent_at);
+  if (recovered.length > 0) {
+    await db
+      .updateTable("monitored_networks")
+      .set({ coverage_alert_sent_at: null })
+      .where(
+        "id",
+        "in",
+        recovered.map((n) => n.id)
+      )
+      .execute();
+    for (const network of recovered) {
+      logger.info({ event: "network.coverage_restored", network_id: network.id, cidr: network.cidr });
+    }
+  }
+}
+
+// Fires ssh_key.shared when one SSH host key fingerprint turns up on more
+// than one address - a cloned VM, a golden image that shipped its keys,
+// or a genuinely shared private key.
+//
+// Counted in distinct addresses rather than distinct hosts rows for the
+// same reason the SSH Host Keys page is: host identity is
+// (ip, scanner_agent_id), so one machine two scanners can both reach is
+// two rows legitimately serving the same key, and counting rows would
+// alert on every multi-scanner deployment.
+//
+// State lives in its own ssh_shared_key_alerts table because the subject
+// of the alert is a fingerprint, which belongs to no single row anywhere.
+// Storing the count alongside it means a *growing* group alerts again -
+// a third machine appearing with a key already reported on two is news -
+// without re-firing every five minutes on an unchanged one.
+async function checkSharedSSHKeys(): Promise<void> {
+  const groups = await db
+    .selectFrom("ssh_host_keys")
+    .innerJoin("hosts", "hosts.id", "ssh_host_keys.host_id")
+    .select([
+      "ssh_host_keys.fingerprint_sha256 as fingerprint",
+      sql<string>`count(distinct hosts.ip)`.as("ip_count"),
+      sql<string[]>`array_agg(distinct host(hosts.ip))`.as("ips"),
+    ])
+    .where("ssh_host_keys.fingerprint_sha256", "!=", "")
+    .groupBy("ssh_host_keys.fingerprint_sha256")
+    .having(sql<boolean>`count(distinct hosts.ip) > 1`)
+    .execute();
+
+  const alerted = await db.selectFrom("ssh_shared_key_alerts").select(["fingerprint_sha256", "ip_count"]).execute();
+  const alertedByFingerprint = new Map(alerted.map((a) => [a.fingerprint_sha256, a.ip_count]));
+
+  for (const group of groups) {
+    const ipCount = Number(group.ip_count);
+    const previous = alertedByFingerprint.get(group.fingerprint);
+    if (previous !== undefined && previous >= ipCount) continue;
+
+    const message =
+      previous === undefined
+        ? `SSH host key ${group.fingerprint} is served by ${ipCount} addresses (${group.ips.join(", ")}) - a cloned image or a shared private key`
+        : `SSH host key ${group.fingerprint} is now served by ${ipCount} addresses (was ${previous}): ${group.ips.join(", ")}`;
+
+    await dispatchWebhook("ssh_key.shared", message, {
+      fingerprint_sha256: group.fingerprint,
+      ip_count: ipCount,
+      previous_ip_count: previous ?? null,
+      ips: group.ips,
+    });
+
+    await db
+      .insertInto("ssh_shared_key_alerts")
+      .values({ fingerprint_sha256: group.fingerprint, ip_count: ipCount, alerted_at: new Date().toISOString() })
+      .onConflict((oc) => oc.column("fingerprint_sha256").doUpdateSet({ ip_count: ipCount, alerted_at: new Date().toISOString() }))
+      .execute();
+    logger.info({ event: "webhook.ssh_key_shared_alerted", fingerprint_sha256: group.fingerprint, ip_count: ipCount });
+  }
+
+  // No longer shared (a host was deleted or retired out of existence, or
+  // the key was regenerated) - forget it, so the same fingerprint turning
+  // up on two machines again later is reported as new rather than being
+  // permanently silenced by a group that no longer exists.
+  const stillShared = new Set(groups.map((g) => g.fingerprint));
+  const gone = alerted.filter((a) => !stillShared.has(a.fingerprint_sha256));
+  if (gone.length > 0) {
+    await db
+      .deleteFrom("ssh_shared_key_alerts")
+      .where(
+        "fingerprint_sha256",
+        "in",
+        gone.map((a) => a.fingerprint_sha256)
+      )
+      .execute();
   }
 }

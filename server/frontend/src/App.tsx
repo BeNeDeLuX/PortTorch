@@ -14,6 +14,7 @@ import AdhocScans from "./pages/AdhocScans";
 import Certificates from "./pages/Certificates";
 import SshKeys from "./pages/SshKeys";
 import Networks from "./pages/Networks";
+import ImportScan from "./pages/ImportScan";
 import Vulnerabilities from "./pages/Vulnerabilities";
 import Users from "./pages/Users";
 import Digest from "./pages/Digest";
@@ -119,6 +120,10 @@ export default function App() {
       <Route
         path="/certificates"
         element={routeElement(false, (m) => <Certificates me={m} onLogout={() => setMe(null)} />)}
+      />
+      <Route
+        path="/import"
+        element={routeElement(false, (m) => <ImportScan me={m} onLogout={() => setMe(null)} />)}
       />
       <Route
         path="/ssh-keys"

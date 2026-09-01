@@ -142,6 +142,12 @@ An empty queue still costs exactly one poll per tick, not one per free slot, so 
 
 Raising it is a resource decision, not a free speedup: `concurrency`, `gowitnessConcurrency`, `nucleiConcurrency` and the rest are **per-scan**, so two scans at once means twice the processes and twice the bandwidth.
 
+### Reporting slot usage back to the dashboard
+
+Capacity is only useful if whoever queues work can see it, and the webserver cannot read a scanner's `config.yaml`. So serve mode reports `X-Scanner-Scan-Slots: running/max` on every authenticated request, alongside the `X-Scanner-Version` / `X-Scanner-Submit-Queue-Pending` headers that already ride along.
+
+The header is **omitted entirely** rather than sent as `0/0` when this process has no scan slots at all (`scan`/`menu`), because absence is load-bearing: it is how the webserver distinguishes "unknown" from a reported 0, and a one-shot run on the same host must not overwrite a serve process's reported capacity. `PublishScanSlots` is called once at startup so an idle scanner reports `0/N` from its very first request rather than staying unknown until it happens to run something, and again from the config watcher, since otherwise a dashboard-changed limit wouldn't show up until the next scan started or finished. The two values are separate atomics rather than a mutex-guarded pair: they are only ever read together to build one header line, and a momentarily mismatched pair during a limit change is a cosmetically odd number, not a correctness problem (the webserver rejects `running > max` anyway).
+
 ## Dashboard-managed config overrides
 
 `serve` mode runs a fifth watcher alongside `StartPolling`/`StartCancelWatcher`/`StartUpdateWatcher`/`StartTemplateUpdateWatcher`: `Server.StartConfigWatcher` polls `GET /api/ingest/config` and overlays the returned tuning onto the in-memory pipeline config. Its own loop rather than a step inside `pollOnce` for the same reason as the others: "lower the rate on this scanner, it's hammering a fragile segment" should land on a fixed interval *during* a long scan, not whenever the queue loop next happens to have something to do.

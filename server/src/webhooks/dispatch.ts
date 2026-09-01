@@ -62,7 +62,9 @@ export type WebhookEvent =
   | "nuclei.finding"
   | "scanner.offline"
   | "host.disappeared"
-  | "port.closed";
+  | "port.closed"
+  | "network.coverage_stale"
+  | "ssh_key.shared";
 
 // Plain-English subject line for an email channel - a webhook channel has
 // no equivalent need, since "event"/"data" already ride along in the JSON
@@ -83,6 +85,8 @@ const EVENT_SUBJECTS: Record<WebhookEvent, string> = {
   "scanner.offline": "Scanner stopped reporting in",
   "host.disappeared": "Host stopped responding",
   "port.closed": "Port no longer open",
+  "network.coverage_stale": "Tracked network has not been scanned",
+  "ssh_key.shared": "SSH host key shared by several addresses",
 };
 
 // A Teams "Workflows" webhook (the current replacement for the classic,

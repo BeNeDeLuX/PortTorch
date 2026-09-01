@@ -551,22 +551,31 @@ const ingestHostsSchema = z.object({
   ),
 });
 
-ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
-  const parsed = ingestHostsSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten() });
-    return;
-  }
+// The whole host-submission path, extracted from the route below so that
+// anything else producing scan results goes through *exactly* this code
+// rather than a parallel implementation - specifically the nmap XML
+// import (imports/routes.ts), which is meant to be indistinguishable from
+// a scanner submission once the data has landed: same upsert, same
+// auto-tags, same host.new/port.opened/port.closed webhooks, same audit
+// trail. A second insert path would drift, and the half nobody exercises
+// daily would be the half that's wrong.
+//
+// Returns a result rather than writing to a response, so the caller
+// decides the HTTP shape (the route maps it back to 400/404/204).
+export type IngestHostsResult = { ok: true } | { ok: false; status: number; error: unknown };
 
+export async function ingestHostPayload(
+  payload: z.infer<typeof ingestHostsSchema>,
+  ctx: { scannerAgentId: string; scannerAgentName?: string | null; sourceIp?: string }
+): Promise<IngestHostsResult> {
   const job = await db
     .selectFrom("scan_jobs")
     .select(["id"])
-    .where("id", "=", parsed.data.scanJobId)
-    .where("scanner_agent_id", "=", req.scannerAgentId!)
+    .where("id", "=", payload.scanJobId)
+    .where("scanner_agent_id", "=", ctx.scannerAgentId)
     .executeTakeFirst();
   if (!job) {
-    res.status(404).json({ error: "scan job not found" });
-    return;
+    return { ok: false, status: 404, error: "scan job not found" };
   }
 
   // Collected during the transaction, dispatched only after it commits -
@@ -595,12 +604,12 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
   const scanJob = await db
     .selectFrom("scan_jobs")
     .select(["port_spec"])
-    .where("id", "=", parsed.data.scanJobId)
+    .where("id", "=", payload.scanJobId)
     .executeTakeFirst();
   const scannedPorts = scanJob ? parsePortSpec(scanJob.port_spec) : null;
 
   await db.transaction().execute(async (trx) => {
-    for (const host of parsed.data.hosts) {
+    for (const host of payload.hosts) {
       const existingOpenPorts = await trx
         .selectFrom("current_host_ports")
         .innerJoin("hosts", "hosts.id", "current_host_ports.host_id")
@@ -610,7 +619,7 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
           "current_host_ports.service_name as service_name",
         ])
         .where("hosts.ip", "=", host.ip)
-        .where("hosts.scanner_agent_id", "=", req.scannerAgentId!)
+        .where("hosts.scanner_agent_id", "=", ctx.scannerAgentId)
         .where("current_host_ports.state", "=", "open")
         .execute();
       const existingOpenPortSet = new Set(existingOpenPorts.map((p) => p.port));
@@ -619,7 +628,7 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
         .insertInto("hosts")
         .values({
           ip: host.ip,
-          scanner_agent_id: req.scannerAgentId!,
+          scanner_agent_id: ctx.scannerAgentId,
           hostname: host.hostname ?? null,
           os_name: host.osName ?? null,
           os_family: host.osFamily ?? null,
@@ -715,7 +724,7 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
           .values([
             ...closedRows.map((prior) => ({
               host_id: upserted.id,
-              scan_job_id: parsed.data.scanJobId,
+              scan_job_id: payload.scanJobId,
               port: prior.port,
               protocol: prior.protocol,
               state: "closed",
@@ -737,7 +746,7 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
             })),
             ...host.ports.map((p) => ({
               host_id: upserted.id,
-              scan_job_id: parsed.data.scanJobId,
+              scan_job_id: payload.scanJobId,
               port: p.port,
               protocol: p.protocol,
               state: p.state,
@@ -779,7 +788,7 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
       const sshHostKeyRows = host.ports.flatMap((p) =>
         (p.sshHostKeys ?? []).map((k) => ({
           host_id: upserted.id,
-          scan_job_id: parsed.data.scanJobId,
+          scan_job_id: payload.scanJobId,
           port: p.port,
           key_type: k.keyType,
           bits: k.bits ?? null,
@@ -809,7 +818,7 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
           .values(
             (host.nucleiFindings ?? []).map((f) => ({
               host_id: upserted.id,
-              scan_job_id: parsed.data.scanJobId,
+              scan_job_id: payload.scanJobId,
               port: f.port,
               template_id: f.templateId,
               name: f.name,
@@ -834,9 +843,9 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
       // which ports, and when.
       logger.info({
         event: "scan.host_scanned",
-        scan_job_id: parsed.data.scanJobId,
-        scanner_agent_id: req.scannerAgentId,
-        scanner_agent_name: req.scannerAgentName,
+        scan_job_id: payload.scanJobId,
+        scanner_agent_id: ctx.scannerAgentId,
+        scanner_agent_name: ctx.scannerAgentName ?? null,
         target_ip: host.ip,
         hostname: host.hostname ?? null,
         ports: host.ports.map((p) => ({
@@ -847,7 +856,7 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
           ssh_host_keys: p.sshHostKeys?.length ?? 0,
         })),
         nuclei_findings: host.nucleiFindings?.length ?? 0,
-        source_ip: req.ip,
+        source_ip: ctx.sourceIp ?? null,
       });
     }
   });
@@ -879,6 +888,26 @@ ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
   for (const e of autoTagEvents) {
     logger.info({ event: "host.tag_added", host_id: e.hostId, tag: e.tag, added_by: "auto-tag" });
     recordAudit("host.tag_added", "auto-tag", undefined, { host_id: e.hostId, tag: e.tag, ip: e.ip });
+  }
+
+  return { ok: true };
+}
+
+ingestRouter.post("/hosts", asyncHandler(async (req, res) => {
+  const parsed = ingestHostsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const result = await ingestHostPayload(parsed.data, {
+    scannerAgentId: req.scannerAgentId!,
+    scannerAgentName: req.scannerAgentName,
+    sourceIp: req.ip,
+  });
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error });
+    return;
   }
 
   res.status(204).end();

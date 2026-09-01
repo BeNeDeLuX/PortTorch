@@ -110,3 +110,46 @@ func TestSubmitQueuePendingDefaultsToZero(t *testing.T) {
 		t.Errorf("X-Scanner-Submit-Queue-Pending = %q, want %q", gotHeader, "0")
 	}
 }
+
+// The X-Scanner-Scan-Slots header is a contract with the webserver's
+// parseScanSlotsHeader: "running/max", and *absent* when this process has
+// no scan slots at all. Absence is load-bearing - it's how the webserver
+// distinguishes "unknown" from a reported 0, and a one-shot "scan"/"menu"
+// run must not overwrite a serve process's reported capacity.
+func TestScanSlotsHeader(t *testing.T) {
+	var got []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("X-Scanner-Scan-Slots"))
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	c, err := New(&config.Config{WebserverURL: server.URL, APIKey: "test"})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	// Nothing has set any slots yet - the one-shot modes never do.
+	if _, err := c.PollNextScanRequest(context.Background()); err != nil {
+		t.Fatalf("PollNextScanRequest: %v", err)
+	}
+	if got[0] != "" {
+		t.Errorf("expected no header before slots are known, got %q", got[0])
+	}
+
+	c.SetScanSlots(0, 3)
+	if _, err := c.PollNextScanRequest(context.Background()); err != nil {
+		t.Fatalf("PollNextScanRequest: %v", err)
+	}
+	if got[1] != "0/3" {
+		t.Errorf("expected an idle scanner to report 0/3, got %q", got[1])
+	}
+
+	c.SetScanSlots(2, 3)
+	if _, err := c.PollNextScanRequest(context.Background()); err != nil {
+		t.Fatalf("PollNextScanRequest: %v", err)
+	}
+	if got[2] != "2/3" {
+		t.Errorf("expected 2/3, got %q", got[2])
+	}
+}

@@ -252,6 +252,21 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
     await load(id);
   }
 
+  async function handleSetRetired(retired: boolean) {
+    if (!id) return;
+    if (
+      retired &&
+      !window.confirm(
+        "Mark this host as retired? It keeps all its history and stays in the inventory - it just stops raising " +
+          '"host stopped responding" alerts.'
+      )
+    ) {
+      return;
+    }
+    await api.setHostRetired(id, retired);
+    await load(id);
+  }
+
   async function handleAddComment(e: FormEvent) {
     e.preventDefault();
     if (!id || !newComment.trim()) return;
@@ -475,6 +490,13 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
       {showRescanModal && (
         <RescanModal hostCount={1} onConfirm={handleRescan} onClose={() => setShowRescanModal(false)} />
       )}
+      {data.host.retired_at && (
+        <p className="callout-warning">
+          Retired {formatDateTime(data.host.retired_at, me.preferences)} - this host no longer raises "host stopped
+          responding" alerts. Everything else about it is unchanged: it still appears in searches and exports, keeps
+          its full history, and is still scanned if something targets it.
+        </p>
+      )}
       <p className="host-meta host-seen-summary">
         First seen {formatDateTime(data.host.first_seen_at, me.preferences)} · last seen{" "}
         {formatDateTime(data.host.last_seen_at, me.preferences)}
@@ -499,6 +521,27 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
           for a target that only routes correctly for a known hostname):{" "}
           {data.host.probe_hostname ?? <em>not set</em>}
         </p>
+        {canEdit && (
+          <p className="host-meta">
+            {data.host.retired_at ? (
+              <>
+                This host is retired.{" "}
+                <button type="button" className="link-button" onClick={() => handleSetRetired(false)}>
+                  Un-retire it
+                </button>{" "}
+                to start alerting on it again.
+              </>
+            ) : (
+              <>
+                Decommissioned this host?{" "}
+                <button type="button" className="link-button" onClick={() => handleSetRetired(true)}>
+                  Mark it retired
+                </button>{" "}
+                to stop "host stopped responding" alerts without deleting its history.
+              </>
+            )}
+          </p>
+        )}
         {canEdit && (
           <form className="inline-form" onSubmit={handleSetProbeHostname}>
             <input

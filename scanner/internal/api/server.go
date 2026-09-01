@@ -323,6 +323,10 @@ func (s *Server) refreshConfigOverrides(ctx context.Context) {
 	if len(changed) > 0 {
 		s.logger.Info("applied dashboard config overrides", "event", "scanner.config_applied", "settings", changed)
 	}
+	// The reported limit has to follow a changed maxConcurrentScans, or
+	// the dashboard would keep showing the old capacity until the next
+	// scan started or finished.
+	s.PublishScanSlots()
 }
 
 // applyServeOverrides is applyConfigOverrides' counterpart for the
@@ -435,11 +439,14 @@ func (s *Server) IsScanning() bool {
 func (s *Server) tryAcquireScanSlot() bool {
 	limit := s.maxConcurrentScans()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.runningScans >= limit {
+		s.mu.Unlock()
 		return false
 	}
 	s.runningScans++
+	running := s.runningScans
+	s.mu.Unlock()
+	s.client.SetScanSlots(running, limit)
 	return true
 }
 
@@ -451,7 +458,9 @@ func (s *Server) tryAcquireScanSlot() bool {
 func (s *Server) reserveScanSlot() {
 	s.mu.Lock()
 	s.runningScans++
+	running := s.runningScans
 	s.mu.Unlock()
+	s.client.SetScanSlots(running, s.maxConcurrentScans())
 }
 
 func (s *Server) releaseScanSlot() {
@@ -459,7 +468,20 @@ func (s *Server) releaseScanSlot() {
 	if s.runningScans > 0 {
 		s.runningScans--
 	}
+	running := s.runningScans
 	s.mu.Unlock()
+	s.client.SetScanSlots(running, s.maxConcurrentScans())
+}
+
+// PublishScanSlots pushes the current slot usage to the client so it rides
+// along on the next request's X-Scanner-Scan-Slots header. Called once at
+// startup (so an idle scanner reports "0/N" rather than nothing until its
+// first scan) and again whenever the dashboard changes the limit.
+func (s *Server) PublishScanSlots() {
+	s.mu.RLock()
+	running := s.runningScans
+	s.mu.RUnlock()
+	s.client.SetScanSlots(running, s.maxConcurrentScans())
 }
 
 func (s *Server) maxConcurrentScans() int {

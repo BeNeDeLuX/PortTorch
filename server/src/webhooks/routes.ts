@@ -27,6 +27,8 @@ const EVENTS: WebhookEvent[] = [
   "scanner.offline",
   "host.disappeared",
   "port.closed",
+  "network.coverage_stale",
+  "ssh_key.shared",
 ];
 const uuidSchema = z.string().uuid();
 const WEBHOOK_COLUMNS = ["id", "name", "channel_type", "url", "email_to", "enabled", "events", "created_at"] as const;

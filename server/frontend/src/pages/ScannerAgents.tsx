@@ -364,6 +364,18 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
           {behind && (
             <span className="host-meta"> → {latestRelease!.latestVersion} available</span>
           )}
+          {a.scan_slots_max !== null && (
+            <span
+              className={a.scan_slots_running === a.scan_slots_max ? "stale-badge" : "chip-inline"}
+              title={
+                a.scan_slots_running === a.scan_slots_max
+                  ? "Every scan slot on this scanner is busy - anything queued for it waits until one frees up. Raise \"Concurrent scans\" under Configure if the host has the capacity for it."
+                  : "Scans running now, out of what this scanner will run at once (maxConcurrentScans)."
+              }
+            >
+              {a.scan_slots_running ?? 0}/{a.scan_slots_max} scanning
+            </span>
+          )}
           {!!a.submit_queue_pending && (
             <span
               className="stale-badge"

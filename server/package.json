@@ -1,6 +1,6 @@
 {
   "name": "porttorch-server",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "license": "MIT",
   "private": true,
   "type": "commonjs",
@@ -23,6 +23,7 @@
     "cron-parser": "^5.10.0",
     "express": "^5.2.1",
     "express-session": "^1.18.0",
+    "fast-xml-parser": "^5.11.1",
     "helmet": "^8.3.0",
     "kysely": "^0.29.5",
     "multer": "^2.2.0",

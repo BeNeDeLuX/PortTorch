@@ -48,6 +48,30 @@ export function parseSubmitQueuePendingHeader(header: string | undefined): numbe
   return Number.isNaN(n) || n < 0 ? null : n;
 }
 
+// Parses X-Scanner-Scan-Slots ("running/max", see client.go's
+// setAuthHeaders) into the pair, or null for "unknown".
+//
+// Unknown covers three genuinely different situations that all deserve the
+// same treatment - an un-upgraded scanner build, a one-shot "scan"/"menu"
+// process that has no slots at all and deliberately omits the header, and
+// a malformed value - because none of them is evidence about capacity.
+// Validated rather than trusted: an authenticated scanner is still an
+// untrusted source of header values.
+export function parseScanSlotsHeader(header: string | undefined): { running: number; max: number } | null {
+  if (header === undefined) return null;
+  const parts = header.split("/");
+  if (parts.length !== 2) return null;
+  const running = parseInt(parts[0], 10);
+  const max = parseInt(parts[1], 10);
+  if (Number.isNaN(running) || Number.isNaN(max)) return null;
+  // max < 1 would mean a scanner that can never run anything, which the
+  // scanner itself clamps against; running > max is only ever reachable
+  // as a transient during a lowered limit, and is not worth recording as
+  // a permanent-looking "3/1" on the dashboard.
+  if (running < 0 || max < 1 || running > max) return null;
+  return { running, max };
+}
+
 // When the scanner's nuclei template tree was last written (RFC3339).
 // Absent means "unknown" - nuclei isn't installed, or the templates were
 // never fetched - which is deliberately distinct from a very old date,
@@ -119,6 +143,7 @@ export async function apiKeyAuth(req: Request, res: Response, next: NextFunction
   // this scanner (see Fleet Health's "Retry Queue Backlog" card).
   const reportedPending = parseSubmitQueuePendingHeader(req.header("x-scanner-submit-queue-pending"));
   const reportedTemplatesUpdated = parseNucleiTemplatesUpdatedHeader(req.header("x-scanner-nuclei-templates-updated"));
+  const reportedSlots = parseScanSlotsHeader(req.header("x-scanner-scan-slots"));
 
   // A scanner can end up already at (or past) the latest version while a
   // stale 'pending'/'failed' self-update request is still sitting on its
@@ -166,6 +191,11 @@ export async function apiKeyAuth(req: Request, res: Response, next: NextFunction
       last_seen_ip: req.ip ?? null,
       version: reportedVersion ?? null,
       submit_queue_pending: reportedPending,
+      // Only written when reported, like nuclei_templates_updated_at
+      // rather than like submit_queue_pending: a scanner build without
+      // the header, or a one-shot process that has no slots, must not
+      // erase a capacity a serve-mode process previously reported.
+      ...(reportedSlots ? { scan_slots_running: reportedSlots.running, scan_slots_max: reportedSlots.max } : {}),
       // Only written when the scanner actually reported one - an older
       // build that doesn't send the header must not wipe a value a newer
       // one previously recorded, unlike version/submit_queue_pending
