@@ -604,6 +604,20 @@ export interface MonitoredNetworksTable {
   coverage_alert_sent_at: ColumnType<Date | null, string | null | undefined, string | null>;
 }
 
+// Singleton (id always 1), same idiom as digest_email_state. Holds the
+// forwarding cursors so a collector outage causes a catch-up rather than
+// a silent gap - see the hec_forwarding migration.
+export interface HecStateTable {
+  id: Generated<number>;
+  audit_cursor: ColumnType<string | null, string | null | undefined, string | null>;
+  scan_log_cursor_at: ColumnType<Date | null, string | null | undefined, string | null>;
+  scan_log_cursor_job_id: ColumnType<string | null, string | null | undefined, string | null>;
+  last_success_at: ColumnType<Date | null, string | null | undefined, string | null>;
+  last_attempt_at: ColumnType<Date | null, string | null | undefined, string | null>;
+  last_error: ColumnType<string | null, string | null | undefined, string | null>;
+  events_forwarded: ColumnType<string, string | undefined, string>;
+}
+
 export interface ScanExcludesTable {
   id: Generated<string>;
   kind: string;
@@ -700,6 +714,13 @@ export interface AppSettingsTable {
   scanner_offline_threshold_minutes: ColumnType<number, number | undefined, number>;
   host_disappeared_threshold_days: ColumnType<number, number | undefined, number>;
   network_coverage_stale_days: ColumnType<number, number | undefined, number>;
+  hec_url: ColumnType<string | null, string | null | undefined, string | null>;
+  hec_token: ColumnType<string | null, string | null | undefined, string | null>;
+  hec_audit_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  hec_scan_log_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  hec_index: ColumnType<string | null, string | null | undefined, string | null>;
+  hec_sourcetype: ColumnType<string | null, string | null | undefined, string | null>;
+  hec_verify_tls: ColumnType<boolean, boolean | undefined, boolean>;
   // Was config.ts's SMTP_* env vars - moved here for the same reason as
   // the fields above, plus one specific to mail: it's the setting most
   // likely to be wrong on first setup and to need a few quick iterations,
@@ -739,6 +760,7 @@ export interface Database {
   host_tags: HostTagsTable;
   host_comments: HostCommentsTable;
   scan_excludes: ScanExcludesTable;
+  hec_state: HecStateTable;
   monitored_networks: MonitoredNetworksTable;
   ssh_shared_key_alerts: SshSharedKeyAlertsTable;
   saved_searches: SavedSearchesTable;

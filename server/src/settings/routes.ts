@@ -24,10 +24,13 @@ import {
   setNetworkCoverageStaleDays,
   setScanLogRetentionDays,
   setScanQueueWarningThreshold,
+  setHecSettings,
   setSmtpSettings,
   setStaleScanThresholdMinutes,
 } from "./appSettings";
 import { buildTransporter, resetSmtpTransporter, senderAddress } from "../webhooks/email";
+import { postToHec } from "../hec/client";
+import { runHecForward } from "../hec/forwarder";
 import { runRetentionSweep } from "../retention";
 
 // Everything here is admin-only, like scanner agents/schedules/webhooks/
@@ -113,7 +116,14 @@ settingsRouter.post(
 async function clientAppSettings() {
   const settings = await getAppSettings();
   const { password, ...smtp } = settings.smtp;
-  return { ...settings, smtp: { ...smtp, passwordSet: Boolean(password) } };
+  // Same treatment for the HEC token as for the SMTP password: an admin
+  // who can set it must not be able to read back one someone else set.
+  const { token, ...hec } = settings.hec;
+  return {
+    ...settings,
+    smtp: { ...smtp, passwordSet: Boolean(password) },
+    hec: { ...hec, tokenSet: Boolean(token) },
+  };
 }
 
 settingsRouter.get("/app", asyncHandler(async (_req, res) => {
@@ -155,6 +165,19 @@ const appSettingsSchema = z.object({
       user: z.string().trim().min(1).nullable(),
       password: z.string().min(1).nullable().optional(),
       from: z.string().trim().min(1).nullable(),
+    })
+    .optional(),
+  // One object for the same reason as smtp: a collector URL without its
+  // token is not a usable half-state, and the form saves them together.
+  hec: z
+    .object({
+      url: z.string().trim().min(1).nullable(),
+      token: z.string().min(1).nullable().optional(),
+      auditEnabled: z.boolean(),
+      scanLogEnabled: z.boolean(),
+      index: z.string().trim().min(1).nullable(),
+      sourcetype: z.string().trim().min(1).nullable(),
+      verifyTls: z.boolean(),
     })
     .optional(),
 });
@@ -297,7 +320,98 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
     });
   }
 
+  if ("hec" in req.body && parsed.data.hec !== undefined) {
+    await setHecSettings(parsed.data.hec);
+    logger.info({
+      event: "settings.hec_updated",
+      hec_url: parsed.data.hec.url,
+      hec_audit_enabled: parsed.data.hec.auditEnabled,
+      hec_scan_log_enabled: parsed.data.hec.scanLogEnabled,
+      hec_verify_tls: parsed.data.hec.verifyTls,
+      // Never the token, and never even whether it changed - same
+      // discipline as the SMTP password above.
+      updated_by: req.session.username,
+      source_ip: req.ip,
+    });
+    recordAudit("settings.hec_updated", req.session.username, req.ip, {
+      hec_url: parsed.data.hec.url,
+      hec_audit_enabled: parsed.data.hec.auditEnabled,
+      hec_scan_log_enabled: parsed.data.hec.scanLogEnabled,
+    });
+  }
+
   res.json(await clientAppSettings());
+}));
+
+// What the forwarder has actually managed to do - the answer to "is this
+// working?", which a saved configuration on its own doesn't give. Read
+// straight from hec_state rather than recomputed, so it reflects the real
+// cursor rather than an estimate.
+settingsRouter.get("/hec/status", asyncHandler(async (_req, res) => {
+  const row = await db
+    .selectFrom("hec_state")
+    .select(["audit_cursor", "scan_log_cursor_at", "last_success_at", "last_attempt_at", "last_error", "events_forwarded"])
+    .where("id", "=", 1)
+    .executeTakeFirstOrThrow();
+  res.json({
+    auditCursor: row.audit_cursor,
+    scanLogCursorAt: row.scan_log_cursor_at,
+    lastSuccessAt: row.last_success_at,
+    lastAttemptAt: row.last_attempt_at,
+    lastError: row.last_error,
+    eventsForwarded: Number(row.events_forwarded),
+  });
+}));
+
+// Sends one real event to the collector, so an admin finds out here
+// whether the URL, token and TLS setting are right rather than by
+// noticing nothing ever arrives in the SIEM.
+settingsRouter.post("/hec/test", asyncHandler(async (req, res) => {
+  const { hec } = await getAppSettings();
+  if (!hec.url || !hec.token) {
+    res.status(400).json({ error: "set a collector URL and token first" });
+    return;
+  }
+
+  const result = await postToHec(hec, [
+    {
+      time: Date.now() / 1000,
+      source: "porttorch:test",
+      sourcetype: hec.sourcetype || "porttorch:test",
+      ...(hec.index ? { index: hec.index } : {}),
+      event: {
+        event: "hec.test",
+        message: "PortTorch HEC test event. If you can search for this, log forwarding works.",
+        triggered_by: req.session.username ?? null,
+      },
+    },
+  ]);
+
+  if (!result.ok) {
+    logger.warn({ event: "settings.hec_test_failed", error: result.error, triggered_by: req.session.username });
+    // 200 with ok:false, like the SMTP and webhook tests: the request
+    // itself succeeded, and the delivery failure is the answer.
+    res.json({ ok: false, error: result.error });
+    return;
+  }
+
+  logger.info({ event: "settings.hec_test_sent", triggered_by: req.session.username, source_ip: req.ip });
+  recordAudit("settings.hec_test_sent", req.session.username, req.ip, { hec_url: hec.url });
+  res.json({ ok: true });
+}));
+
+// The scheduled forwarder's own logic, exposed as a manual trigger - same
+// pattern as POST /retention/run-now, and the thing an admin wants right
+// after switching this on rather than waiting out the interval.
+settingsRouter.post("/hec/forward-now", asyncHandler(async (req, res) => {
+  const counts = await runHecForward();
+  logger.info({
+    event: "settings.hec_forward_triggered",
+    audit_events: counts.audit,
+    scan_log_events: counts.scanLog,
+    triggered_by: req.session.username,
+  });
+  res.json(counts);
 }));
 
 // Runs the exact same sweep the hourly ticker does (see retention.ts's

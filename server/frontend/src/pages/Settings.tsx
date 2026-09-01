@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, AppSettings, Me, StorageUsage, TlsCertificateInfo } from "../api";
+import { api, AppSettings, HecStatus, Me, StorageUsage, TlsCertificateInfo } from "../api";
 import { IconCheck, IconRefresh, IconSave, IconSend, IconTrash, IconUpload } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime } from "../lib/formatDate";
@@ -105,6 +105,22 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
   const [testingSmtp, setTestingSmtp] = useState(false);
   const [smtpTestResult, setSmtpTestResult] = useState<string | null>(null);
 
+  const [hecUrl, setHecUrl] = useState("");
+  // Blank means "keep the stored token" - the API never returns it, so
+  // the form cannot prefill it. tokenSet is what distinguishes that from
+  // "no token at all".
+  const [hecToken, setHecToken] = useState("");
+  const [hecAudit, setHecAudit] = useState(false);
+  const [hecScanLog, setHecScanLog] = useState(false);
+  const [hecIndex, setHecIndex] = useState("");
+  const [hecSourcetype, setHecSourcetype] = useState("");
+  const [hecVerifyTls, setHecVerifyTls] = useState(true);
+  const [hecError, setHecError] = useState<string | null>(null);
+  const [hecSaved, setHecSaved] = useState(false);
+  const [savingHec, setSavingHec] = useState(false);
+  const [hecTestResult, setHecTestResult] = useState<string | null>(null);
+  const [hecStatus, setHecStatus] = useState<HecStatus | null>(null);
+
   useEffect(() => {
     load();
     api
@@ -126,6 +142,12 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
         setSmtpSecure(s.smtp.secure);
         setSmtpUser(s.smtp.user ?? "");
         setSmtpFrom(s.smtp.from ?? "");
+        setHecUrl(s.hec.url ?? "");
+        setHecAudit(s.hec.auditEnabled);
+        setHecScanLog(s.hec.scanLogEnabled);
+        setHecIndex(s.hec.index ?? "");
+        setHecSourcetype(s.hec.sourcetype ?? "");
+        setHecVerifyTls(s.hec.verifyTls);
       })
       .catch(() => setAppSettings(null));
   }, []);
@@ -206,6 +228,64 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       setStorage(null);
     } finally {
       setLoadingStorage(false);
+    }
+  }
+
+  async function loadHecStatus() {
+    try {
+      setHecStatus(await api.hecStatus());
+    } catch {
+      setHecStatus(null);
+    }
+  }
+
+  async function handleSaveHec(e: FormEvent) {
+    e.preventDefault();
+    setHecError(null);
+    setHecSaved(false);
+    setSavingHec(true);
+    try {
+      const updated = await api.updateAppSettings({
+        hec: {
+          url: hecUrl.trim() || null,
+          auditEnabled: hecAudit,
+          scanLogEnabled: hecScanLog,
+          index: hecIndex.trim() || null,
+          sourcetype: hecSourcetype.trim() || null,
+          verifyTls: hecVerifyTls,
+          // Blank leaves the stored token alone; the field is only sent
+          // when something was actually typed into it.
+          ...(hecToken.trim() ? { token: hecToken.trim() } : {}),
+        },
+      });
+      setAppSettings(updated);
+      setHecToken("");
+      setHecSaved(true);
+    } catch (err) {
+      setHecError(err instanceof Error ? err.message : "Could not save these settings.");
+    } finally {
+      setSavingHec(false);
+    }
+  }
+
+  async function handleTestHec() {
+    setHecTestResult(null);
+    try {
+      const result = await api.testHec();
+      setHecTestResult(result.ok ? "Test event accepted by the collector." : `Failed: ${result.error}`);
+    } catch (err) {
+      setHecTestResult(err instanceof Error ? err.message : "Test failed.");
+    }
+  }
+
+  async function handleForwardHecNow() {
+    setHecTestResult(null);
+    try {
+      const counts = await api.forwardHecNow();
+      setHecTestResult(`Forwarded ${counts.audit} audit event(s) and ${counts.scanLog} scan log event(s).`);
+      await loadHecStatus();
+    } catch (err) {
+      setHecTestResult(err instanceof Error ? err.message : "Forwarding failed.");
     }
   }
 
@@ -758,6 +838,104 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
             <IconSave /> Save alerting settings
           </button>
         </form>
+      )}
+
+      <h3>SIEM Forwarding (HTTP Event Collector)</h3>
+      <p className="host-meta">
+        Ships the audit trail and the scanners' own scan logs to a SIEM over an HTTP Event Collector - Splunk's HEC
+        and the collectors that speak its shape. Events are sent as JSON, and each stream is forwarded from a stored
+        cursor rather than fire-and-forget: a collector that is unreachable for a while causes the next run to catch
+        up instead of leaving a silent gap. Delivery is at-least-once - a repeat is possible after a connection
+        breaks mid-batch, a missing event is not.
+      </p>
+      <p className="host-meta">
+        Retention still applies: if the collector stays unreachable for longer than the audit or scan-log retention
+        window, those rows are deleted before they were ever forwarded. Forwarding is not a substitute for the
+        retention settings above.
+      </p>
+
+      {hecError && <p className="error">{hecError}</p>}
+      {hecSaved && <p className="callout-success">SIEM forwarding settings saved.</p>}
+
+      {appSettings && (
+        <>
+          <form className="settings-form" onSubmit={handleSaveHec}>
+            <label>
+              Collector URL
+              <input
+                placeholder="https://splunk.internal:8088"
+                value={hecUrl}
+                onChange={(e) => setHecUrl(e.target.value)}
+              />
+              <span className="empty">
+                The base URL. /services/collector/event is appended automatically if it isn't already there.
+              </span>
+            </label>
+            <label>
+              Token
+              <input
+                type="password"
+                placeholder={appSettings.hec.tokenSet ? "unchanged" : "HEC token"}
+                value={hecToken}
+                onChange={(e) => setHecToken(e.target.value)}
+              />
+              <span className="empty">
+                {appSettings.hec.tokenSet
+                  ? "A token is stored. Leave blank to keep it."
+                  : "No token stored yet - forwarding stays off until one is set."}
+              </span>
+            </label>
+            <label>
+              Index (optional)
+              <input placeholder="e.g. netsec" value={hecIndex} onChange={(e) => setHecIndex(e.target.value)} />
+            </label>
+            <label>
+              Sourcetype (optional)
+              <input
+                placeholder="default: porttorch:audit / porttorch:scan"
+                value={hecSourcetype}
+                onChange={(e) => setHecSourcetype(e.target.value)}
+              />
+            </label>
+            <label className="hide-empty-toggle">
+              <input type="checkbox" checked={hecAudit} onChange={(e) => setHecAudit(e.target.checked)} />
+              Forward the audit log (who did what in this dashboard)
+            </label>
+            <label className="hide-empty-toggle">
+              <input type="checkbox" checked={hecScanLog} onChange={(e) => setHecScanLog(e.target.checked)} />
+              Forward scan logs (each scanner's own per-job log lines)
+            </label>
+            <label className="hide-empty-toggle">
+              <input type="checkbox" checked={hecVerifyTls} onChange={(e) => setHecVerifyTls(e.target.checked)} />
+              Verify the collector's TLS certificate (turn off only for a self-signed internal collector)
+            </label>
+            <button type="submit" className="btn-icon-label" disabled={savingHec}>
+              <IconSave /> {savingHec ? "Saving..." : "Save forwarding settings"}
+            </button>
+          </form>
+
+          <div className="inline-form">
+            <button type="button" className="btn-icon-label" onClick={handleTestHec}>
+              <IconSend /> Send a test event
+            </button>
+            <button type="button" className="btn-icon-label" onClick={handleForwardHecNow}>
+              <IconRefresh /> Forward pending now
+            </button>
+            <button type="button" className="btn-icon-label" onClick={loadHecStatus}>
+              <IconRefresh /> Check status
+            </button>
+          </div>
+          {hecTestResult && <p className="host-meta">{hecTestResult}</p>}
+          {hecStatus && (
+            <p className="host-meta">
+              {hecStatus.eventsForwarded} event(s) forwarded in total ·{" "}
+              {hecStatus.lastSuccessAt
+                ? `last success ${formatDateTime(hecStatus.lastSuccessAt, me.preferences)}`
+                : "nothing forwarded yet"}
+              {hecStatus.lastError && ` · last error: ${hecStatus.lastError}`}
+            </p>
+          )}
+        </>
       )}
 
       <h3>Mail Server (SMTP)</h3>

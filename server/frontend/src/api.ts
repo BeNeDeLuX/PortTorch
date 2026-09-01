@@ -65,6 +65,39 @@ export interface AppSettings {
   hostDisappearedThresholdDays: number;
   networkCoverageStaleDays: number;
   smtp: SmtpSettingsView;
+  hec: HecSettingsView;
+}
+
+// Same shape of promise as SmtpSettingsView: the token itself is never
+// returned, only whether one is stored.
+export interface HecSettingsView {
+  url: string | null;
+  auditEnabled: boolean;
+  scanLogEnabled: boolean;
+  index: string | null;
+  sourcetype: string | null;
+  verifyTls: boolean;
+  tokenSet: boolean;
+}
+
+export interface HecSettingsInput {
+  url: string | null;
+  auditEnabled: boolean;
+  scanLogEnabled: boolean;
+  index: string | null;
+  sourcetype: string | null;
+  verifyTls: boolean;
+  // Omitted keeps the stored token; an explicit null clears it.
+  token?: string | null;
+}
+
+export interface HecStatus {
+  auditCursor: string | null;
+  scanLogCursorAt: string | null;
+  lastSuccessAt: string | null;
+  lastAttemptAt: string | null;
+  lastError: string | null;
+  eventsForwarded: number;
 }
 
 // What the server actually returns for SMTP: never the password itself,
@@ -1187,7 +1220,13 @@ export const api = {
     return res.json() as Promise<TlsCertificateInfo>;
   },
   appSettings: () => request<AppSettings>("/api/settings/app"),
-  updateAppSettings: (patch: Partial<Omit<AppSettings, "smtp">> & { smtp?: SmtpSettingsInput }) =>
+  hecStatus: () => request<HecStatus>("/api/settings/hec/status"),
+  testHec: () => request<{ ok: boolean; error?: string }>("/api/settings/hec/test", { method: "POST" }),
+  forwardHecNow: () =>
+    request<{ audit: number; scanLog: number }>("/api/settings/hec/forward-now", { method: "POST" }),
+  updateAppSettings: (
+    patch: Partial<Omit<AppSettings, "smtp" | "hec">> & { smtp?: SmtpSettingsInput; hec?: HecSettingsInput }
+  ) =>
     request<AppSettings>("/api/settings/app", { method: "PATCH", body: JSON.stringify(patch) }),
   testSmtp: (to: string) =>
     request<{ ok: boolean; error?: string }>("/api/settings/smtp/test", {
