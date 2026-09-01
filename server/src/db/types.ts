@@ -640,6 +640,22 @@ export interface FindingTriageRulesTable {
   updated_at: ColumnType<Date, string | undefined, string>;
 }
 
+// CA certificates an admin uploaded so this webserver trusts an
+// internally hosted mail relay or log collector without having to switch
+// verification off entirely - see settings/caCertificates.ts.
+export interface TrustedCaCertificatesTable {
+  id: Generated<string>;
+  name: string;
+  pem: string;
+  subject: string | null;
+  issuer: string | null;
+  not_before: Date | null;
+  not_after: Date | null;
+  fingerprint_sha256: string;
+  uploaded_by: string | null;
+  created_at: ColumnType<Date, string | undefined, never>;
+}
+
 export interface ScanExcludesTable {
   id: Generated<string>;
   kind: string;
@@ -749,6 +765,10 @@ export interface AppSettingsTable {
   hec_index: ColumnType<string | null, string | null | undefined, string | null>;
   hec_sourcetype: ColumnType<string | null, string | null | undefined, string | null>;
   hec_verify_tls: ColumnType<boolean, boolean | undefined, boolean>;
+  // Whether the mail server's certificate chain is verified. Separate
+  // from smtp_secure, which selects implicit TLS vs STARTTLS - a
+  // different question from whether the presented certificate is checked.
+  smtp_verify_tls: ColumnType<boolean, boolean | undefined, boolean>;
   // Was config.ts's SMTP_* env vars - moved here for the same reason as
   // the fields above, plus one specific to mail: it's the setting most
   // likely to be wrong on first setup and to need a few quick iterations,
@@ -788,6 +808,7 @@ export interface Database {
   host_tags: HostTagsTable;
   host_comments: HostCommentsTable;
   scan_excludes: ScanExcludesTable;
+  trusted_ca_certificates: TrustedCaCertificatesTable;
   finding_triage_rules: FindingTriageRulesTable;
   hec_state: HecStateTable;
   monitored_networks: MonitoredNetworksTable;

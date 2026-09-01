@@ -157,6 +157,27 @@ The two cursors have different shapes because the tables do. `audit_log` has a m
 
 **The honest limitation, stated in the UI too:** retention deletes old audit rows and scan logs on its own schedule. If the collector stays unreachable longer than that window, those events are gone before they were ever forwarded, and the cursor simply resumes at what still exists rather than blocking forever on rows that no longer do. Forwarding is not a substitute for the retention settings.
 
+### Talking to an internally hosted server with a private certificate
+
+Two outbound integrations connect to servers an operator runs themselves, where a self-signed or private-CA certificate is the norm rather than a mistake: the mail relay and the HEC collector. Both have their own verify-TLS switch (`app_settings.smtp_verify_tls`, `hec_verify_tls`), defaulting to verifying.
+
+`smtp_verify_tls` is deliberately **not** folded into `smtp_secure`: that one selects implicit TLS (465) versus STARTTLS (587), which is a different question from whether the presented certificate is checked. Conflating them would mean an admin on 587 could only get past "self-signed certificate in certificate chain" by also claiming the port speaks implicit TLS. The flag is passed as nodemailer's `tls.rejectUnauthorized`, which applies to a STARTTLS upgrade as well as an implicit-TLS connection - which is the case that actually comes up.
+
+**Uploading the CA is the better answer, and is the point of `trusted_ca_certificates`** (migration `1745200000000_trusted_ca_certificates.js`): switching verification off accepts *any* certificate, including one swapped in by whoever sits between the two hosts, while uploading the CA that actually signed the server's certificate keeps verification on and still succeeds. A table rather than a settings column, because an organisation can easily have a root plus an issuing CA, or be mid-rotation with two roots live at once.
+
+Two things in `settings/caCertificates.ts` are load-bearing:
+
+- **`caBundle()` returns the uploads *plus* `tls.rootCertificates`.** Node's `ca` option *replaces* the default trust store rather than adding to it, so handing it only an internal CA would silently break verification of every public certificate - and that failure would surface somewhere with no visible connection to this page. It returns `undefined` when nothing is uploaded, so Node uses its own default rather than being given a copy of it.
+- **A leaf certificate is rejected at upload**, with a message saying to upload the CA instead. Node would accept a leaf as a trust anchor for itself and nothing else, which looks like it worked right up until the server rotates its certificate, months later.
+
+Uploading or removing one resets both the CA cache *and* the SMTP transporter cache - the transporter captured the old bundle when it was built, so without the second reset an admin would upload their CA and keep hitting the same verification error until the process restarted. `normalisePem` strips every carriage return rather than only CRLF pairs: node-forge emits PEM with CRLF, so text that has been through one conversion can carry a lone `\r` that a pair-wise replace leaves behind (a unit test pins this - it failed exactly that way first).
+
+Verified end to end against a real SMTP server holding a certificate signed by a private CA: with verification on and no CA uploaded the test reports "unable to verify the first certificate"; uploading the server's own certificate is refused with the reason; uploading the CA makes the same test succeed **with verification still on**, and the mail server logs the accepted message.
+
+In the settings API the field is **optional, and omitting it keeps the stored value** - the same treatment as `smtp.password`, for two reasons: making it required 400s every caller written before it existed (the existing integration tests caught exactly that), and defaulting it to true would silently re-enable verification for someone who had turned it off and later saved an unrelated field.
+
+Verified against a real SMTP server presenting a genuine self-signed certificate: with verification on the test returns the operator-visible "self-signed certificate" error, with it off the server accepts the message.
+
 ### Alert channels can be narrowed
 
 A channel was a name, a type and a list of event names, which in a fleet large enough to need alerting is the same as no filter at all - `nuclei.finding` fires for every match including nuclei's very numerous `info` ones, and `port.opened` for every port on every host regardless of network. A channel nobody can narrow is one somebody eventually mutes, and a muted channel is worse than none because it still looks configured. Three filters (migration `1744900000000_webhook_filters.js`), all empty-means-everything so no existing channel changed behaviour: `filter_scanner_agent_ids`, `filter_tags`, `min_severity`.

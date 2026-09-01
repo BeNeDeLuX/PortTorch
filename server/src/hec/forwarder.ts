@@ -3,6 +3,7 @@ import { db } from "../db";
 import { logger } from "../logger";
 import { getAppSettings, type HecSettings } from "../settings/appSettings";
 import { postToHec } from "./client";
+import { caBundle } from "../settings/caCertificates";
 import { auditEvent, scanLogEvents, type HecEvent } from "./format";
 
 // Often enough that a SIEM feed is useful for alerting, rarely enough
@@ -86,7 +87,7 @@ async function recordSuccess(count: number): Promise<void> {
 async function send(settings: HecSettings, events: HecEvent[]): Promise<boolean> {
   for (let i = 0; i < events.length; i += MAX_EVENTS_PER_POST) {
     const slice = events.slice(i, i + MAX_EVENTS_PER_POST);
-    const result = await postToHec(settings, slice);
+    const result = await postToHec(settings, slice, await caBundle());
     if (!result.ok) {
       await recordFailure(result.error ?? "unknown error");
       return false;

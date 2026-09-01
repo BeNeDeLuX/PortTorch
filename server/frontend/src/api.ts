@@ -91,6 +91,20 @@ export interface HecSettingsInput {
   token?: string | null;
 }
 
+// A CA this webserver trusts for its *outbound* connections (mail relay,
+// HEC collector) - unrelated to the webserver's own listener certificate.
+export interface TrustedCaCertificate {
+  id: string;
+  name: string;
+  subject: string | null;
+  issuer: string | null;
+  not_before: string | null;
+  not_after: string | null;
+  fingerprint_sha256: string;
+  uploaded_by?: string | null;
+  created_at: string;
+}
+
 export interface HecStatus {
   auditCursor: string | null;
   scanLogCursorAt: string | null;
@@ -110,6 +124,8 @@ export interface SmtpSettingsView {
   user: string | null;
   from: string | null;
   passwordSet: boolean;
+  // Off lets an internal relay present a self-signed certificate.
+  verifyTls: boolean;
 }
 
 // What the form sends back. An omitted password keeps the stored one;
@@ -121,6 +137,8 @@ export interface SmtpSettingsInput {
   user: string | null;
   from: string | null;
   password?: string | null;
+  // Omitted keeps the stored value, like password.
+  verifyTls?: boolean;
 }
 
 export interface DashboardUser {
@@ -1236,6 +1254,15 @@ export const api = {
     }
     return res.json() as Promise<NmapImportResult>;
   },
+
+  caCertificates: () => request<TrustedCaCertificate[]>("/api/settings/ca-certificates"),
+  uploadCaCertificate: (name: string, pem: string) =>
+    request<TrustedCaCertificate>("/api/settings/ca-certificates", {
+      method: "POST",
+      body: JSON.stringify({ name, pem }),
+    }),
+  deleteCaCertificate: (id: string) =>
+    request<void>(`/api/settings/ca-certificates/${id}`, { method: "DELETE" }),
 
   tlsCertificate: () => request<TlsCertificateInfo>("/api/settings/tls-certificate"),
   // Bypasses request()'s JSON-only helper - a multipart body needs the

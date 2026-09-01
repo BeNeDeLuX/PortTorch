@@ -30,6 +30,7 @@ import {
 } from "./appSettings";
 import { buildTransporter, resetSmtpTransporter, senderAddress } from "../webhooks/email";
 import { postToHec } from "../hec/client";
+import { CaCertificateError, caBundle, parseCaCertificate, resetCaBundle } from "../settings/caCertificates";
 import { runHecForward } from "../hec/forwarder";
 import { runRetentionSweep } from "../retention";
 
@@ -165,6 +166,12 @@ const appSettingsSchema = z.object({
       user: z.string().trim().min(1).nullable(),
       password: z.string().min(1).nullable().optional(),
       from: z.string().trim().min(1).nullable(),
+      // Optional, and omitted means "keep the stored value" - same
+      // treatment as password above, and for the same reason: making it
+      // required would 400 every caller written before it existed, and
+      // defaulting it to true would silently re-enable verification for
+      // someone who had turned it off and then saved an unrelated field.
+      verifyTls: z.boolean().optional(),
     })
     .optional(),
   // One object for the same reason as smtp: a collector URL without its
@@ -373,19 +380,23 @@ settingsRouter.post("/hec/test", asyncHandler(async (req, res) => {
     return;
   }
 
-  const result = await postToHec(hec, [
-    {
-      time: Date.now() / 1000,
-      source: "porttorch:test",
-      sourcetype: hec.sourcetype || "porttorch:test",
-      ...(hec.index ? { index: hec.index } : {}),
-      event: {
-        event: "hec.test",
-        message: "PortTorch HEC test event. If you can search for this, log forwarding works.",
-        triggered_by: req.session.username ?? null,
+  const result = await postToHec(
+    hec,
+    [
+      {
+        time: Date.now() / 1000,
+        source: "porttorch:test",
+        sourcetype: hec.sourcetype || "porttorch:test",
+        ...(hec.index ? { index: hec.index } : {}),
+        event: {
+          event: "hec.test",
+          message: "PortTorch HEC test event. If you can search for this, log forwarding works.",
+          triggered_by: req.session.username ?? null,
+        },
       },
-    },
-  ]);
+    ],
+    await caBundle()
+  );
 
   if (!result.ok) {
     logger.warn({ event: "settings.hec_test_failed", error: result.error, triggered_by: req.session.username });
@@ -457,7 +468,7 @@ settingsRouter.post("/smtp/test", asyncHandler(async (req, res) => {
   }
 
   const { smtp } = await getAppSettings();
-  const transport = buildTransporter(smtp);
+  const transport = buildTransporter(smtp, await caBundle());
   if (!transport) {
     res.status(400).json({ error: "no mail server is configured - set a host first" });
     return;
@@ -483,6 +494,114 @@ settingsRouter.post("/smtp/test", asyncHandler(async (req, res) => {
   logger.info({ event: "settings.smtp_test_sent", triggered_by: req.session.username, source_ip: req.ip });
   recordAudit("settings.smtp_test_sent", req.session.username, req.ip, { to: parsed.data.to });
   res.json({ ok: true });
+}));
+
+// Trust anchors for this webserver's *outbound* TLS - the mail relay and
+// the HEC collector. Deliberately not related to the webserver's own
+// listener certificate above, which is what clients verify when they
+// connect *to* PortTorch; these are the opposite direction and share
+// nothing but the word "certificate".
+settingsRouter.get("/ca-certificates", asyncHandler(async (_req, res) => {
+  const rows = await db
+    .selectFrom("trusted_ca_certificates")
+    // Never the PEM itself: it is not a secret, but the list is a summary
+    // and a page that dumps several certificates of base64 is unreadable.
+    .select(["id", "name", "subject", "issuer", "not_before", "not_after", "fingerprint_sha256", "uploaded_by", "created_at"])
+    .orderBy("created_at", "desc")
+    .execute();
+  res.json(rows);
+}));
+
+const caUploadSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  pem: z.string().min(1).max(64 * 1024),
+});
+
+settingsRouter.post("/ca-certificates", asyncHandler(async (req, res) => {
+  const parsed = caUploadSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  let cert;
+  try {
+    cert = parseCaCertificate(parsed.data.pem);
+  } catch (err) {
+    if (err instanceof CaCertificateError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    throw err;
+  }
+
+  const existing = await db
+    .selectFrom("trusted_ca_certificates")
+    .select(["id", "name"])
+    .where("fingerprint_sha256", "=", cert.fingerprintSha256)
+    .executeTakeFirst();
+  if (existing) {
+    res.status(409).json({ error: `this certificate is already trusted, as "${existing.name}"` });
+    return;
+  }
+
+  const row = await db
+    .insertInto("trusted_ca_certificates")
+    .values({
+      name: parsed.data.name,
+      pem: cert.pem,
+      subject: cert.subject,
+      issuer: cert.issuer,
+      not_before: cert.notBefore,
+      not_after: cert.notAfter,
+      fingerprint_sha256: cert.fingerprintSha256,
+      uploaded_by: req.session.username ?? null,
+    })
+    .returning(["id", "name", "subject", "issuer", "not_before", "not_after", "fingerprint_sha256", "created_at"])
+    .executeTakeFirstOrThrow();
+
+  // Both caches have to go: the bundle itself, and the SMTP transporter,
+  // which captured the old bundle when it was built. Without the second
+  // one an admin would upload their CA and keep hitting the same
+  // verification error until the process restarted - the exact loop that
+  // moving these settings into the database was meant to end.
+  resetCaBundle();
+  resetSmtpTransporter();
+
+  logger.info({
+    event: "ca_certificate.uploaded",
+    ca_certificate_id: row.id,
+    name: row.name,
+    subject: row.subject,
+    not_after: row.not_after,
+    uploaded_by: req.session.username,
+  });
+  recordAudit("ca_certificate.uploaded", req.session.username, req.ip, {
+    ca_certificate_id: row.id,
+    name: row.name,
+    subject: row.subject,
+    fingerprint_sha256: row.fingerprint_sha256,
+  });
+
+  res.status(201).json(row);
+}));
+
+settingsRouter.delete("/ca-certificates/:id", asyncHandler(async (req, res) => {
+  if (!z.string().uuid().safeParse(req.params.id).success) {
+    res.status(400).json({ error: "invalid certificate id" });
+    return;
+  }
+  const result = await db.deleteFrom("trusted_ca_certificates").where("id", "=", req.params.id).executeTakeFirst();
+  if (result.numDeletedRows === 0n) {
+    res.status(404).json({ error: "certificate not found" });
+    return;
+  }
+
+  resetCaBundle();
+  resetSmtpTransporter();
+  logger.info({ event: "ca_certificate.deleted", ca_certificate_id: req.params.id, deleted_by: req.session.username });
+  recordAudit("ca_certificate.deleted", req.session.username, req.ip, { ca_certificate_id: req.params.id });
+  res.status(204).end();
 }));
 
 // Where the database and the screenshot directory are actually going.

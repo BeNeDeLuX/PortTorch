@@ -1,5 +1,6 @@
 import nodemailer, { Transporter } from "nodemailer";
 import { SmtpSettings, getAppSettings } from "../settings/appSettings";
+import { caBundle } from "../settings/caCertificates";
 
 // Built lazily and cached - undefined means "not built yet", null means
 // "SMTP isn't configured" (a valid, expected state for a deployment that
@@ -19,7 +20,11 @@ export function resetSmtpTransporter(): void {
   transporter = undefined;
 }
 
-export function buildTransporter(smtp: SmtpSettings): Transporter | null {
+// ca is the admin-uploaded trust anchors plus Node's own public roots
+// (see caCertificates.ts on why both). Passed through rather than fetched
+// here so this stays a pure function - the SMTP test route builds its own
+// transporter from the same pair.
+export function buildTransporter(smtp: SmtpSettings, ca?: string[]): Transporter | null {
   if (!smtp.host) return null;
   return nodemailer.createTransport({
     host: smtp.host,
@@ -29,13 +34,19 @@ export function buildTransporter(smtp: SmtpSettings): Transporter | null {
     // ports like 465 - matches nodemailer's own documented behavior.
     secure: smtp.secure,
     auth: smtp.user ? { user: smtp.user, pass: smtp.password ?? undefined } : undefined,
+    // Applies to both implicit TLS and a STARTTLS upgrade, so turning
+    // verification off works on 587 as well as 465 - which is the case
+    // that actually comes up, since an internal relay on 587 with a
+    // private-CA certificate fails with "self-signed certificate in
+    // certificate chain" and no other way past it.
+    tls: { rejectUnauthorized: smtp.verifyTls, ...(ca ? { ca } : {}) },
   });
 }
 
 async function getTransporter(): Promise<{ transport: Transporter | null; smtp: SmtpSettings }> {
   const { smtp } = await getAppSettings();
   if (transporter === undefined) {
-    transporter = buildTransporter(smtp);
+    transporter = buildTransporter(smtp, await caBundle());
   }
   return { transport: transporter, smtp };
 }

@@ -47,6 +47,10 @@ export interface SmtpSettings {
   user: string | null;
   password: string | null;
   from: string | null;
+  // Off lets an internally hosted relay present a self-signed
+  // certificate. Distinct from `secure` - see the smtp_verify_tls
+  // migration.
+  verifyTls: boolean;
 }
 
 // Everything an admin can change from the Settings page. password is
@@ -59,6 +63,9 @@ export interface SmtpSettingsInput {
   user: string | null;
   password?: string | null;
   from: string | null;
+  // Omitted keeps the stored value, like password - see the settings
+  // route's own note on why neither is required.
+  verifyTls?: boolean;
 }
 
 // Singleton row (id always 1), same idiom as digest_email_state /
@@ -87,6 +94,7 @@ export async function getAppSettings(): Promise<AppSettings> {
       "hec_index",
       "hec_sourcetype",
       "hec_verify_tls",
+      "smtp_verify_tls",
       "smtp_host",
       "smtp_port",
       "smtp_secure",
@@ -124,6 +132,7 @@ export async function getAppSettings(): Promise<AppSettings> {
       user: row.smtp_user,
       password: row.smtp_password,
       from: row.smtp_from,
+      verifyTls: row.smtp_verify_tls,
     },
   };
 }
@@ -188,6 +197,7 @@ export async function setSmtpSettings(input: SmtpSettingsInput): Promise<void> {
       smtp_secure: input.secure,
       smtp_user: input.user,
       smtp_from: input.from,
+      ...(input.verifyTls === undefined ? {} : { smtp_verify_tls: input.verifyTls }),
       ...(input.password === undefined ? {} : { smtp_password: input.password }),
     })
     .where("id", "=", 1)

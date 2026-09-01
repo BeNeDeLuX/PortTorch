@@ -2919,3 +2919,12 @@ th {
   border: 1px dashed var(--border);
   color: var(--muted);
 }
+
+/* A pasted PEM: a few lines of fixed-width base64, so it needs room and
+   must not wrap mid-line into something that looks corrupted. */
+.ca-pem-input {
+  min-height: 8rem;
+  font-size: 0.75rem;
+  white-space: pre;
+  overflow-x: auto;
+}

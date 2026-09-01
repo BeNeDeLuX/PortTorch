@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, AppSettings, HecStatus, Me, StorageUsage, TlsCertificateInfo } from "../api";
+import { api, AppSettings, HecStatus, Me, StorageUsage, TlsCertificateInfo, TrustedCaCertificate } from "../api";
 import { IconCheck, IconRefresh, IconSave, IconSend, IconTrash, IconUpload } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime } from "../lib/formatDate";
@@ -94,6 +94,13 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
   const [smtpSecure, setSmtpSecure] = useState(false);
   const [smtpUser, setSmtpUser] = useState("");
   const [smtpFrom, setSmtpFrom] = useState("");
+  const [smtpVerifyTls, setSmtpVerifyTls] = useState(true);
+
+  const [caCerts, setCaCerts] = useState<TrustedCaCertificate[]>([]);
+  const [caName, setCaName] = useState("");
+  const [caPem, setCaPem] = useState("");
+  const [caError, setCaError] = useState<string | null>(null);
+  const [caBusy, setCaBusy] = useState(false);
   // Never prefilled - the API doesn't return the stored password. Blank
   // therefore means "keep whatever is stored", which is why the form
   // needs passwordSet from the server to say so honestly.
@@ -123,6 +130,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
 
   useEffect(() => {
     load();
+    loadCaCerts();
     api
       .appSettings()
       .then((s) => {
@@ -142,6 +150,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
         setSmtpSecure(s.smtp.secure);
         setSmtpUser(s.smtp.user ?? "");
         setSmtpFrom(s.smtp.from ?? "");
+        setSmtpVerifyTls(s.smtp.verifyTls);
         setHecUrl(s.hec.url ?? "");
         setHecAudit(s.hec.auditEnabled);
         setHecScanLog(s.hec.scanLogEnabled);
@@ -229,6 +238,39 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
     } finally {
       setLoadingStorage(false);
     }
+  }
+
+  async function loadCaCerts() {
+    try {
+      setCaCerts(await api.caCertificates());
+    } catch {
+      setCaCerts([]);
+    }
+  }
+
+  async function handleUploadCa(e: FormEvent) {
+    e.preventDefault();
+    if (!caName.trim() || !caPem.trim()) return;
+    setCaError(null);
+    setCaBusy(true);
+    try {
+      await api.uploadCaCertificate(caName.trim(), caPem);
+      setCaName("");
+      setCaPem("");
+      await loadCaCerts();
+    } catch (err) {
+      setCaError(err instanceof Error ? err.message : "Could not add this certificate.");
+    } finally {
+      setCaBusy(false);
+    }
+  }
+
+  async function handleDeleteCa(cert: TrustedCaCertificate) {
+    if (!window.confirm(`Stop trusting "${cert.name}"? Connections that relied on it will fail verification again.`)) {
+      return;
+    }
+    await api.deleteCaCertificate(cert.id);
+    await loadCaCerts();
   }
 
   async function loadHecStatus() {
@@ -381,6 +423,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
           secure: smtpSecure,
           user: smtpUser.trim() || null,
           from: smtpFrom.trim() || null,
+          verifyTls: smtpVerifyTls,
           // Omitted when left blank so saving an unrelated field can't
           // silently wipe working credentials; sent as null only when the
           // admin explicitly clears the username too, which is the one
@@ -938,6 +981,78 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
         </>
       )}
 
+      <h3>Trusted CA Certificates</h3>
+      <p className="host-meta">
+        Certificate authorities this webserver trusts when it connects <em>out</em> - to the mail relay and to the
+        HEC collector. Upload the CA that signed an internal server's certificate and verification succeeds without
+        having to switch it off, which is the better answer: switching it off accepts any certificate, including one
+        swapped in by whoever sits between the two hosts. Nothing here affects PortTorch's own listener certificate
+        above, which is what browsers verify when they connect to this page.
+      </p>
+      <p className="host-meta">
+        Your uploads are added to the public root store, not put in its place, so trusting an internal CA never costs
+        you the ability to verify a public one.
+      </p>
+
+      {caError && <p className="error">{caError}</p>}
+
+      <form className="settings-form" onSubmit={handleUploadCa}>
+        <label>
+          Name
+          <input placeholder="e.g. Corp Root CA" value={caName} onChange={(e) => setCaName(e.target.value)} />
+        </label>
+        <label>
+          Certificate (PEM)
+          <textarea
+            className="ca-pem-input"
+            placeholder={"-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"}
+            value={caPem}
+            onChange={(e) => setCaPem(e.target.value)}
+          />
+        </label>
+        <button type="submit" className="btn-icon-label" disabled={caBusy}>
+          <IconUpload /> {caBusy ? "Adding..." : "Add certificate"}
+        </button>
+      </form>
+
+      {caCerts.length === 0 ? (
+        <p className="empty">No CA certificates uploaded - only the public root store is trusted.</p>
+      ) : (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Subject</th>
+                <th>Valid until</th>
+                <th>Added</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {caCerts.map((c) => (
+                <tr key={c.id}>
+                  <td>{c.name}</td>
+                  <td className="fingerprint-cell">{c.subject ?? "-"}</td>
+                  <td>
+                    {c.not_after ? formatDateTime(c.not_after, me.preferences) : "-"}
+                    {c.not_after && new Date(c.not_after).getTime() < Date.now() && (
+                      <span className="expiry-label expiry-expired"> expired</span>
+                    )}
+                  </td>
+                  <td>{formatDateTime(c.created_at, me.preferences)}</td>
+                  <td>
+                    <button type="button" className="btn-icon-label" onClick={() => handleDeleteCa(c)}>
+                      <IconTrash size={12} /> Remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <h3>Mail Server (SMTP)</h3>
       <p className="host-meta">
         Used by "email" alert channels on the Webhooks page and by the daily digest email. Leave the host blank if you
@@ -973,6 +1088,11 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
             <label className="hide-empty-toggle">
               <input type="checkbox" checked={smtpSecure} onChange={(e) => setSmtpSecure(e.target.checked)} />
               Implicit TLS (port 465). Leave off for STARTTLS on 587.
+            </label>
+            <label className="hide-empty-toggle">
+              <input type="checkbox" checked={smtpVerifyTls} onChange={(e) => setSmtpVerifyTls(e.target.checked)} />
+              Verify the mail server's TLS certificate. Turn off for an internal relay with a self-signed or
+              private-CA certificate - that is what "self-signed certificate in certificate chain" means.
             </label>
             <label>
               Username

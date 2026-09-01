@@ -27,7 +27,10 @@ export interface HecPostResult {
 // undici as a dependency). Everywhere else in this codebase does use
 // fetch - webhooks, the GitHub release sync - because none of those needs
 // to talk to a box with a private CA.
-export async function postToHec(settings: HecSettings, events: HecEvent[]): Promise<HecPostResult> {
+// ca: admin-uploaded trust anchors plus Node's public roots, so an
+// internally hosted collector with a private CA verifies properly rather
+// than needing verification switched off (see settings/caCertificates.ts).
+export async function postToHec(settings: HecSettings, events: HecEvent[], ca?: string[]): Promise<HecPostResult> {
   if (!settings.url || !settings.token) {
     return { ok: false, error: "no collector URL or token configured" };
   }
@@ -62,6 +65,7 @@ export async function postToHec(settings: HecSettings, events: HecEvent[]): Prom
         },
         // Only meaningful for https; harmless on http.
         rejectUnauthorized: settings.verifyTls,
+        ...(ca ? { ca } : {}),
         // Bounded so a hung collector can't stall the forwarder - the tick
         // just fails, the cursor doesn't move, and the next tick retries.
         timeout: 20_000,
