@@ -696,6 +696,19 @@ func (c *Client) GetConfigOverrides(ctx context.Context) (map[string]int, error)
 	return out, nil
 }
 
+// ReportBaseConfig tells the webserver what this scanner's config.yaml
+// actually says for the dashboard-tunable settings, so the Configure
+// dialog can show real values instead of the shipped defaults.
+//
+// Deliberately the *base* config, not the effective one: the dialog's
+// question is "what applies if I leave this field blank", and the
+// effective config already has any dashboard override folded into it -
+// reporting that would make an override look like the file's own value
+// and there would be nothing left to clear back to.
+func (c *Client) ReportBaseConfig(ctx context.Context, values map[string]int) error {
+	return c.doJSON(ctx, http.MethodPut, "/api/ingest/config-report", values, nil)
+}
+
 // GetProbeHostnames fetches the manual per-host SNI/screenshot-URL
 // hostname overrides (see CLAUDE.md's "Manual probe hostname override"
 // section) for hosts owned by this scanner agent - a plain map is enough

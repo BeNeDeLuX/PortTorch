@@ -82,6 +82,7 @@ agentsRouter.get("/", asyncHandler(async (req, res) => {
       "submit_queue_pending",
       "scan_slots_running",
       "scan_slots_max",
+      "base_config",
       "nuclei_templates_updated_at",
       "template_update_requested_at",
       "template_update_status",

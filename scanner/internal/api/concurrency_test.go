@@ -234,3 +234,102 @@ func TestApplyServeOverrides(t *testing.T) {
 		t.Fatalf("expected 0 to be ignored, got %d", value)
 	}
 }
+
+// baseConfigValues is what the dashboard's Configure dialog shows as "your
+// config.yaml says this", so it has to report the file's own values - not
+// the effective ones, which already have any dashboard override folded in.
+// Reporting the effective config would make an override look like the
+// file's value, leaving nothing to clear back to.
+func TestBaseConfigValuesReportTheFileNotTheOverride(t *testing.T) {
+	f := newFakeWebserver(t, 0)
+	c, err := client.New(&config.Config{WebserverURL: f.server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("building test client: %v", err)
+	}
+	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
+	s := NewServer(c, pipeline.Config{
+		MasscanRate:              1000,
+		MasscanRetries:           2,
+		Concurrency:              5,
+		GowitnessConcurrency:     2,
+		ScreenshotTimeoutSeconds: 20,
+		RDPConcurrency:           2,
+		NucleiConcurrency:        2,
+		NucleiTimeoutSeconds:     10,
+		TLSCertTimeoutSeconds:    8,
+	}, 1, t.TempDir(), "", nil, logger)
+
+	before := s.baseConfigValues()
+	if before["masscanRate"] != 1000 || before["concurrency"] != 5 || before["maxConcurrentScans"] != 1 {
+		t.Fatalf("unexpected base values: %+v", before)
+	}
+
+	// Apply overrides the way the config watcher does.
+	s.cfgMu.Lock()
+	applyConfigOverrides(&s.pcfg, s.baseCfg, map[string]int{"masscanRate": 50, "concurrency": 16})
+	applyServeOverrides(&s.maxScans, s.baseMaxScans, map[string]int{"maxConcurrentScans": 4})
+	s.cfgMu.Unlock()
+
+	// The running config really did change...
+	if got := s.pipelineConfig().MasscanRate; got != 50 {
+		t.Fatalf("expected the override to apply to the running config, got %d", got)
+	}
+	if got := s.maxConcurrentScans(); got != 4 {
+		t.Fatalf("expected the serve override to apply, got %d", got)
+	}
+	// ...but what gets reported is still the file's own values.
+	after := s.baseConfigValues()
+	if after["masscanRate"] != 1000 || after["concurrency"] != 5 || after["maxConcurrentScans"] != 1 {
+		t.Errorf("base values changed with the override: %+v", after)
+	}
+}
+
+// Reported once per process, since config.yaml can't change without a
+// restart - but a webserver that was unreachable at startup must not leave
+// the dashboard permanently showing shipped defaults.
+func TestBaseConfigIsReportedOnceAndRetriedOnFailure(t *testing.T) {
+	var reports atomic.Int64
+	var fail atomic.Bool
+	fail.Store(true)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/ingest/config-report" {
+			reports.Add(1)
+			if fail.Load() {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	c, err := client.New(&config.Config{WebserverURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("building test client: %v", err)
+	}
+	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
+	s := NewServer(c, pipeline.Config{MasscanRate: 1000}, 1, t.TempDir(), "", nil, logger)
+
+	s.reportBaseConfigOnce(context.Background())
+	if reports.Load() != 1 {
+		t.Fatalf("expected 1 attempt, got %d", reports.Load())
+	}
+	// Failed, so it must try again rather than giving up silently.
+	s.reportBaseConfigOnce(context.Background())
+	if reports.Load() != 2 {
+		t.Fatalf("expected a retry after failure, got %d attempts", reports.Load())
+	}
+
+	fail.Store(false)
+	s.reportBaseConfigOnce(context.Background())
+	if reports.Load() != 3 {
+		t.Fatalf("expected the successful attempt, got %d", reports.Load())
+	}
+	// Now it must stop: re-sending an unchangeable value every tick is noise.
+	s.reportBaseConfigOnce(context.Background())
+	s.reportBaseConfigOnce(context.Background())
+	if reports.Load() != 3 {
+		t.Errorf("expected no further attempts after success, got %d", reports.Load())
+	}
+}

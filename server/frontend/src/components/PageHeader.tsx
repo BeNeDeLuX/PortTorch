@@ -49,6 +49,7 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
               : []),
           ]}
         />
+        <NavLink to="/screenshots">Screenshots</NavLink>
         <NavLink to="/certificates">Certificates</NavLink>
         <NavLink to="/ssh-keys">SSH Keys</NavLink>
         <NavLink to="/vulnerabilities">Vulnerabilities</NavLink>

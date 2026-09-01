@@ -50,4 +50,21 @@ describe("scanner config overrides", () => {
       expect(t.help.length).toBeGreaterThan(0);
     }
   });
+
+  it("carries a shipped default that its own bounds would accept", () => {
+    // The defaults are a hand-kept copy of the scanner's own defaults()
+    // (scanner/internal/config/config.go), and they are shown to admins
+    // as "Default N" in the Configure dialog. A value outside the field's
+    // own min/max would be a number the form refuses to accept while
+    // claiming it is what a fresh install runs - the exact shape a typo
+    // here would take.
+    for (const t of SCANNER_TUNABLES) {
+      expect(Number.isInteger(t.defaultValue)).toBe(true);
+      expect(t.defaultValue).toBeGreaterThanOrEqual(t.min);
+      expect(t.defaultValue).toBeLessThanOrEqual(t.max);
+      // Round-tripping through the real validator proves the displayed
+      // default is something an admin could actually save.
+      expect(validateOverrides({ [t.key]: t.defaultValue }).ok).toBe(true);
+    }
+  });
 });

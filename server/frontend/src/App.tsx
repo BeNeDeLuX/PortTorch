@@ -15,6 +15,7 @@ import Certificates from "./pages/Certificates";
 import SshKeys from "./pages/SshKeys";
 import Networks from "./pages/Networks";
 import ImportScan from "./pages/ImportScan";
+import Screenshots from "./pages/Screenshots";
 import Vulnerabilities from "./pages/Vulnerabilities";
 import Users from "./pages/Users";
 import Digest from "./pages/Digest";
@@ -124,6 +125,10 @@ export default function App() {
       <Route
         path="/import"
         element={routeElement(false, (m) => <ImportScan me={m} onLogout={() => setMe(null)} />)}
+      />
+      <Route
+        path="/screenshots"
+        element={routeElement(false, (m) => <Screenshots me={m} onLogout={() => setMe(null)} />)}
       />
       <Route
         path="/ssh-keys"

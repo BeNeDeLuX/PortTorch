@@ -66,6 +66,14 @@ type Server struct {
 	maxScans     int
 	baseMaxScans int
 
+	// baseConfigReported goes true once the webserver has acknowledged
+	// this process's config.yaml values. Only ever attempted until it
+	// succeeds: baseCfg is read at startup and cannot change without a
+	// restart, so re-sending it every tick would be pure noise - but a
+	// webserver that was unreachable at startup must not leave the
+	// dashboard permanently showing shipped defaults, hence the retry.
+	baseConfigReported bool
+
 	metricsMu    sync.Mutex
 	scansTotal   map[string]int // keyed by terminal status: completed/failed/cancelled
 	pollsFailed  int
@@ -327,6 +335,62 @@ func (s *Server) refreshConfigOverrides(ctx context.Context) {
 	// the dashboard would keep showing the old capacity until the next
 	// scan started or finished.
 	s.PublishScanSlots()
+
+	s.reportBaseConfigOnce(ctx)
+}
+
+// reportBaseConfigOnce sends config.yaml's own values for the
+// dashboard-tunable settings, retrying on each config-watcher tick until
+// one attempt succeeds. Rides on that watcher rather than getting its own
+// loop because it answers the same question from the other direction -
+// the watcher pulls what the dashboard wants set, this pushes what the
+// file already says.
+func (s *Server) reportBaseConfigOnce(ctx context.Context) {
+	s.mu.RLock()
+	done := s.baseConfigReported
+	s.mu.RUnlock()
+	if done {
+		return
+	}
+
+	reportCtx, cancel := context.WithTimeout(ctx, timeoutCreateJob)
+	defer cancel()
+	if err := s.client.ReportBaseConfig(reportCtx, s.baseConfigValues()); err != nil {
+		// Best-effort and purely informational: a failure here must never
+		// affect scanning, so it is logged and retried on the next tick.
+		s.logger.Warn("reporting base config failed", "event", "scanner.base_config_report_failed", "err", err.Error())
+		return
+	}
+
+	s.mu.Lock()
+	s.baseConfigReported = true
+	s.mu.Unlock()
+	s.logger.Info("reported base config to webserver", "event", "scanner.base_config_reported")
+}
+
+// baseConfigValues is the config.yaml side of the dashboard's tunable
+// allowlist (server/src/scannerConfig/tunables.ts). Written out by name
+// rather than reflected over the struct for the same reason wasDifferent
+// is: an explicit list can't silently start reporting a field nobody
+// meant to expose.
+func (s *Server) baseConfigValues() map[string]int {
+	s.cfgMu.RLock()
+	base := s.baseCfg
+	maxScans := s.baseMaxScans
+	s.cfgMu.RUnlock()
+
+	return map[string]int{
+		"maxConcurrentScans":       maxScans,
+		"masscanRate":              base.MasscanRate,
+		"masscanRetries":           base.MasscanRetries,
+		"concurrency":              base.Concurrency,
+		"gowitnessConcurrency":     base.GowitnessConcurrency,
+		"screenshotTimeoutSeconds": base.ScreenshotTimeoutSeconds,
+		"rdpConcurrency":           base.RDPConcurrency,
+		"nucleiConcurrency":        base.NucleiConcurrency,
+		"nucleiTimeoutSeconds":     base.NucleiTimeoutSeconds,
+		"tlsCertTimeoutSeconds":    base.TLSCertTimeoutSeconds,
+	}
 }
 
 // applyServeOverrides is applyConfigOverrides' counterpart for the

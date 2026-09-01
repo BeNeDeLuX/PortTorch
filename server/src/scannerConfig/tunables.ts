@@ -35,11 +35,24 @@ export interface ScannerTunable {
   min: number;
   max: number;
   help: string;
+  // The value a freshly installed scanner uses - copied from
+  // scanner/internal/config/config.go's defaults(), which is the source
+  // of truth. A fourth hand-kept copy of scanner-side constants, same
+  // accepted trade-off as knownNseScripts.ts and the three compareSemver
+  // implementations: shared packaging across a Go and a TS component
+  // isn't worth the coupling for a handful of numbers.
+  //
+  // It is the *shipped* default, deliberately not "this scanner's current
+  // value" - the webserver cannot read a scanner's config.yaml, so an
+  // operator who edited that file has a different fallback and the UI
+  // must say so rather than implying otherwise.
+  defaultValue: number;
 }
 
 export const SCANNER_TUNABLES: ScannerTunable[] = [
   {
     key: "maxConcurrentScans",
+    defaultValue: 1,
     label: "Concurrent scans",
     min: 1,
     max: 8,
@@ -47,6 +60,7 @@ export const SCANNER_TUNABLES: ScannerTunable[] = [
   },
   {
     key: "masscanRate",
+    defaultValue: 1000,
     label: "masscan rate (packets/sec)",
     min: 1,
     max: 10_000_000,
@@ -54,6 +68,7 @@ export const SCANNER_TUNABLES: ScannerTunable[] = [
   },
   {
     key: "masscanRetries",
+    defaultValue: 2,
     label: "masscan retries",
     min: 0,
     max: 10,
@@ -61,6 +76,7 @@ export const SCANNER_TUNABLES: ScannerTunable[] = [
   },
   {
     key: "concurrency",
+    defaultValue: 5,
     label: "nmap concurrency",
     min: 1,
     max: 64,
@@ -68,6 +84,7 @@ export const SCANNER_TUNABLES: ScannerTunable[] = [
   },
   {
     key: "gowitnessConcurrency",
+    defaultValue: 2,
     label: "Screenshot concurrency",
     min: 1,
     max: 16,
@@ -75,6 +92,7 @@ export const SCANNER_TUNABLES: ScannerTunable[] = [
   },
   {
     key: "screenshotTimeoutSeconds",
+    defaultValue: 20,
     label: "Screenshot timeout (seconds)",
     min: 1,
     max: 300,
@@ -82,6 +100,7 @@ export const SCANNER_TUNABLES: ScannerTunable[] = [
   },
   {
     key: "rdpConcurrency",
+    defaultValue: 2,
     label: "RDP screenshot concurrency",
     min: 1,
     max: 16,
@@ -89,6 +108,7 @@ export const SCANNER_TUNABLES: ScannerTunable[] = [
   },
   {
     key: "nucleiConcurrency",
+    defaultValue: 2,
     label: "nuclei concurrency",
     min: 1,
     max: 16,
@@ -96,6 +116,7 @@ export const SCANNER_TUNABLES: ScannerTunable[] = [
   },
   {
     key: "nucleiTimeoutSeconds",
+    defaultValue: 10,
     label: "nuclei timeout (seconds)",
     min: 1,
     max: 3600,
@@ -103,6 +124,7 @@ export const SCANNER_TUNABLES: ScannerTunable[] = [
   },
   {
     key: "tlsCertTimeoutSeconds",
+    defaultValue: 8,
     label: "TLS certificate probe timeout (seconds)",
     min: 1,
     max: 120,

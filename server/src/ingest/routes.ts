@@ -17,6 +17,7 @@ import { deriveServiceTags } from "../lib/serviceTags";
 import { recordAudit } from "../audit/log";
 import { scanPriorityOrder } from "../scanPriority";
 import { parsePortSpec, portSpecCovers } from "../lib/portSpec";
+import { SCANNER_TUNABLES } from "../scannerConfig/tunables";
 
 export const ingestRouter = Router();
 ingestRouter.use(asyncHandler(apiKeyAuth));
@@ -183,6 +184,52 @@ ingestRouter.get("/config", asyncHandler(async (req, res) => {
     .where("id", "=", req.scannerAgentId!)
     .executeTakeFirstOrThrow();
   res.json(agent.config_overrides ?? {});
+}));
+
+// The other direction of the same conversation: GET /config above pulls
+// what the dashboard wants set, this pushes what the scanner's own
+// config.yaml already says, so the Configure dialog can show the real
+// fallback instead of the shipped default. Sent once per scanner process
+// (see reportBaseConfigOnce) - config.yaml can't change without a
+// restart.
+//
+// Unknown keys are dropped rather than rejected, the opposite of
+// PUT /api/agents/:id/config's own validation: there an unknown key is an
+// admin's typo that would silently do nothing, here it is a scanner of a
+// different vintage reporting a field this webserver doesn't know or no
+// longer exposes, and refusing the whole report over it would lose the
+// nine values that are perfectly good. Bounds are still enforced, since
+// an out-of-range number displayed as "your config.yaml says this" would
+// be misinformation either way.
+ingestRouter.put("/config-report", asyncHandler(async (req, res) => {
+  const body = req.body;
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    res.status(400).json({ error: "expected an object of setting values" });
+    return;
+  }
+
+  const known: Record<string, number> = {};
+  for (const tunable of SCANNER_TUNABLES) {
+    const raw = (body as Record<string, unknown>)[tunable.key];
+    if (typeof raw !== "number" || !Number.isInteger(raw)) continue;
+    if (raw < tunable.min || raw > tunable.max) continue;
+    known[tunable.key] = raw;
+  }
+
+  await db
+    .updateTable("scanner_agents")
+    .set({ base_config: known })
+    .where("id", "=", req.scannerAgentId!)
+    .execute();
+
+  logger.info({
+    event: "scanner.base_config_reported",
+    scanner_agent_id: req.scannerAgentId,
+    scanner_agent_name: req.scannerAgentName,
+    settings: known,
+  });
+
+  res.status(204).end();
 }));
 
 // The cached latest-release row (see scannerUpdate/githubSync.ts) - the

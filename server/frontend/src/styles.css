@@ -2796,3 +2796,77 @@ th {
   word-break: break-all;
   max-width: 26rem;
 }
+
+/* Screenshot gallery. Deliberately not .host-grid/.host-thumb: those are
+   a 130px strip under a host's metadata, where the image is a hint. Here
+   the image *is* the content, so the tiles are larger and anchored to the
+   top of the capture - a web page's header is the recognisable part, and
+   centring would crop exactly that away. */
+.shot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.shot-card {
+  display: block;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.shot-card:hover {
+  border-color: var(--accent);
+}
+
+.shot-thumb {
+  display: block;
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+  object-position: top;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.shot-meta {
+  padding: 0.6rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.shot-title {
+  font-weight: 600;
+  /* Page titles run long and are not worth two lines in a grid. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shot-sub {
+  font-size: 0.8rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .shot-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* The shipped default beside a scanner tunable (ScannerConfigModal). Set
+   apart from the surrounding help text so it reads as a value rather than
+   as the first words of a sentence. */
+.tunable-default {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+}

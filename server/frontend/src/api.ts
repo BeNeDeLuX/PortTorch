@@ -445,6 +445,19 @@ export interface NmapImportResult {
   nmapArgs: string | null;
 }
 
+export interface FleetScreenshot {
+  id: string;
+  host_id: string;
+  host_ip: string;
+  host_hostname: string | null;
+  port: number;
+  url: string | null;
+  page_title: string | null;
+  http_status: number | null;
+  captured_at: string;
+  kind: "web" | "rdp";
+}
+
 export interface MonitoredNetwork {
   id: string;
   label: string;
@@ -579,6 +592,9 @@ export interface ScannerAgent {
   // (older build, or a one-shot process that has no slots).
   scan_slots_running: number | null;
   scan_slots_max: number | null;
+  // What this scanner's own config.yaml says, as reported by the scanner.
+  // null = unknown (older build, or it hasn't reported yet).
+  base_config: Record<string, number> | null;
   // When this scanner last updated its nuclei templates. null = unknown
   // (nuclei not installed, or a scanner build that doesn't report it).
   nuclei_templates_updated_at: string | null;
@@ -605,6 +621,9 @@ export interface ScannerTunable {
   min: number;
   max: number;
   help: string;
+  // The value a fresh install uses (from the scanner's own defaults),
+  // not necessarily what this scanner's config.yaml says.
+  defaultValue: number;
 }
 
 export interface ScannerReleaseInfo {
@@ -968,6 +987,7 @@ export const api = {
 
   expiringCertificates: () => request<ExpiringCertificate[]>("/api/certificates"),
   sshHostKeys: () => request<FleetSshHostKey[]>("/api/ssh-keys"),
+  screenshots: () => request<FleetScreenshot[]>("/api/screenshots"),
   networkCoverage: () => request<NetworkCoverageResult>("/api/networks"),
   createNetwork: (label: string, cidr: string, scannerAgentId: string | null) =>
     request<MonitoredNetwork>("/api/networks", {

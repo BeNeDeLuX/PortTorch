@@ -143,6 +143,16 @@ Minutes since local midnight rather than a `time` column: the only operation is 
 
 **Out-of-window runs are deferred, not skipped.** `scheduler.ts`'s `tick()` `continue`s without touching `next_run_at`, so the run stays owed and happens the moment the window opens - a nightly sweep whose window starts at 22:00 starts at 22:00 rather than losing the night and waiting a full cycle. Nothing is logged per deferral (that loop runs every 60 seconds, so a schedule waiting eight hours would emit ~480 identical lines into a stream every line of which is meant to be worth shipping to a SIEM); instead `GET /api/schedules` computes a `window_blocked` flag server-side - the answer to "why hasn't this run yet", and not something the browser's own clock and timezone could authoritatively decide for a window stored in the schedule's zone.
 
+### The screenshot gallery
+
+`GET /api/screenshots` (in `screenshots/routes.ts`, registered before `/:id/image` so the bare path isn't swallowed by it) backs a fleet-wide gallery: every web interface and RDP login screen, newest first, with a click on a tile opening that host.
+
+**One tile per (host, port, kind), newest capture only** - the same `distinctOn` "most recent per identity" convention the host detail page and the certificates list already use. Identity is host **plus port** rather than host alone, deliberately: a host running three web interfaces on three ports has three genuinely different screenshots, and collapsing them to one would hide two of them. The Dashboard's card view is the one-per-host view; this is the one-per-interface view.
+
+Web and RDP captures live in separate tables, so they are queried separately and merged in JS rather than UNION'd - the two have different columns (`url`/`page_title`/`http_status` exist only for web), and a UNION would mean padding one side with nulls in SQL to no benefit.
+
+`.shot-grid`/`.shot-thumb` are deliberately not `.host-grid`/`.host-thumb`: there the image is a 130px hint under a host's metadata, here the image *is* the content. The tiles are larger and anchored with `object-position: top`, because a web page's header is the recognisable part and centring the crop would cut exactly that away. Images are `loading="lazy"` - a fleet with hundreds of captures would otherwise fetch every one the moment the page opens.
+
 ### Importing an nmap XML report
 
 Everything else in this database exists because a PortTorch scanner found it, which left no way in for an nmap run from a network with no agent, or a scan predating the platform. `POST /api/imports/nmap` (operator, multipart) is that way in.
@@ -204,6 +214,15 @@ A scanner's baseline config lived only in `config.yaml` on its host, so changing
 **The allowlist's exclusions are the design.** `webserverUrl`/`apiKey`/`serverCaCertPath`/`insecureSkipVerify` would orphan the scanner permanently on a wrong value - the one class of mistake that can never be fixed remotely, since fixing it needs the connection it just broke. Every `*Path` breaks scanning outright and is equally unfixable from here. `listenAddr`/`controlApiToken` are a local security surface. `submitQueueDir`/`scanAuditLogPath` are filesystem paths on a host this webserver knows nothing about. `pollIntervalSeconds`/`retryIntervalSeconds` are read once when `serve` builds its tickers, and a bad value would throttle the very loop that fetches the correction. What's left is bounded-integer tuning where a bad value is self-limiting. An unknown key is **rejected**, not dropped - silently ignoring a misspelling would render as a successful save that did nothing.
 
 `GET /api/agents/config/tunables` serves the allowlist itself so the dashboard's form is generated from the same definition the server validates against, and the two can't drift on bounds or labels.
+
+**Beside each field is the value that applies when it is left blank**, and where that number comes from decides how it is labelled:
+
+- **`scanner_agents.base_config`** - what this scanner's own config.yaml says, reported by the scanner itself over `PUT /api/ingest/config-report` (migration `1744600000000_scanner_base_config.js`). Shown as "config.yaml: N", and the input's placeholder becomes that number too, since a blank field genuinely means "use this".
+- **`defaultValue`** on the tunable - a hand-kept copy of `scanner/internal/config/config.go`'s `defaults()` (a fourth copy of scanner-side constants, the same accepted trade-off as `knownNseScripts.ts`). Shown as "Default N" only when the scanner hasn't reported, with the dialog saying so outright rather than passing the shipped default off as this scanner's value. A unit test round-trips every default through `validateOverrides`, so a typo can't produce a number the form advertises but would refuse to save.
+
+**The scanner reports its *base* config, not its effective one.** The dialog's question is "what applies if I leave this blank", and the effective config already has any dashboard override folded in - reporting that would make an override look like the file's own value, with nothing left to clear back to. Both are kept side by side, so a field can show `config.yaml: 250` with `50` typed into it and the operator sees exactly what they changed and from what.
+
+Unknown keys in a report are **dropped**, the opposite of the admin-facing save's reject-on-unknown: there an unknown key is a typo that would silently do nothing, here it is a scanner of a different vintage reporting a field this webserver doesn't expose, and refusing the whole report over it would lose the values that are perfectly good. Out-of-bounds values are dropped for a related reason - displayed as "your config.yaml says this", an impossible number would be misinformation.
 
 `maxConcurrentScans` is the one entry that isn't a pipeline setting - on the scanner it lives on the serve-mode config and is applied by `applyServeOverrides` rather than `applyConfigOverrides`. It travels in the same map over the same wire, so nothing on this side knows the difference. See `scanner/CLAUDE.md` for what it actually changes.
 

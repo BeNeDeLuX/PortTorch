@@ -73,6 +73,7 @@ export interface ScannerAgentsTable {
   // distinct from a reported 0.
   scan_slots_running: number | null;
   scan_slots_max: number | null;
+  base_config: Record<string, number> | null;
   // When that scanner's nuclei template tree was last written, reported
   // via the same piggyback header as version above. Null until a scanner
   // build with this support reports one - templates are fetched once at
