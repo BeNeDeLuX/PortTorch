@@ -2,6 +2,8 @@ import { db } from "../db";
 import { logger } from "../logger";
 import { sendEmailAlert } from "./email";
 import { shouldDeliver, type AlertContext } from "./filter";
+import { caBundle } from "../settings/caCertificates";
+import { outboundPost } from "../lib/outboundPost";
 import { enqueueRetry } from "./retryQueue";
 
 // Most recent deliveries kept per webhook (webhook_deliveries table) -
@@ -65,7 +67,8 @@ export type WebhookEvent =
   | "host.disappeared"
   | "port.closed"
   | "network.coverage_stale"
-  | "ssh_key.shared";
+  | "ssh_key.shared"
+  | "ca_certificate.expiring_soon";
 
 // Plain-English subject line for an email channel - a webhook channel has
 // no equivalent need, since "event"/"data" already ride along in the JSON
@@ -88,6 +91,7 @@ const EVENT_SUBJECTS: Record<WebhookEvent, string> = {
   "port.closed": "Port no longer open",
   "network.coverage_stale": "Tracked network has not been scanned",
   "ssh_key.shared": "SSH host key shared by several addresses",
+  "ca_certificate.expiring_soon": "Trusted CA certificate expiring soon",
 };
 
 // A Teams "Workflows" webhook (the current replacement for the classic,
@@ -141,6 +145,10 @@ export interface DeliveryTarget {
   channel_type: string;
   url: string | null;
   email_to: string | null;
+  // Optional so the retry drainer, which reloads a channel by id, doesn't
+  // have to select it - absent means verify, the same as the column's own
+  // default.
+  verify_tls?: boolean;
 }
 
 // 4xx means the target understood us and refused; retrying byte-identical
@@ -189,22 +197,24 @@ export async function attemptDelivery(
       ? buildTeamsAdaptiveCardBody(`PortTorch: ${EVENT_SUBJECTS[event]}`, message)
       : JSON.stringify({ text: message, content: message, event, data, timestamp: new Date().toISOString() });
 
-  try {
-    const res = await fetch(channel.url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-    });
-    if (res.ok) return { ok: true, statusCode: res.status };
-    return {
-      ok: false,
-      permanent: isPermanentStatus(res.status),
-      statusCode: res.status,
-      error: `target responded ${res.status}`,
-    };
-  } catch (err) {
-    return { ok: false, permanent: false, statusCode: null, error: err instanceof Error ? err.message : String(err) };
-  }
+  // outboundPost rather than fetch, so an internally hosted alert target
+  // can be reached the same way the HEC collector can: with the
+  // admin-uploaded CA bundle, and with verification relaxable per channel
+  // when there is no CA to upload.
+  const result = await outboundPost(channel.url, body, {
+    verifyTls: channel.verify_tls ?? true,
+    ca: await caBundle(),
+  });
+  if (result.ok) return { ok: true, statusCode: result.status ?? null };
+  return {
+    ok: false,
+    // A transport-level failure (DNS, refused, TLS) has no status and is
+    // treated as transient, exactly as the fetch-based version did by
+    // landing in its catch block.
+    permanent: result.status === undefined ? false : isPermanentStatus(result.status),
+    statusCode: result.status ?? null,
+    error: result.error ?? "delivery failed",
+  };
 }
 
 // context describes the thing being alerted on - which scanner it came
@@ -227,6 +237,7 @@ export async function dispatchWebhook(
     filter_scanner_agent_ids: string[];
     filter_tags: string[];
     min_severity: string | null;
+    verify_tls: boolean;
   }>;
   try {
     channels = await db
@@ -240,6 +251,7 @@ export async function dispatchWebhook(
         "filter_scanner_agent_ids",
         "filter_tags",
         "min_severity",
+        "verify_tls",
       ])
       .where("enabled", "=", true)
       .execute();

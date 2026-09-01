@@ -34,6 +34,7 @@ const EVENT_LABELS: Record<string, string> = {
   "host.disappeared": "Host stopped responding",
   "network.coverage_stale": "Tracked network has not been scanned",
   "ssh_key.shared": "SSH host key shared by several addresses",
+  "ca_certificate.expiring_soon": "A trusted CA certificate is expiring",
 };
 export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const isAdmin = me.role === "admin";
@@ -48,6 +49,11 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
   const [minSeverity, setMinSeverity] = useState("");
   const [agents, setAgents] = useState<ScannerAgent[]>([]);
   const [allEvents, setAllEvents] = useState<WebhookEvent[]>([]);
+  const [verifyTls, setVerifyTls] = useState(true);
+  // Non-null puts the form into edit mode for that channel - deliberately
+  // the same form rather than a second one, so the two can't drift on
+  // which fields exist or how they validate.
+  const [editing, setEditing] = useState<Webhook | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -77,12 +83,65 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
     setEvents((prev) => (prev.includes(key) ? prev.filter((e) => e !== key) : [...prev, key]));
   }
 
+  function startEditing(w: Webhook) {
+    setEditing(w);
+    setName(w.name);
+    setChannelType(w.channel_type);
+    setUrl(w.url ?? "");
+    setEmailTo(w.email_to ?? "");
+    setEvents(w.events);
+    setFilterScannerAgentIds(w.filter_scanner_agent_ids);
+    setFilterTags(w.filter_tags.join(", "));
+    setMinSeverity(w.min_severity ?? "");
+    setVerifyTls(w.verify_tls);
+    setError(null);
+  }
+
+  function resetForm() {
+    setEditing(null);
+    setName("");
+    setUrl("");
+    setEmailTo("");
+    setEvents([]);
+    setFilterScannerAgentIds([]);
+    setFilterTags("");
+    setMinSeverity("");
+    setVerifyTls(true);
+  }
+
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     if (!name.trim() || events.length === 0) return;
     if (channelType !== "email" && !url.trim()) return;
     if (channelType === "email" && !emailTo.trim()) return;
     setError(null);
+
+    const tags = filterTags
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+
+    if (editing) {
+      try {
+        await api.updateWebhook(editing.id, {
+          name: name.trim(),
+          ...(channelType === "email" ? { emailTo: emailTo.trim() } : { url: url.trim() }),
+          events,
+          filterScannerAgentIds,
+          filterTags: tags,
+          // Explicitly null rather than omitted, so clearing the dropdown
+          // actually removes the floor instead of silently keeping it.
+          minSeverity: minSeverity || null,
+          verifyTls,
+        });
+        resetForm();
+        await load();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to update webhook");
+      }
+      return;
+    }
+
     try {
       await api.createWebhook({
         name: name.trim(),
@@ -93,19 +152,11 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
         filterScannerAgentIds,
         // Comma-separated in the field, an array on the wire - same
         // convention as every other multi-value input in this app.
-        filterTags: filterTags
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean),
+        filterTags: tags,
         minSeverity: minSeverity || null,
+        verifyTls,
       });
-      setName("");
-      setUrl("");
-      setEmailTo("");
-      setEvents([]);
-      setFilterScannerAgentIds([]);
-      setFilterTags("");
-      setMinSeverity("");
+      resetForm();
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create webhook");
@@ -211,6 +262,11 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
                 </select>
               </label>
             </div>
+            <label className="hide-empty-toggle">
+              <input type="checkbox" checked={verifyTls} onChange={(e) => setVerifyTls(e.target.checked)} />
+              Verify the target's TLS certificate. For an internal endpoint, uploading its CA under Settings is the
+              better fix than turning this off.
+            </label>
             <p className="host-meta">
               Empty means everything, which is how every channel behaved before these existed. Scanner and tag filters
               narrow the events that are <em>about a host</em> - they deliberately never suppress fleet-level alerts
@@ -219,9 +275,16 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
               means nuclei findings.
             </p>
           </div>
-          <button type="submit" className="btn-icon-label">
-            <IconPlus /> Create
-          </button>
+          <div className="inline-form">
+            <button type="submit" className="btn-icon-label">
+              <IconPlus /> {editing ? "Save changes" : "Create"}
+            </button>
+            {editing && (
+              <button type="button" className="btn-icon-label" onClick={resetForm}>
+                Cancel
+              </button>
+            )}
+          </div>
         </form>
       )}
 
@@ -263,6 +326,7 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
                       }
                       if (w.filter_tags.length > 0) parts.push(`tags: ${w.filter_tags.join(", ")}`);
                       if (w.min_severity) parts.push(`min ${w.min_severity}`);
+                      if (!w.verify_tls) parts.push("TLS unverified");
                       return parts.length > 0 ? parts.join(" · ") : "none";
                     })()}
                   </td>
@@ -284,6 +348,9 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
                             <IconPlay /> Activate
                           </>
                         )}
+                      </button>{" "}
+                      <button className="btn-icon-label" onClick={() => startEditing(w)}>
+                        <IconPlus /> Edit
                       </button>{" "}
                       <button className="btn-icon-label" onClick={() => handleTest(w)}>
                         <IconSend /> Test

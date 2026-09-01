@@ -29,6 +29,7 @@ const EVENTS: WebhookEvent[] = [
   "port.closed",
   "network.coverage_stale",
   "ssh_key.shared",
+  "ca_certificate.expiring_soon",
 ];
 const uuidSchema = z.string().uuid();
 const WEBHOOK_COLUMNS = [
@@ -43,6 +44,7 @@ const WEBHOOK_COLUMNS = [
   "filter_scanner_agent_ids",
   "filter_tags",
   "min_severity",
+  "verify_tls",
 ] as const;
 
 // The one list of event names, served rather than repeated. It had been
@@ -117,6 +119,7 @@ const createWebhookSchema = z
     filterScannerAgentIds: z.array(z.string().uuid()).default([]),
     filterTags: z.array(z.string().trim().min(1)).default([]),
     minSeverity: z.enum(["info", "low", "medium", "high", "critical"]).nullish(),
+    verifyTls: z.boolean().default(true),
   })
   .refine((data) => (data.channelType === "email" ? !!data.emailTo : !!data.url), {
     message: "url is required for a webhook/teams channel, emailTo is required for an email channel",
@@ -128,7 +131,8 @@ webhooksRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  const { name, channelType, url, emailTo, events, filterScannerAgentIds, filterTags, minSeverity } = parsed.data;
+  const { name, channelType, url, emailTo, events, filterScannerAgentIds, filterTags, minSeverity, verifyTls } =
+    parsed.data;
 
   const webhook = await db
     .insertInto("webhooks")
@@ -141,6 +145,7 @@ webhooksRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
       filter_scanner_agent_ids: filterScannerAgentIds,
       filter_tags: filterTags,
       min_severity: minSeverity ?? null,
+      verify_tls: verifyTls,
     })
     .returning(WEBHOOK_COLUMNS)
     .executeTakeFirstOrThrow();
@@ -160,8 +165,28 @@ webhooksRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
   res.status(201).json(webhook);
 }));
 
+// Every field is optional and only what is present is written - a
+// genuine partial update, so the existing "just flip enabled" callers
+// keep working unchanged.
+//
+// This used to accept `enabled` alone, which meant adjusting a filter, a
+// target URL or the event list required deleting the channel and creating
+// it again - and webhook_deliveries hangs off it with ON DELETE CASCADE,
+// so that also threw away the delivery history, which is the only record
+// of whether the channel was ever working.
 const updateWebhookSchema = z.object({
   enabled: z.boolean().optional(),
+  name: z.string().trim().min(1).max(100).optional(),
+  url: z.string().url().optional(),
+  emailTo: emailListSchema.optional(),
+  events: z.array(z.enum(EVENTS as [WebhookEvent, ...WebhookEvent[]])).min(1).optional(),
+  filterScannerAgentIds: z.array(z.string().uuid()).optional(),
+  filterTags: z.array(z.string().trim().min(1)).optional(),
+  // Explicit null clears the minimum; omitted leaves it alone. The two
+  // have to stay distinguishable or a channel's severity floor could
+  // never be removed once set.
+  minSeverity: z.enum(["info", "low", "medium", "high", "critical"]).nullable().optional(),
+  verifyTls: z.boolean().optional(),
 });
 
 webhooksRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
@@ -170,23 +195,55 @@ webhooksRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
     return;
   }
   const parsed = updateWebhookSchema.safeParse(req.body);
-  if (!parsed.success || parsed.data.enabled === undefined) {
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const d = parsed.data;
+  const patch = {
+    ...(d.enabled !== undefined ? { enabled: d.enabled } : {}),
+    ...(d.name !== undefined ? { name: d.name } : {}),
+    ...(d.url !== undefined ? { url: d.url } : {}),
+    ...(d.emailTo !== undefined ? { email_to: d.emailTo } : {}),
+    ...(d.events !== undefined ? { events: d.events } : {}),
+    ...(d.filterScannerAgentIds !== undefined ? { filter_scanner_agent_ids: d.filterScannerAgentIds } : {}),
+    ...(d.filterTags !== undefined ? { filter_tags: d.filterTags } : {}),
+    ...("minSeverity" in req.body ? { min_severity: d.minSeverity ?? null } : {}),
+    ...(d.verifyTls !== undefined ? { verify_tls: d.verifyTls } : {}),
+  };
+  if (Object.keys(patch).length === 0) {
     res.status(400).json({ error: "nothing to update" });
     return;
   }
 
-  const result = await db
+  const updated = await db
     .updateTable("webhooks")
-    .set({ enabled: parsed.data.enabled })
+    .set(patch)
     .where("id", "=", req.params.id)
+    .returning(WEBHOOK_COLUMNS)
     .executeTakeFirst();
 
-  if (result.numUpdatedRows === 0n) {
+  if (!updated) {
     res.status(404).json({ error: "webhook not found" });
     return;
   }
-  recordAudit("webhook.updated", req.session.username, req.ip, { webhook_id: req.params.id, enabled: parsed.data.enabled });
-  res.status(204).end();
+
+  // The url/email_to pairing is enforced by a table CHECK constraint, so
+  // a patch that would break it fails loudly rather than half-applying -
+  // no separate validation needed here.
+  logger.info({
+    event: "webhook.updated",
+    webhook_id: updated.id,
+    name: updated.name,
+    changed: Object.keys(patch),
+    updated_by: req.session.username,
+  });
+  recordAudit("webhook.updated", req.session.username, req.ip, {
+    webhook_id: updated.id,
+    changed: Object.keys(patch),
+  });
+  res.json(updated);
 }));
 
 webhooksRouter.delete("/:id", requireAdmin, asyncHandler(async (req, res) => {

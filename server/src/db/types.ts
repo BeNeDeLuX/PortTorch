@@ -654,6 +654,9 @@ export interface TrustedCaCertificatesTable {
   fingerprint_sha256: string;
   uploaded_by: string | null;
   created_at: ColumnType<Date, string | undefined, never>;
+  // Fire-once, like tls_certificates' own: an expiry only moves one way,
+  // so there is no recovery to detect.
+  expiry_alert_sent_at: ColumnType<Date | null, string | null | undefined, string | null>;
 }
 
 export interface ScanExcludesTable {
@@ -694,6 +697,10 @@ export interface WebhooksTable {
   filter_scanner_agent_ids: ColumnType<string[], string[] | undefined, string[]>;
   filter_tags: ColumnType<string[], string[] | undefined, string[]>;
   min_severity: ColumnType<string | null, string | null | undefined, string | null>;
+  // Verify the target's certificate chain. Off is the blunt fallback for
+  // an internal endpoint whose CA can't be uploaded - see
+  // settings/caCertificates.ts for the better one.
+  verify_tls: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
 // One row per actual delivery attempt (webhooks/dispatch.ts) - trimmed to

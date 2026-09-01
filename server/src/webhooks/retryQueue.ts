@@ -76,7 +76,7 @@ export async function drainWebhookRetryQueue(): Promise<{ delivered: number; ret
     // said they don't want it.
     const channel = await db
       .selectFrom("webhooks")
-      .select(["id", "channel_type", "url", "email_to", "enabled"])
+      .select(["id", "channel_type", "url", "email_to", "enabled", "verify_tls"])
       .where("id", "=", row.webhook_id)
       .executeTakeFirst();
     if (!channel || !channel.enabled) {

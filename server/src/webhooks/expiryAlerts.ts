@@ -20,7 +20,61 @@ export function startCertificateExpiryAlerts(): void {
   }, CHECK_INTERVAL_MS);
 }
 
+// Exported so tests can drive one full pass deterministically instead of
+// waiting on the hourly interval - same shape as
+// runOperationalAlertChecks and runRetentionSweep.
+export async function runCertificateExpiryChecks(): Promise<void> {
+  await tick();
+}
+
 async function tick(): Promise<void> {
+  await checkScannedCertificates();
+  await checkTrustedCaCertificates();
+}
+
+// The CAs an admin uploaded so this webserver trusts an internal mail
+// relay or HEC collector (settings/caCertificates.ts).
+//
+// Worth its own alert rather than being left to the red "expired" label
+// on the settings page: when one of these lapses, mail alerting and SIEM
+// forwarding stop at the same moment, and the page that would have shown
+// it is one nobody has a reason to open. Fire-once, like the scanned
+// certificates above - an expiry only moves in one direction, and
+// replacing the CA means uploading a new row with its own alert state.
+async function checkTrustedCaCertificates(): Promise<void> {
+  const warningThreshold = new Date(Date.now() + EXPIRY_WARNING_DAYS * 24 * 60 * 60_000);
+
+  const expiring = await db
+    .selectFrom("trusted_ca_certificates")
+    .select(["id", "name", "subject", "not_after"])
+    .where("not_after", "is not", null)
+    .where("not_after", "<=", warningThreshold)
+    .where("expiry_alert_sent_at", "is", null)
+    .execute();
+
+  for (const ca of expiring) {
+    const on = ca.not_after ? new Date(ca.not_after).toISOString().slice(0, 10) : "soon";
+    const message =
+      `Trusted CA certificate "${ca.name}" (${ca.subject ?? "no subject"}) expires ${on} - once it does, ` +
+      "outbound TLS to any server it signed stops verifying, which means email alerts and SIEM forwarding fail together";
+
+    await dispatchWebhook("ca_certificate.expiring_soon", message, {
+      ca_certificate_id: ca.id,
+      name: ca.name,
+      subject: ca.subject,
+      not_after: ca.not_after,
+    });
+
+    await db
+      .updateTable("trusted_ca_certificates")
+      .set({ expiry_alert_sent_at: new Date().toISOString() })
+      .where("id", "=", ca.id)
+      .execute();
+    logger.info({ event: "webhook.ca_certificate_expiry_alerted", ca_certificate_id: ca.id, name: ca.name });
+  }
+}
+
+async function checkScannedCertificates(): Promise<void> {
   const warningThreshold = new Date(Date.now() + EXPIRY_WARNING_DAYS * 24 * 60 * 60_000);
 
   const expiring = await db

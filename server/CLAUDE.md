@@ -178,6 +178,14 @@ In the settings API the field is **optional, and omitting it keeps the stored va
 
 Verified against a real SMTP server presenting a genuine self-signed certificate: with verification on the test returns the operator-visible "self-signed certificate" error, with it off the server accepts the message.
 
+### Alert channels: editing, and reaching an internal target
+
+**A channel can be edited in place.** `PATCH /api/webhooks/:id` used to accept `enabled` and nothing else, so adjusting a filter, a target URL or the event list meant deleting the channel and creating it again - and `webhook_deliveries` hangs off it with `ON DELETE CASCADE`, so that also threw away the delivery history, the only record of whether the channel had ever worked. It is a genuine partial update now, so the existing enable/disable callers are unchanged. `minSeverity` distinguishes omitted from an explicit `null`, or a severity floor could never be removed once set.
+
+**Delivery goes through `lib/outboundPost`, not `fetch`.** Alert targets are very often internally hosted, and `fetch` can take neither a CA bundle nor `rejectUnauthorized` - the same two things the HEC collector needed, which is why that transport is now shared rather than hand-rolled twice. So an uploaded CA covers webhook targets too, and `webhooks.verify_tls` is the blunt per-channel fallback when there is no CA to upload. One behavioural detail worth keeping: a TLS or DNS failure has no HTTP status, and is treated as **transient** - the same outcome the `fetch` version produced by landing in its catch block, so a broken target is still retried rather than dropped as a permanent refusal.
+
+`ca_certificate.expiring_soon` closes the matching gap on the trust anchors themselves: an expiring uploaded CA takes out email alerting and SIEM forwarding at the same moment, and the only previous warning was a red label on a settings page nobody has a reason to open. Fire-once, like `tls_certificates.expiry_alert_sent_at` - an expiry only moves in one direction, so there is no recovery to detect, and replacing the CA means uploading a new row with its own alert state.
+
 ### Alert channels can be narrowed
 
 A channel was a name, a type and a list of event names, which in a fleet large enough to need alerting is the same as no filter at all - `nuclei.finding` fires for every match including nuclei's very numerous `info` ones, and `port.opened` for every port on every host regardless of network. A channel nobody can narrow is one somebody eventually mutes, and a muted channel is worse than none because it still looks configured. Three filters (migration `1744900000000_webhook_filters.js`), all empty-means-everything so no existing channel changed behaviour: `filter_scanner_agent_ids`, `filter_tags`, `min_severity`.

@@ -386,6 +386,9 @@ export interface Webhook {
   filter_scanner_agent_ids: string[];
   filter_tags: string[];
   min_severity: string | null;
+  // Off is the blunt fallback for an internal endpoint whose CA can't be
+  // uploaded - see Trusted CA Certificates on the Settings page.
+  verify_tls: boolean;
 }
 
 export interface WebhookDelivery {
@@ -1335,10 +1338,27 @@ export const api = {
     filterScannerAgentIds?: string[];
     filterTags?: string[];
     minSeverity?: string | null;
+    verifyTls?: boolean;
   }) =>
     request<Webhook>("/api/webhooks", { method: "POST", body: JSON.stringify(input) }),
+  // Partial update: only the fields present are written. minSeverity sent
+  // as null clears the floor; omitted leaves it alone.
+  updateWebhook: (
+    id: string,
+    patch: {
+      name?: string;
+      url?: string;
+      emailTo?: string;
+      events?: WebhookEvent[];
+      filterScannerAgentIds?: string[];
+      filterTags?: string[];
+      minSeverity?: string | null;
+      verifyTls?: boolean;
+      enabled?: boolean;
+    }
+  ) => request<Webhook>(`/api/webhooks/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   setWebhookEnabled: (id: string, enabled: boolean) =>
-    request<void>(`/api/webhooks/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
+    request<Webhook>(`/api/webhooks/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
   deleteWebhook: (id: string) => request<void>(`/api/webhooks/${id}`, { method: "DELETE" }),
   testWebhook: (id: string) => request<{ ok: boolean; status?: number; error?: string }>(`/api/webhooks/${id}/test`, { method: "POST" }),
   webhookDeliveries: (id: string) => request<WebhookDelivery[]>(`/api/webhooks/${id}/deliveries`),
