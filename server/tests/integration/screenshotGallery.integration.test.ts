@@ -25,6 +25,8 @@ interface GalleryItem {
   page_title: string | null;
   kind: "web" | "rdp";
   captured_at: string;
+  changed: boolean;
+  previous: { id: string; captured_at: string; page_title: string | null; http_status: number | null } | null;
 }
 
 // The gallery is a fleet-wide overview, not a history: one tile per host
@@ -145,6 +147,49 @@ describe("fleet-wide screenshot gallery", () => {
       const res = await client.get(`/api/hosts/${item.host_id}`);
       expect(res.status).toBe(200);
     }
+  });
+
+  it("carries the previous capture and flags a changed page title", async () => {
+    // 10.0.0.11:80 went from "old title" to "current title" - the signal
+    // this exists for (a login page becoming an open admin panel).
+    const items = await gallery();
+    const changed = items.find((s) => s.host_ip === HOST_A && s.port === 80)!;
+    expect(changed.changed).toBe(true);
+    expect(changed.previous).not.toBeNull();
+    expect(changed.previous!.page_title).toBe("old title");
+  });
+
+  it("does not flag a first-ever capture as changed", async () => {
+    // Nothing to differ from - flagging it would make every new host
+    // noisy, which is how a badge stops being read.
+    const items = await gallery();
+    const first = items.find((s) => s.host_ip === HOST_A && s.port === 8080)!;
+    expect(first.previous).toBeNull();
+    expect(first.changed).toBe(false);
+  });
+
+  it("does not flag a repeat capture whose title and status are the same", async () => {
+    // Two captures of an unchanged page. An image comparison would call
+    // this a change on almost every scan; the stored metadata does not.
+    const unchanged = await db
+      .insertInto("screenshots")
+      .values({
+        host_id: hostB,
+        scan_job_id: jobId,
+        port: 443,
+        url: "http://x:443/",
+        image_path: "/nonexistent/b-443-new.png",
+        page_title: "other host",
+        captured_at: new Date().toISOString(),
+      })
+      .returning(["id"])
+      .executeTakeFirstOrThrow();
+
+    const items = await gallery();
+    const entry = items.find((s) => s.host_ip === HOST_B && s.port === 443)!;
+    expect(entry.id).toBe(String(unchanged.id));
+    expect(entry.previous).not.toBeNull();
+    expect(entry.changed).toBe(false);
   });
 
   it("requires authentication", async () => {

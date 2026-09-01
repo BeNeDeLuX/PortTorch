@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { Router } from "express";
+import { sql } from "kysely";
 import { db } from "../db";
 import { config } from "../config";
 import { requireAuth } from "../auth/middleware";
@@ -53,55 +54,64 @@ screenshotsRouter.use(requireAuth);
 screenshotsRouter.get("/", asyncHandler(async (req, res) => {
   const allowed = getAllowedScannerAgentIds(req);
 
-  let webQuery = db
-    .selectFrom("screenshots")
-    .innerJoin("hosts", "hosts.id", "screenshots.host_id")
-    .select([
-      "screenshots.id as id",
-      "screenshots.host_id as host_id",
-      "hosts.ip as host_ip",
-      "hosts.hostname as host_hostname",
-      "screenshots.port as port",
-      "screenshots.url as url",
-      "screenshots.page_title as page_title",
-      "screenshots.http_status as http_status",
-      "screenshots.captured_at as captured_at",
-    ]);
-  let rdpQuery = db
-    .selectFrom("rdp_screenshots")
-    .innerJoin("hosts", "hosts.id", "rdp_screenshots.host_id")
-    .select([
-      "rdp_screenshots.id as id",
-      "rdp_screenshots.host_id as host_id",
-      "hosts.ip as host_ip",
-      "hosts.hostname as host_hostname",
-      "rdp_screenshots.port as port",
-      "rdp_screenshots.captured_at as captured_at",
-    ]);
+  // The newest *two* captures per (host, port), so the gallery can say
+  // whether the latest one differs from what was there before. A window
+  // function rather than two queries: the pairing is the whole point, and
+  // doing it in SQL keeps "newest" and "the one before it" from being
+  // decided by two different orderings.
+  //
+  // Raw SQL rather than the query builder because distinctOn cannot
+  // express "top 2 per group" - this is the one place in the gallery that
+  // needs more than the newest row.
+  const scopeFilter = allowed ? sql`and h.scanner_agent_id = any(${allowed}::uuid[])` : sql``;
 
-  if (allowed) {
-    webQuery = webQuery.where("hosts.scanner_agent_id", "in", allowed);
-    rdpQuery = rdpQuery.where("hosts.scanner_agent_id", "in", allowed);
-  }
+  const web = await sql<{
+    id: string;
+    host_id: string;
+    host_ip: string;
+    host_hostname: string | null;
+    port: number;
+    url: string | null;
+    page_title: string | null;
+    http_status: number | null;
+    captured_at: Date;
+    rn: string;
+  }>`
+    select s.id, s.host_id, h.ip as host_ip, h.hostname as host_hostname, s.port, s.url,
+           s.page_title, s.http_status, s.captured_at,
+           row_number() over (partition by s.host_id, s.port order by s.captured_at desc) as rn
+    from screenshots s
+    join hosts h on h.id = s.host_id
+    where true ${scopeFilter}
+  `.execute(db);
 
-  const [web, rdp] = await Promise.all([
-    webQuery
-      .distinctOn(["screenshots.host_id", "screenshots.port"])
-      .orderBy("screenshots.host_id")
-      .orderBy("screenshots.port")
-      .orderBy("screenshots.captured_at", "desc")
-      .execute(),
-    rdpQuery
-      .distinctOn(["rdp_screenshots.host_id", "rdp_screenshots.port"])
-      .orderBy("rdp_screenshots.host_id")
-      .orderBy("rdp_screenshots.port")
-      .orderBy("rdp_screenshots.captured_at", "desc")
-      .execute(),
-  ]);
+  const rdp = await sql<{
+    id: string;
+    host_id: string;
+    host_ip: string;
+    host_hostname: string | null;
+    port: number;
+    captured_at: Date;
+    rn: string;
+  }>`
+    select r.id, r.host_id, h.ip as host_ip, h.hostname as host_hostname, r.port, r.captured_at,
+           row_number() over (partition by r.host_id, r.port order by r.captured_at desc) as rn
+    from rdp_screenshots r
+    join hosts h on h.id = r.host_id
+    where true ${scopeFilter}
+  `.execute(db);
 
   const items = [
-    ...web.map((s) => ({ ...s, kind: "web" as const })),
-    ...rdp.map((s) => ({ ...s, url: null, page_title: null, http_status: null, kind: "rdp" as const })),
+    ...pair(web.rows.map((r) => ({ ...r, kind: "web" as const }))),
+    ...pair(
+      rdp.rows.map((r) => ({
+        ...r,
+        url: null as string | null,
+        page_title: null as string | null,
+        http_status: null as number | null,
+        kind: "rdp" as const,
+      }))
+    ),
   ];
 
   // Newest first: the point of the page is a quick look at what is out
@@ -110,6 +120,71 @@ screenshotsRouter.get("/", asyncHandler(async (req, res) => {
 
   res.json(items);
 }));
+
+interface RankedCapture {
+  id: string;
+  host_id: string;
+  host_ip: string;
+  host_hostname: string | null;
+  port: number;
+  url: string | null;
+  page_title: string | null;
+  http_status: number | null;
+  captured_at: Date;
+  rn: string;
+  kind: "web" | "rdp";
+}
+
+// Turns the ranked rows into one gallery entry per (host, port): the
+// newest capture, plus what the one before it looked like.
+//
+// "Changed" is decided on the metadata that is actually stored - the page
+// title and the HTTP status - never on the images themselves. Two
+// captures of the same page are essentially never byte-identical
+// (rendering, timestamps on the page, a rotating banner), so an image
+// comparison would report a change on almost every scan and be ignored
+// within a week. A title going from "Login" to "Index of /" is the signal
+// worth surfacing, and it is exact.
+function pair(rows: RankedCapture[]) {
+  const byKey = new Map<string, { current?: RankedCapture; previous?: RankedCapture }>();
+  for (const row of rows) {
+    const rank = Number(row.rn);
+    if (rank > 2) continue;
+    const key = `${row.host_id}:${row.port}`;
+    const entry = byKey.get(key) ?? {};
+    if (rank === 1) entry.current = row;
+    else entry.previous = row;
+    byKey.set(key, entry);
+  }
+
+  return [...byKey.values()]
+    .filter((e): e is { current: RankedCapture; previous?: RankedCapture } => Boolean(e.current))
+    .map(({ current, previous }) => ({
+      id: current.id,
+      host_id: current.host_id,
+      host_ip: current.host_ip,
+      host_hostname: current.host_hostname,
+      port: current.port,
+      url: current.url,
+      page_title: current.page_title,
+      http_status: current.http_status,
+      captured_at: current.captured_at,
+      kind: current.kind,
+      previous: previous
+        ? {
+            id: previous.id,
+            captured_at: previous.captured_at,
+            page_title: previous.page_title,
+            http_status: previous.http_status,
+          }
+        : null,
+      // A first-ever capture is not a change - there is nothing it
+      // differs from, and flagging it would make every new host noisy.
+      changed: previous
+        ? previous.page_title !== current.page_title || previous.http_status !== current.http_status
+        : false,
+    }));
+}
 
 screenshotsRouter.get("/:id/image", serveImage("screenshots"));
 

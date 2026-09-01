@@ -489,6 +489,18 @@ export interface FleetScreenshot {
   http_status: number | null;
   captured_at: string;
   kind: "web" | "rdp";
+  // The capture before this one for the same host and port, if there is
+  // one. null on a first-ever capture.
+  previous: {
+    id: string;
+    captured_at: string;
+    page_title: string | null;
+    http_status: number | null;
+  } | null;
+  // Whether the page title or HTTP status differs from that previous
+  // capture - decided on stored metadata, never on the images, which are
+  // essentially never byte-identical between two scans.
+  changed: boolean;
 }
 
 export interface MonitoredNetwork {
@@ -736,6 +748,10 @@ export interface ApiToken {
   created_at: string;
   revoked_at: string | null;
   expires_at: string | null;
+  // "read" or "read_write" - a read token cannot trigger or cancel scans.
+  scope: string;
+  // Empty = every scanner's results.
+  scanner_agent_ids: string[];
 }
 
 export interface ApiTokenWithSecret extends ApiToken {
@@ -1099,8 +1115,16 @@ export const api = {
   deleteAgent: (id: string) => request<void>(`/api/agents/${id}`, { method: "DELETE" }),
 
   apiTokens: () => request<ApiToken[]>("/api/api-tokens"),
-  createApiToken: (name: string, expiresAt: string | null = null) =>
-    request<ApiTokenWithSecret>("/api/api-tokens", { method: "POST", body: JSON.stringify({ name, expiresAt }) }),
+  createApiToken: (
+    name: string,
+    expiresAt: string | null = null,
+    scope: "read" | "read_write" = "read",
+    scannerAgentIds: string[] = []
+  ) =>
+    request<ApiTokenWithSecret>("/api/api-tokens", {
+      method: "POST",
+      body: JSON.stringify({ name, expiresAt, scope, scannerAgentIds }),
+    }),
   revokeApiToken: (id: string) => request<void>(`/api/api-tokens/${id}/revoke`, { method: "POST" }),
 
   schedules: () => request<Schedule[]>("/api/schedules"),

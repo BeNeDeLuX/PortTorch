@@ -8,7 +8,7 @@ import { recordAudit } from "../audit/log";
 import { requestRescan } from "../rescan";
 import { DEFAULT_SCAN_PRIORITY, scanPrioritySchema } from "../scanPriority";
 import { requestScanCancel } from "../scanCancel";
-import { tokenAuth } from "../apiTokens/tokenAuth";
+import { getTokenScannerAgentIds, requireTokenWrite, tokenAuth } from "../apiTokens/tokenAuth";
 import { zIp } from "../lib/zodIp";
 import { applyHostFilters, parseHostFilterParams } from "../search/routes";
 import { ScanProfileNotFoundError, resolveNSEProfile, type NSEProfileSelection } from "../scanProfiles/resolve";
@@ -24,10 +24,15 @@ import { NucleiProfileNotFoundError, resolveNucleiProfile, type NucleiProfileSel
 // known host yet (POST /scans/adhoc below - the External API counterpart
 // to the dashboard's own Ad-hoc Scans page, for the case a SOAR tool
 // needs to scan something it just learned about from outside this app
-// entirely, e.g. a firewall alert about a newly-seen IP). Every route here
-// shares one token - there's no separate read-only scope, since splitting
-// that wasn't asked for and would add a second token type to manage for
-// no clear benefit yet.
+// entirely, e.g. a firewall alert about a newly-seen IP).
+//
+// A token carries a scope and, optionally, a scanner restriction (see the
+// api_token_scopes migration). Everything that *changes* something here -
+// rescan, cancel-scan, ad-hoc scan, deleting a triage decision - is
+// behind requireTokenWrite, so a token handed to a reporting script or a
+// dashboard panel cannot launch scans across the network. The read routes
+// apply the token's scanner restriction the same way a session's is
+// applied elsewhere.
 export const integrationsRouter = Router();
 integrationsRouter.use(tokenAuth);
 
@@ -84,10 +89,16 @@ integrationsRouter.get("/hosts", asyncHandler(async (req, res) => {
   const pageSize = parsed.data.pageSize ?? 50;
   const filters = parseHostFilterParams(req.query as Record<string, unknown>);
 
-  // No scanner restriction: a token isn't a user session and has no
-  // per-user scanner scoping (see apiTokens/tokenAuth.ts) - the same
-  // unrestricted view every other route in this router already returns.
-  const base = () => applyHostFilters(db.selectFrom("hosts").leftJoin("scanner_agents", "scanner_agents.id", "hosts.scanner_agent_id"), filters, null);
+  // The token's own scanner restriction, in exactly the shape a session's
+  // is (null = unrestricted), so applyHostFilters needs no knowledge of
+  // which auth chain the caller came through.
+  const allowed = getTokenScannerAgentIds(req);
+  const base = () =>
+    applyHostFilters(
+      db.selectFrom("hosts").leftJoin("scanner_agents", "scanner_agents.id", "hosts.scanner_agent_id"),
+      filters,
+      allowed
+    );
 
   // applyHostFilters is deliberately loosely typed (it serves callers
   // selecting different column sets), so the count and the row shape are
@@ -132,7 +143,7 @@ integrationsRouter.get("/hosts/lookup", asyncHandler(async (req, res) => {
     return;
   }
 
-  const result = await lookupHost(parsed.data.ip, parsed.data.hostname, parsed.data.scannerAgent);
+  const result = await lookupHost(parsed.data.ip, parsed.data.hostname, parsed.data.scannerAgent, getTokenScannerAgentIds(req));
   if (result.status === "not_found") {
     res.status(404).json({ error: "host not found" });
     return;
@@ -210,7 +221,7 @@ async function resolveNucleiProfileParam(nucleiProfile: string | undefined): Pro
   return { ok: true, selection: { kind: "custom", profileId: customProfile.id } };
 }
 
-integrationsRouter.post("/hosts/rescan", asyncHandler(async (req, res) => {
+integrationsRouter.post("/hosts/rescan", requireTokenWrite, asyncHandler(async (req, res) => {
   const parsed = rescanSchema.safeParse(req.body);
   if (!parsed.success || (!parsed.data.ip && !parsed.data.hostname)) {
     res.status(400).json({ error: "provide an ip or hostname in the request body" });
@@ -223,7 +234,7 @@ integrationsRouter.post("/hosts/rescan", asyncHandler(async (req, res) => {
     return;
   }
 
-  const result = await lookupHost(parsed.data.ip, parsed.data.hostname, parsed.data.scannerAgent);
+  const result = await lookupHost(parsed.data.ip, parsed.data.hostname, parsed.data.scannerAgent, getTokenScannerAgentIds(req));
   if (result.status === "not_found") {
     res.status(404).json({ error: "host not found" });
     return;
@@ -284,14 +295,14 @@ export const cancelScanSchema = z.object({
 // so this resolves it via the currently "claimed" scan_requests row's
 // scanner_agent_id/target_spec/port_spec, which pollOnce used verbatim to
 // create the matching scan_jobs row.
-integrationsRouter.post("/hosts/cancel-scan", asyncHandler(async (req, res) => {
+integrationsRouter.post("/hosts/cancel-scan", requireTokenWrite, asyncHandler(async (req, res) => {
   const parsed = cancelScanSchema.safeParse(req.body);
   if (!parsed.success || (!parsed.data.ip && !parsed.data.hostname)) {
     res.status(400).json({ error: "provide an ip or hostname in the request body" });
     return;
   }
 
-  const result = await lookupHost(parsed.data.ip, parsed.data.hostname, parsed.data.scannerAgent);
+  const result = await lookupHost(parsed.data.ip, parsed.data.hostname, parsed.data.scannerAgent, getTokenScannerAgentIds(req));
   if (result.status === "not_found") {
     res.status(404).json({ error: "host not found" });
     return;
@@ -379,7 +390,7 @@ export const adhocScanSchema = z.object({
 // of a session. scannerAgent is looked up by name (not the dashboard's
 // internal uuid), matching every other External API route's convention
 // of never expecting a caller to know this app's own internal ids.
-integrationsRouter.post("/scans/adhoc", asyncHandler(async (req, res) => {
+integrationsRouter.post("/scans/adhoc", requireTokenWrite, asyncHandler(async (req, res) => {
   const parsed = adhocScanSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
@@ -545,7 +556,7 @@ integrationsRouter.put("/findings/triage", asyncHandler(async (req, res) => {
     return;
   }
 
-  const result = await lookupHost(parsed.data.ip, parsed.data.hostname, parsed.data.scannerAgent);
+  const result = await lookupHost(parsed.data.ip, parsed.data.hostname, parsed.data.scannerAgent, getTokenScannerAgentIds(req));
   if (result.status === "not_found") {
     res.status(404).json({ error: "host not found" });
     return;
@@ -611,7 +622,7 @@ integrationsRouter.put("/findings/triage", asyncHandler(async (req, res) => {
   res.json({ id: row.id, state: row.state, note: row.note, reviewAt: row.review_at });
 }));
 
-integrationsRouter.delete("/findings/triage", asyncHandler(async (req, res) => {
+integrationsRouter.delete("/findings/triage", requireTokenWrite, asyncHandler(async (req, res) => {
   const parsed = clearTriageSchema.safeParse(req.body);
   if (!parsed.success || (!parsed.data.ip && !parsed.data.hostname)) {
     res.status(400).json({ error: parsed.success ? "provide an ip or hostname in the request body" : parsed.error.flatten() });
@@ -623,7 +634,7 @@ integrationsRouter.delete("/findings/triage", asyncHandler(async (req, res) => {
     return;
   }
 
-  const result = await lookupHost(parsed.data.ip, parsed.data.hostname, parsed.data.scannerAgent);
+  const result = await lookupHost(parsed.data.ip, parsed.data.hostname, parsed.data.scannerAgent, getTokenScannerAgentIds(req));
   if (result.status === "not_found") {
     res.status(404).json({ error: "host not found" });
     return;
@@ -678,7 +689,17 @@ type LookupResult =
 // common case (one scanner, or an ip that only exists on one network);
 // only when that's not enough do we ask them to disambiguate, rather than
 // silently guessing which of several real devices they meant.
-async function lookupHost(ip: string | undefined, hostname: string | undefined, scannerAgent?: string): Promise<LookupResult> {
+// allowedScannerAgentIds is the calling token's own restriction (null =
+// unrestricted). Applied here rather than at each call site because every
+// endpoint that resolves an ip/hostname to a host goes through this - a
+// restriction that only covered the list endpoint would be no restriction
+// at all, since /hosts/lookup returns the same host by another route.
+async function lookupHost(
+  ip: string | undefined,
+  hostname: string | undefined,
+  scannerAgent: string | undefined,
+  allowedScannerAgentIds: string[] | null
+): Promise<LookupResult> {
   let query = db
     .selectFrom("hosts")
     .leftJoin("scanner_agents", "scanner_agents.id", "hosts.scanner_agent_id")
@@ -686,6 +707,9 @@ async function lookupHost(ip: string | undefined, hostname: string | undefined, 
   query = ip ? query.where("hosts.ip", "=", ip) : query.where("hosts.hostname", "=", hostname!);
   if (scannerAgent) {
     query = query.where("scanner_agents.name", "=", scannerAgent);
+  }
+  if (allowedScannerAgentIds) {
+    query = query.where("hosts.scanner_agent_id", "in", allowedScannerAgentIds);
   }
 
   const matches = await query.execute();

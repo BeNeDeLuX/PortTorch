@@ -2343,6 +2343,13 @@ th {
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
 }
 
+/* Must come *after* .modal-panel: same specificity, so the later rule
+   wins - placed before it, .modal-panel's own max-width would silently
+   put this back to 640px. */
+.modal-panel-wide {
+  max-width: 1100px;
+}
+
 .modal-header {
   display: flex;
   align-items: center;
@@ -2869,4 +2876,37 @@ th {
   color: var(--text);
   font-weight: 600;
   white-space: nowrap;
+}
+
+/* Before/after captures in the Screenshots comparison. Two columns where
+   there is room, stacked below - and the images are shown whole rather
+   than cropped, since the difference is usually further down the page
+   than the gallery tile's own crop reaches. */
+.shot-compare {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.shot-compare figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.shot-compare img {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+/* Sits inside the tile's own metadata line, so it needs to read as a
+   badge rather than as part of the timestamp next to it. */
+.shot-changed {
+  margin-left: 0.5rem;
+  color: var(--warning);
+  font-weight: 600;
 }

@@ -157,6 +157,16 @@ The two cursors have different shapes because the tables do. `audit_log` has a m
 
 **The honest limitation, stated in the UI too:** retention deletes old audit rows and scan logs on its own schedule. If the collector stays unreachable longer than that window, those events are gone before they were ever forwarded, and the cursor simply resumes at what still exists rather than blocking forever on rows that no longer do. Forwarding is not a substitute for the retention settings.
 
+### API tokens carry a scope and a scanner restriction
+
+A token used to be a name and an optional expiry and nothing else, while the external API it unlocks can trigger a rescan, cancel a running scan, queue an ad-hoc scan against an arbitrary target and delete triage decisions. A token handed to a reporting script or a dashboard panel could therefore launch scans across the network - the one thing a recon platform should be most careful about handing out (migration `1744800000000_api_token_scopes.js`).
+
+`scope` is deliberately two values rather than a per-endpoint permission matrix. The meaningful line for this API is "can it change anything or only look", and a matrix would be more surface to get wrong than the thing it protects. `requireTokenWrite` guards every state-changing route; the 403 says *why*, since the caller is a script whose author has only the response to go on.
+
+**The column defaults to `read_write` while the dashboard offers `read` - the difference is deliberate.** A migration must not silently break integrations that work today, and a new token should start at least privilege. An integration test pins both halves.
+
+`scanner_agent_ids` mirrors `user_scanner_agents`' own convention (empty = every scanner), and `getTokenScannerAgentIds` returns it in exactly the shape `getAllowedScannerAgentIds` returns for a session, so `applyHostFilters` needs no knowledge of which auth chain the caller came through. It is applied in `lookupHost` rather than at each call site: every endpoint that resolves an ip/hostname goes through it, and a restriction covering only the list endpoint would be no restriction at all, since `/hosts/lookup` returns the same host by another route.
+
 ### The screenshot gallery
 
 `GET /api/screenshots` (in `screenshots/routes.ts`, registered before `/:id/image` so the bare path isn't swallowed by it) backs a fleet-wide gallery: every web interface and RDP login screen, newest first, with a click on a tile opening that host.
@@ -164,6 +174,10 @@ The two cursors have different shapes because the tables do. `audit_log` has a m
 **One tile per (host, port, kind), newest capture only** - the same `distinctOn` "most recent per identity" convention the host detail page and the certificates list already use. Identity is host **plus port** rather than host alone, deliberately: a host running three web interfaces on three ports has three genuinely different screenshots, and collapsing them to one would hide two of them. The Dashboard's card view is the one-per-host view; this is the one-per-interface view.
 
 Web and RDP captures live in separate tables, so they are queried separately and merged in JS rather than UNION'd - the two have different columns (`url`/`page_title`/`http_status` exist only for web), and a UNION would mean padding one side with nulls in SQL to no benefit.
+
+**A tile is flagged as changed on the stored metadata - the page title and the HTTP status - never on the images.** Two captures of the same page are essentially never byte-identical (rendering, a timestamp on the page, a rotating banner), so an image comparison would report a change on almost every scan and be ignored within a week. A title going from "Login" to "Index of /" is the signal worth surfacing, and it is exact. The endpoint fetches the newest *two* captures per (host, port) with a window function - `distinctOn` cannot express "top 2 per group" - and pairs them, so "newest" and "the one before it" can't be decided by two different orderings. A first-ever capture is never flagged: there is nothing for it to differ from, and flagging it would make every new host noisy.
+
+The "changed" badge is its own button rather than part of the tile's link, since the tile opens the host - that is what the page is for. It opens a before/after view in a **wide** modal (`Modal`'s `wide` prop, 1100px): at the default 640px the two figures stack and the comparison the dialog exists for is lost.
 
 `.shot-grid`/`.shot-thumb` are deliberately not `.host-grid`/`.host-thumb`: there the image is a 130px hint under a host's metadata, here the image *is* the content. The tiles are larger and anchored with `object-position: top`, because a web page's header is the recognisable part and centring the crop would cut exactly that away. Images are `loading="lazy"` - a fleet with hundreds of captures would otherwise fetch every one the moment the page opens.
 

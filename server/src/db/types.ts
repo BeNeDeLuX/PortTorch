@@ -134,6 +134,13 @@ export interface ApiTokensTable {
   // means "never expires" (the behavior for every token created before
   // this column existed). See apiTokens/tokenAuth.ts for enforcement.
   expires_at: Date | null;
+  // "read" | "read_write". Tokens that predate this column default to
+  // read_write so no working integration was silently broken; the
+  // dashboard offers read as the default for new ones.
+  scope: ColumnType<string, string | undefined, string>;
+  // Empty array = every scanner, same convention as a dashboard user's
+  // own assignment rows (user_scanner_agents).
+  scanner_agent_ids: ColumnType<string[], string[] | undefined, string[]>;
 }
 
 export interface ScanJobsTable {

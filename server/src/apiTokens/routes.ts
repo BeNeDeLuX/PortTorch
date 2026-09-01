@@ -8,15 +8,17 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 
-// Admin-only, like scanner agents - these tokens grant external tools read
-// access plus rescan-trigger access across the whole fleet.
+// Admin-only, like scanner agents. What a token may do is no longer
+// fixed: scope decides whether it can only read or can also trigger and
+// cancel scans, and scannerAgentIds can confine it to one segment's
+// results, mirroring a dashboard user's own assignment.
 export const apiTokensRouter = Router();
 apiTokensRouter.use(requireAuth, requireAdmin);
 
 apiTokensRouter.get("/", asyncHandler(async (_req, res) => {
   const tokens = await db
     .selectFrom("api_tokens")
-    .select(["id", "name", "last_used_at", "created_at", "revoked_at", "expires_at"])
+    .select(["id", "name", "last_used_at", "created_at", "revoked_at", "expires_at", "scope", "scanner_agent_ids"])
     .orderBy("created_at", "desc")
     .execute();
   res.json(tokens);
@@ -36,6 +38,13 @@ const createTokenSchema = z.object({
     })
     .nullable()
     .optional(),
+  // Defaults to the least-privileged option when omitted. The *column*
+  // defaults to read_write instead, so tokens created before this existed
+  // keep working - the two differ deliberately.
+  scope: z.enum(["read", "read_write"]).default("read"),
+  // Empty (or omitted) = every scanner, same convention as a user's own
+  // assignment rows.
+  scannerAgentIds: z.array(z.string().uuid()).default([]),
 });
 
 apiTokensRouter.post("/", asyncHandler(async (req, res) => {
@@ -53,12 +62,26 @@ apiTokensRouter.post("/", asyncHandler(async (req, res) => {
       token_hash: hashApiKey(token),
       created_by: req.session.username!,
       expires_at: parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : null,
+      scope: parsed.data.scope,
+      scanner_agent_ids: parsed.data.scannerAgentIds,
     })
-    .returning(["id", "name", "created_at", "expires_at"])
+    .returning(["id", "name", "created_at", "expires_at", "scope", "scanner_agent_ids"])
     .executeTakeFirstOrThrow();
 
-  logger.info({ event: "api_token.created", api_token_id: created.id, name: created.name, created_by: req.session.username });
-  recordAudit("api_token.created", req.session.username, req.ip, { api_token_id: created.id, name: created.name });
+  logger.info({
+    event: "api_token.created",
+    api_token_id: created.id,
+    name: created.name,
+    scope: created.scope,
+    scanner_agent_ids: created.scanner_agent_ids,
+    created_by: req.session.username,
+  });
+  recordAudit("api_token.created", req.session.username, req.ip, {
+    api_token_id: created.id,
+    name: created.name,
+    scope: created.scope,
+    scanner_agent_ids: created.scanner_agent_ids,
+  });
 
   // The plaintext token is only returned once, at creation time.
   res.status(201).json({ ...created, token });

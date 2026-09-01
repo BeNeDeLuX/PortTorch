@@ -10,8 +10,42 @@ declare global {
     interface Request {
       apiTokenId?: string;
       apiTokenName?: string;
+      // "read" or "read_write" - see requireTokenWrite below.
+      apiTokenScope?: string;
+      // Empty array = every scanner, same convention as a dashboard
+      // user's own assignment rows.
+      apiTokenScannerAgentIds?: string[];
     }
   }
+}
+
+// Guards every external-API endpoint that changes something - triggering
+// a rescan, cancelling a scan, queueing an ad-hoc scan, deleting a triage
+// decision. A read-only token gets a 403 with a message that says what is
+// wrong rather than a bare denial, since the caller is a script whose
+// author has to work out why from the response alone.
+export function requireTokenWrite(req: Request, res: Response, next: NextFunction) {
+  if (req.apiTokenScope !== "read_write") {
+    logger.warn({
+      event: "auth.api_token_write_denied",
+      api_token_id: req.apiTokenId,
+      api_token_name: req.apiTokenName,
+      path: req.path,
+      source_ip: req.ip,
+    });
+    res.status(403).json({ error: "this API token is read-only; it cannot trigger or cancel scans or change triage" });
+    return;
+  }
+  next();
+}
+
+// The token's own scanner restriction, in the shape
+// getAllowedScannerAgentIds returns for a session: null = unrestricted.
+// Kept as its own function rather than reusing that one, because a token
+// has no session - the two auth chains simply arrive at the same answer.
+export function getTokenScannerAgentIds(req: Request): string[] | null {
+  const ids = req.apiTokenScannerAgentIds;
+  return ids && ids.length > 0 ? ids : null;
 }
 
 // Auth for the external/SOAR-facing API (server/src/integrations/routes.ts)
@@ -32,7 +66,7 @@ export async function tokenAuth(req: Request, res: Response, next: NextFunction)
   const providedHash = hashApiKey(providedToken);
   const token = await db
     .selectFrom("api_tokens")
-    .select(["id", "name"])
+    .select(["id", "name", "scope", "scanner_agent_ids"])
     .where("token_hash", "=", providedHash)
     .where("revoked_at", "is", null)
     // null expires_at means "never expires" - same "absence means
@@ -72,6 +106,8 @@ export async function tokenAuth(req: Request, res: Response, next: NextFunction)
 
   req.apiTokenId = token.id;
   req.apiTokenName = token.name;
+  req.apiTokenScope = token.scope;
+  req.apiTokenScannerAgentIds = token.scanner_agent_ids ?? [];
   await db.updateTable("api_tokens").set({ last_used_at: new Date() }).where("id", "=", token.id).execute();
 
   next();

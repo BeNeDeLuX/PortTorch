@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, ApiToken, Me } from "../api";
+import { api, ApiToken, Me, ScannerAgent } from "../api";
 import { IconBan, IconCheck, IconPlus } from "../components/icons";
 import PageHeader from "../components/PageHeader";
+import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import { formatDateTime } from "../lib/formatDate";
 
 type SortKey = "name" | "last_used_at" | "created_at" | "status";
@@ -47,6 +48,9 @@ function compareTokens(a: ApiToken, b: ApiToken, key: SortKey, direction: SortDi
 export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [name, setName] = useState("");
+  const [scope, setScope] = useState<"read" | "read_write">("read");
+  const [scannerAgentIds, setScannerAgentIds] = useState<string[]>([]);
+  const [agents, setAgents] = useState<ScannerAgent[]>([]);
   const [expiryDays, setExpiryDays] = useState(0);
   const [newToken, setNewToken] = useState<{ name: string; token: string } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -74,7 +78,9 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
   async function load() {
     setLoading(true);
     try {
-      setTokens(await api.apiTokens());
+      const [tokenList, agentList] = await Promise.all([api.apiTokens(), api.agents()]);
+      setTokens(tokenList);
+      setAgents(agentList.filter((a) => !a.revoked_at));
     } finally {
       setLoading(false);
     }
@@ -84,7 +90,7 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
     e.preventDefault();
     if (!name.trim()) return;
     const expiresAt = expiryDays > 0 ? new Date(Date.now() + expiryDays * 24 * 60 * 60_000).toISOString() : null;
-    const created = await api.createApiToken(name.trim(), expiresAt);
+    const created = await api.createApiToken(name.trim(), expiresAt, scope, scannerAgentIds);
     setNewToken({ name: created.name, token: created.token });
     setName("");
     setExpiryDays(0);
@@ -130,10 +136,28 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
             </option>
           ))}
         </select>
+        <select value={scope} onChange={(e) => setScope(e.target.value as "read" | "read_write")}>
+          <option value="read">Read only</option>
+          <option value="read_write">Read and trigger scans</option>
+        </select>
+        <label className="hide-empty-toggle">
+          Scanners
+          <ScannerMultiSelect
+            agents={agents}
+            selectedIds={scannerAgentIds}
+            onChange={setScannerAgentIds}
+          />
+        </label>
         <button type="submit" className="btn-icon-label">
           <IconPlus /> Create
         </button>
       </form>
+      <p className="host-meta">
+        A read-only token can look hosts up and list them. "Read and trigger scans" additionally lets it start and
+        cancel scans and change triage decisions - only give that to something you would trust to scan your network.
+        Leaving the scanner selection empty means the token sees every scanner's results; picking some confines it to
+        those, the same way a user account can be confined.
+      </p>
 
       {loading ? (
         <p>Loading...</p>
@@ -147,6 +171,8 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
                 <th onClick={() => setSort("name")}>Name{sortIndicator("name")}</th>
                 <th onClick={() => setSort("last_used_at")}>Last used{sortIndicator("last_used_at")}</th>
                 <th onClick={() => setSort("created_at")}>Created{sortIndicator("created_at")}</th>
+                <th>Scope</th>
+                <th>Scanners</th>
                 <th>Expires</th>
                 <th onClick={() => setSort("status")}>Status{sortIndicator("status")}</th>
                 <th></th>
@@ -158,6 +184,22 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
                   <td>{t.name}</td>
                   <td>{t.last_used_at ? formatDateTime(t.last_used_at, me.preferences) : "never"}</td>
                   <td>{formatDateTime(t.created_at, me.preferences)}</td>
+                  <td>
+                    {t.scope === "read_write" ? (
+                      <span className="chip-inline" title="Can start and cancel scans and change triage">
+                        read + scan
+                      </span>
+                    ) : (
+                      "read only"
+                    )}
+                  </td>
+                  <td>
+                    {t.scanner_agent_ids.length === 0
+                      ? "all"
+                      : t.scanner_agent_ids
+                          .map((id) => agents.find((a) => a.id === id)?.name ?? id.slice(0, 8))
+                          .join(", ")}
+                  </td>
                   <td>
                     {t.expires_at ? (
                       <>

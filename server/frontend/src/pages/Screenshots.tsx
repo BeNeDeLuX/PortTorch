@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api, FleetScreenshot, Me } from "../api";
+import Modal from "../components/Modal";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime } from "../lib/formatDate";
 
-type KindFilter = "all" | "web" | "rdp";
+type KindFilter = "all" | "web" | "rdp" | "changed";
 
 export default function Screenshots({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [shots, setShots] = useState<FleetScreenshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<KindFilter>("all");
+  const [compare, setCompare] = useState<FleetScreenshot | null>(null);
 
   useEffect(() => {
     api
@@ -21,7 +23,7 @@ export default function Screenshots({ me, onLogout }: { me: Me; onLogout: () => 
 
   const trimmed = query.trim().toLowerCase();
   const filtered = shots.filter((s) => {
-    if (kind !== "all" && s.kind !== kind) return false;
+    if (kind === "changed" ? !s.changed : kind !== "all" && s.kind !== kind) return false;
     if (!trimmed) return true;
     return (
       s.host_ip.toLowerCase().includes(trimmed) ||
@@ -34,6 +36,7 @@ export default function Screenshots({ me, onLogout }: { me: Me; onLogout: () => 
 
   const webCount = shots.filter((s) => s.kind === "web").length;
   const rdpCount = shots.length - webCount;
+  const changedCount = shots.filter((s) => s.changed).length;
 
   return (
     <div className="dashboard">
@@ -65,6 +68,14 @@ export default function Screenshots({ me, onLogout }: { me: Me; onLogout: () => 
               <button type="button" className={`chip ${kind === "rdp" ? "active" : ""}`} onClick={() => setKind("rdp")}>
                 RDP ({rdpCount})
               </button>
+              <button
+                type="button"
+                className={`chip ${kind === "changed" ? "active" : ""}`}
+                title="The page title or HTTP status differs from the capture before it"
+                onClick={() => setKind("changed")}
+              >
+                Changed ({changedCount})
+              </button>
             </div>
           </div>
           {(trimmed || kind !== "all") && <p className="host-meta">{filtered.length} of {shots.length} shown</p>}
@@ -89,7 +100,7 @@ export default function Screenshots({ me, onLogout }: { me: Me; onLogout: () => 
                 // Loaded lazily: a fleet with hundreds of captures would
                 // otherwise fetch every image the moment the page opens.
                 loading="lazy"
-                src={`/api/${s.kind === "rdp" ? "rdp-screenshots" : "screenshots"}/${s.id}/image`}
+                src={imageUrl(s.kind, s.id)}
                 alt={`${s.host_hostname || s.host_ip}:${s.port}`}
               />
               <div className="shot-meta">
@@ -101,12 +112,66 @@ export default function Screenshots({ me, onLogout }: { me: Me; onLogout: () => 
                   {s.kind === "rdp" && " · RDP"}
                   {s.http_status !== null && s.http_status !== undefined && ` · HTTP ${s.http_status}`}
                 </span>
-                <span className="shot-sub">{formatDateTime(s.captured_at, me.preferences)}</span>
+                <span className="shot-sub">
+                  {formatDateTime(s.captured_at, me.preferences)}
+                  {s.changed && (
+                    // Its own button, not part of the tile's link: the
+                    // tile opens the host, which is what the page is for.
+                    <button
+                      type="button"
+                      className="link-button shot-changed"
+                      title="This capture differs from the one before it - compare them"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setCompare(s);
+                      }}
+                    >
+                      changed
+                    </button>
+                  )}
+                </span>
               </div>
             </Link>
           ))}
         </div>
       )}
+
+      {compare && compare.previous && (
+        <Modal title={`${compare.host_hostname || compare.host_ip}:${compare.port}`} wide onClose={() => setCompare(null)}>
+          <p className="host-meta">
+            What changed between the two captures, side by side. The images are shown in full rather than cropped -
+            the difference is often further down the page than a tile can show.
+          </p>
+          <div className="shot-compare">
+            <figure>
+              <figcaption className="shot-sub">
+                Before · {formatDateTime(compare.previous.captured_at, me.preferences)}
+                {compare.previous.http_status !== null && ` · HTTP ${compare.previous.http_status}`}
+                <br />
+                {compare.previous.page_title || <em>no title</em>}
+              </figcaption>
+              <img src={imageUrl(compare.kind, compare.previous.id)} alt="previous capture" />
+            </figure>
+            <figure>
+              <figcaption className="shot-sub">
+                After · {formatDateTime(compare.captured_at, me.preferences)}
+                {compare.http_status !== null && ` · HTTP ${compare.http_status}`}
+                <br />
+                {compare.page_title || <em>no title</em>}
+              </figcaption>
+              <img src={imageUrl(compare.kind, compare.id)} alt="current capture" />
+            </figure>
+          </div>
+          <p>
+            <Link to={`/hosts/${compare.host_id}`}>Open this host</Link>
+          </p>
+        </Modal>
+      )}
     </div>
   );
+}
+
+function imageUrl(kind: "web" | "rdp", id: string): string {
+  return `/api/${kind === "rdp" ? "rdp-screenshots" : "screenshots"}/${id}/image`;
 }
