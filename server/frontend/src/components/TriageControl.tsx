@@ -23,7 +23,9 @@ export default function TriageControl({
   note,
   reviewAt,
   expired,
+  fromRule,
   canEdit,
+  canSetRule = false,
   onChanged,
 }: {
   target: TriageTarget;
@@ -31,7 +33,14 @@ export default function TriageControl({
   note: string | null;
   reviewAt: string | null;
   expired: boolean | null;
+  // The state came from a fleet-wide rule, not from a decision about this
+  // host - shown differently, since otherwise it looks like somebody
+  // examined this host and never took it back.
+  fromRule?: boolean | null;
   canEdit: boolean;
+  // Fleet rules are admin-only: they silence a finding on every host,
+  // including ones nobody has looked at and ones that don't exist yet.
+  canSetRule?: boolean;
   onChanged: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -47,8 +56,30 @@ export default function TriageControl({
       <span className={`triage-badge triage-${expired ? "expired" : state}`}>
         {TRIAGE_LABEL[state]}
         {expired ? " · review due" : ""}
+        {fromRule ? " · fleet-wide" : ""}
       </span>
     );
+  }
+
+  async function applyRule() {
+    if (
+      !window.confirm(
+        "Dismiss this finding on every host, including hosts nobody has looked at and hosts discovered later? " +
+          "A decision made on an individual host still overrides this."
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.setFindingTriageRule(target, (state ?? "false_positive") as TriageState, note ?? undefined);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function apply(nextState: string, nextReviewAt: string | null | undefined) {
@@ -106,6 +137,22 @@ export default function TriageControl({
         />
       )}
 
+      {fromRule && (
+        <span className="triage-badge triage-rule" title="Dismissed fleet-wide, not on this host specifically">
+          fleet-wide
+        </span>
+      )}
+      {canSetRule && state && !fromRule && (
+        <button
+          type="button"
+          className="link-button"
+          disabled={busy}
+          title="Apply this decision to this finding on every host"
+          onClick={applyRule}
+        >
+          apply fleet-wide
+        </button>
+      )}
       {expired && <span className="triage-badge triage-expired">review due</span>}
       {note && (
         <span className="triage-note" title={note}>

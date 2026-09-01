@@ -31,7 +31,31 @@ const EVENTS: WebhookEvent[] = [
   "ssh_key.shared",
 ];
 const uuidSchema = z.string().uuid();
-const WEBHOOK_COLUMNS = ["id", "name", "channel_type", "url", "email_to", "enabled", "events", "created_at"] as const;
+const WEBHOOK_COLUMNS = [
+  "id",
+  "name",
+  "channel_type",
+  "url",
+  "email_to",
+  "enabled",
+  "events",
+  "created_at",
+  "filter_scanner_agent_ids",
+  "filter_tags",
+  "min_severity",
+] as const;
+
+// The one list of event names, served rather than repeated. It had been
+// copied three times - here, in the create schema's own enum, and again
+// in the dashboard's own ALL_EVENTS - and all three had drifted: six of
+// the fifteen events could not be subscribed to from the dashboard at
+// all, and two more were rejected by the schema if you tried through the
+// API. They fired the whole time, with nowhere to go.
+//
+// Registered before "/:id/deliveries" so "events" isn't read as an id.
+webhooksRouter.get("/events", asyncHandler(async (_req, res) => {
+  res.json(EVENTS);
+}));
 
 webhooksRouter.get("/", asyncHandler(async (_req, res) => {
   const webhooks = await db
@@ -80,27 +104,19 @@ const createWebhookSchema = z
     channelType: z.enum(["webhook", "email", "teams"]).default("webhook"),
     url: z.string().url().optional(),
     emailTo: emailListSchema.optional(),
-    events: z
-      .array(
-        z.enum([
-          "host.new",
-          "port.opened",
-          "certificate.expiring_soon",
-          "webserver_certificate.expiring_soon",
-          "saved_search.match",
-          "vulnerability.high_epss",
-          "vulnerability.kev",
-          "digest.daily",
-          "scan.stale",
-          "scanner.update_failed",
-          "scan_queue.backlog",
-          "nuclei.finding",
-          "scanner.offline",
-          "host.disappeared",
-          "port.closed",
-        ])
-      )
-      .min(1),
+    // Derived from EVENTS rather than repeated: the two lists had already
+    // drifted once - network.coverage_stale and ssh_key.shared were
+    // offered by the API that feeds the picker but rejected by this
+    // schema, so subscribing to either failed with a 400 that named no
+    // cause.
+    events: z.array(z.enum(EVENTS as [WebhookEvent, ...WebhookEvent[]])).min(1),
+    // All three narrow the channel; empty/omitted means "everything", so
+    // this never changes what an existing channel receives. See
+    // webhooks/filter.ts for why host-based filters only ever narrow
+    // host-scoped events.
+    filterScannerAgentIds: z.array(z.string().uuid()).default([]),
+    filterTags: z.array(z.string().trim().min(1)).default([]),
+    minSeverity: z.enum(["info", "low", "medium", "high", "critical"]).nullish(),
   })
   .refine((data) => (data.channelType === "email" ? !!data.emailTo : !!data.url), {
     message: "url is required for a webhook/teams channel, emailTo is required for an email channel",
@@ -112,7 +128,7 @@ webhooksRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  const { name, channelType, url, emailTo, events } = parsed.data;
+  const { name, channelType, url, emailTo, events, filterScannerAgentIds, filterTags, minSeverity } = parsed.data;
 
   const webhook = await db
     .insertInto("webhooks")
@@ -122,11 +138,23 @@ webhooksRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
       url: channelType === "email" ? null : url!,
       email_to: channelType === "email" ? emailTo! : null,
       events,
+      filter_scanner_agent_ids: filterScannerAgentIds,
+      filter_tags: filterTags,
+      min_severity: minSeverity ?? null,
     })
     .returning(WEBHOOK_COLUMNS)
     .executeTakeFirstOrThrow();
 
-  logger.info({ event: "webhook.created", webhook_id: webhook.id, name: webhook.name, channel_type: webhook.channel_type, created_by: req.session.username });
+  logger.info({
+    event: "webhook.created",
+    webhook_id: webhook.id,
+    name: webhook.name,
+    channel_type: webhook.channel_type,
+    filter_scanner_agent_ids: filterScannerAgentIds,
+    filter_tags: filterTags,
+    min_severity: minSeverity ?? null,
+    created_by: req.session.username,
+  });
   recordAudit("webhook.created", req.session.username, req.ip, { webhook_id: webhook.id, name: webhook.name, channel_type: webhook.channel_type });
 
   res.status(201).json(webhook);

@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, Me, Webhook, WebhookChannelType, WebhookEvent } from "../api";
+import { api, Me, ScannerAgent, Webhook, WebhookChannelType, WebhookEvent } from "../api";
 import { IconInfo, IconPause, IconPlay, IconPlus, IconSend, IconTrash } from "../components/icons";
 import PageHeader from "../components/PageHeader";
+import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import WebhookDeliveriesModal from "../components/WebhookDeliveriesModal";
 
 const CHANNEL_LABELS: Record<WebhookChannelType, string> = {
@@ -10,20 +11,30 @@ const CHANNEL_LABELS: Record<WebhookChannelType, string> = {
   email: "Email",
 };
 
-const ALL_EVENTS: Array<{ key: WebhookEvent; label: string }> = [
-  { key: "host.new", label: "New host discovered" },
-  { key: "port.opened", label: "Port newly open" },
-  { key: "certificate.expiring_soon", label: "Certificate expiring soon" },
-  { key: "webserver_certificate.expiring_soon", label: "Webserver's own TLS certificate expiring soon" },
-  { key: "saved_search.match", label: "Saved search matched a new host" },
-  { key: "vulnerability.high_epss", label: "High EPSS score on a known CVE" },
-  { key: "vulnerability.kev", label: "CVE added to CISA's Known Exploited Vulnerabilities catalog" },
-  { key: "digest.daily", label: "Daily digest (fleet-wide, once a day)" },
-  { key: "scan.stale", label: "A running scan looks stalled" },
-  { key: "scanner.update_failed", label: "Scanner self-update failed" },
-  { key: "scan_queue.backlog", label: "A scanner's request queue is backing up" },
-];
-
+// Labels only - the *list* comes from the server (GET /api/webhooks/events)
+// so it cannot drift again. An event with no label here still appears,
+// under its own name: a missing label is cosmetic, a missing event is a
+// channel nobody can subscribe to, which is exactly what happened when
+// this array was the list.
+const EVENT_LABELS: Record<string, string> = {
+  "host.new": "New host discovered",
+  "port.opened": "Port newly open",
+  "port.closed": "Port no longer open",
+  "certificate.expiring_soon": "Certificate expiring soon",
+  "webserver_certificate.expiring_soon": "Webserver's own TLS certificate expiring soon",
+  "saved_search.match": "Saved search matched a new host",
+  "vulnerability.high_epss": "High EPSS score on a known CVE",
+  "vulnerability.kev": "CVE added to CISA's Known Exploited Vulnerabilities catalog",
+  "digest.daily": "Daily digest (fleet-wide, once a day)",
+  "scan.stale": "A running scan looks stalled",
+  "scanner.update_failed": "Scanner self-update failed",
+  "scan_queue.backlog": "A scanner's request queue is backing up",
+  "nuclei.finding": "Nuclei web vulnerability finding",
+  "scanner.offline": "Scanner stopped reporting in",
+  "host.disappeared": "Host stopped responding",
+  "network.coverage_stale": "Tracked network has not been scanned",
+  "ssh_key.shared": "SSH host key shared by several addresses",
+};
 export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const isAdmin = me.role === "admin";
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
@@ -32,6 +43,11 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
   const [url, setUrl] = useState("");
   const [emailTo, setEmailTo] = useState("");
   const [events, setEvents] = useState<WebhookEvent[]>([]);
+  const [filterScannerAgentIds, setFilterScannerAgentIds] = useState<string[]>([]);
+  const [filterTags, setFilterTags] = useState("");
+  const [minSeverity, setMinSeverity] = useState("");
+  const [agents, setAgents] = useState<ScannerAgent[]>([]);
+  const [allEvents, setAllEvents] = useState<WebhookEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -44,7 +60,14 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
   async function load() {
     setLoading(true);
     try {
-      setWebhooks(await api.webhooks());
+      const [hookList, agentList, eventList] = await Promise.all([
+        api.webhooks(),
+        api.agents(),
+        api.webhookEvents(),
+      ]);
+      setWebhooks(hookList);
+      setAgents(agentList.filter((a) => !a.revoked_at));
+      setAllEvents(eventList);
     } finally {
       setLoading(false);
     }
@@ -67,11 +90,22 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
         url: channelType === "email" ? undefined : url.trim(),
         emailTo: channelType === "email" ? emailTo.trim() : undefined,
         events,
+        filterScannerAgentIds,
+        // Comma-separated in the field, an array on the wire - same
+        // convention as every other multi-value input in this app.
+        filterTags: filterTags
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean),
+        minSeverity: minSeverity || null,
       });
       setName("");
       setUrl("");
       setEmailTo("");
       setEvents([]);
+      setFilterScannerAgentIds([]);
+      setFilterTags("");
+      setMinSeverity("");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create webhook");
@@ -142,13 +176,48 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
           <div className="form-fullwidth-section">
             Events:
             <div className="checkbox-list">
-              {ALL_EVENTS.map((e) => (
-                <label key={e.key}>
-                  <input type="checkbox" checked={events.includes(e.key)} onChange={() => toggleEventChoice(e.key)} />
-                  {e.label}
+              {allEvents.map((key) => (
+                <label key={key}>
+                  <input type="checkbox" checked={events.includes(key)} onChange={() => toggleEventChoice(key)} />
+                  {EVENT_LABELS[key] ?? key}
                 </label>
               ))}
             </div>
+          </div>
+          <div className="form-fullwidth-section">
+            Only alert for (optional):
+            <div className="inline-form">
+              <label className="hide-empty-toggle">
+                Scanners
+                <ScannerMultiSelect agents={agents} selectedIds={filterScannerAgentIds} onChange={setFilterScannerAgentIds} />
+              </label>
+              <label className="hide-empty-toggle">
+                Host tags
+                <input
+                  placeholder="e.g. prod, dmz"
+                  value={filterTags}
+                  onChange={(e) => setFilterTags(e.target.value)}
+                />
+              </label>
+              <label className="hide-empty-toggle">
+                Minimum severity
+                <select value={minSeverity} onChange={(e) => setMinSeverity(e.target.value)}>
+                  <option value="">any</option>
+                  <option value="info">info</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                  <option value="critical">critical</option>
+                </select>
+              </label>
+            </div>
+            <p className="host-meta">
+              Empty means everything, which is how every channel behaved before these existed. Scanner and tag filters
+              narrow the events that are <em>about a host</em> - they deliberately never suppress fleet-level alerts
+              like "scanner stopped reporting in" or a queue backlog, so narrowing the noisy alerts cannot silently
+              cost you the ones that matter most. The severity minimum applies to alerts that carry one, which today
+              means nuclei findings.
+            </p>
           </div>
           <button type="submit" className="btn-icon-label">
             <IconPlus /> Create
@@ -169,6 +238,7 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
                 <th>Channel</th>
                 <th>Target</th>
                 <th>Events</th>
+                <th>Filters</th>
                 <th>Status</th>
                 <th></th>
                 {isAdmin && <th></th>}
@@ -181,6 +251,21 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
                   <td>{CHANNEL_LABELS[w.channel_type]}</td>
                   <td className="banner">{w.channel_type === "email" ? w.email_to : w.url}</td>
                   <td>{w.events.join(", ")}</td>
+                  <td>
+                    {(() => {
+                      const parts: string[] = [];
+                      if (w.filter_scanner_agent_ids.length > 0) {
+                        parts.push(
+                          `scanners: ${w.filter_scanner_agent_ids
+                            .map((id) => agents.find((a) => a.id === id)?.name ?? id.slice(0, 8))
+                            .join(", ")}`
+                        );
+                      }
+                      if (w.filter_tags.length > 0) parts.push(`tags: ${w.filter_tags.join(", ")}`);
+                      if (w.min_severity) parts.push(`min ${w.min_severity}`);
+                      return parts.length > 0 ? parts.join(" · ") : "none";
+                    })()}
+                  </td>
                   <td>{w.enabled ? "active" : "paused"}</td>
                   <td>
                     <button className="btn-icon-label" onClick={() => setHistoryWebhook(w)}>

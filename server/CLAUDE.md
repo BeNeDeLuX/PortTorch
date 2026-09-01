@@ -157,6 +157,24 @@ The two cursors have different shapes because the tables do. `audit_log` has a m
 
 **The honest limitation, stated in the UI too:** retention deletes old audit rows and scan logs on its own schedule. If the collector stays unreachable longer than that window, those events are gone before they were ever forwarded, and the cursor simply resumes at what still exists rather than blocking forever on rows that no longer do. Forwarding is not a substitute for the retention settings.
 
+### Alert channels can be narrowed
+
+A channel was a name, a type and a list of event names, which in a fleet large enough to need alerting is the same as no filter at all - `nuclei.finding` fires for every match including nuclei's very numerous `info` ones, and `port.opened` for every port on every host regardless of network. A channel nobody can narrow is one somebody eventually mutes, and a muted channel is worse than none because it still looks configured. Three filters (migration `1744900000000_webhook_filters.js`), all empty-means-everything so no existing channel changed behaviour: `filter_scanner_agent_ids`, `filter_tags`, `min_severity`.
+
+**The load-bearing rule, in `webhooks/filter.ts`: a filter only applies when the alert actually carries the thing being filtered on.** A tag filter narrows host events; it does not swallow `scanner.offline` or `scan_queue.backlog`, which are about the fleet and carry no host at all. Treating "no host" as "no match" would mean an operator who narrowed the noisy alerts silently lost the infrastructure ones - the alerts that matter most. Same for `min_severity`: a CVE alert spans many hosts and carries no single severity, so a minimum meant for nuclei findings must not drop it. An unrecognised severity ranks *above* everything, so it is delivered rather than withheld.
+
+`dispatchWebhook` gained an optional `AlertContext`. The ingest path collects the host ids its events touched and resolves their tags in **one** query after the transaction commits - including the auto-tags written in that same transaction, which is what makes "only alert for hosts tagged WebServer" work on the very scan that discovered the web server.
+
+**The event list is now served (`GET /api/webhooks/events`), not repeated.** It had been copied three times - the router's own `EVENTS`, the create schema's enum, and the dashboard's `ALL_EVENTS` - and all three had drifted: six of the seventeen events could not be subscribed to from the dashboard at all, and two more were rejected by the schema if you tried through the API. They had been firing the whole time with nowhere to go. The frontend's `WebhookEvent` is deliberately a plain `string` now: a closed union there would reintroduce the same failure one layer up.
+
+### Fleet-wide triage rules
+
+`finding_triage.host_id` is NOT NULL, so a CVE that a CPE mismatch attaches to every host had to be dismissed once per host - 200 decisions on 200 hosts, re-opened by the next host discovered running that software. `finding_triage_rules` (migration `1745000000000_fleet_triage_rules.js`) is the fleet-wide statement.
+
+A separate table rather than a nullable `host_id`: "this CVE never applies to us" and "we accepted this risk on this host" are different statements made by different people for different reasons, and merging them would have meant every existing query and both partial unique indexes learning the difference. Per-host triage is untouched.
+
+**Precedence is specific-over-general** - a per-host decision wins, because somebody looked at that host and decided. This is the opposite of `scan_excludes`' global/per-scanner *union*, and deliberately so: there the two combine because both are restrictions, here they can genuinely disagree and one has to win. Both reading paths `coalesce(per_host, rule)` and expose `triage_from_rule`, so the UI can say a finding is dismissed fleet-wide rather than presenting it as a decision someone made about this host and never took back. Setting a rule is **admin-only**, unlike per-host triage's operator: it silences a finding on hosts nobody has looked at and on hosts that do not exist yet.
+
 ### API tokens carry a scope and a scanner restriction
 
 A token used to be a name and an optional expiry and nothing else, while the external API it unlocks can trigger a rescan, cancel a running scan, queue an ad-hoc scan against an arbitrary target and delete triage decisions. A token handed to a reporting script or a dashboard panel could therefore launch scans across the network - the one thing a recon platform should be most careful about handing out (migration `1744800000000_api_token_scopes.js`).

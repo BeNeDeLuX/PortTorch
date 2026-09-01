@@ -300,6 +300,8 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
                       note={v.triage_note}
                       reviewAt={v.triage_review_at}
                       expired={v.triage_expired}
+                      fromRule={v.triage_from_rule}
+                      canSetRule={me.role === "admin"}
                       canEdit={canEdit}
                       onChanged={load}
                     />

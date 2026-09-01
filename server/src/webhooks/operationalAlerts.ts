@@ -203,13 +203,21 @@ async function checkOfflineScanners(): Promise<void> {
     const lastSeen = new Date(agent.last_seen_at!).toISOString();
     const message = `Scanner "${agent.name}" has not reported in since ${lastSeen} (threshold ${scannerOfflineThresholdMinutes} minutes) - it may be stopped, crashed, or cut off from this webserver`;
 
-    await dispatchWebhook("scanner.offline", message, {
-      scanner_agent_id: agent.id,
-      scanner_agent_name: agent.name,
-      last_seen_at: agent.last_seen_at,
-      version: agent.version,
-      threshold_minutes: scannerOfflineThresholdMinutes,
-    });
+    await dispatchWebhook(
+      "scanner.offline",
+      message,
+      {
+        scanner_agent_id: agent.id,
+        scanner_agent_name: agent.name,
+        last_seen_at: agent.last_seen_at,
+        version: agent.version,
+        threshold_minutes: scannerOfflineThresholdMinutes,
+      },
+      // Scanner-scoped, so a channel narrowed to certain scanners is
+      // narrowed here too - but it carries no host, so a tag filter
+      // deliberately does not apply (see filter.ts).
+      { scannerAgentId: agent.id }
+    );
 
     await db.updateTable("scanner_agents").set({ offline_alert_sent_at: new Date().toISOString() }).where("id", "=", agent.id).execute();
     logger.info({ event: "webhook.scanner_offline_alerted", scanner_agent_id: agent.id, scanner_agent_name: agent.name });
@@ -250,6 +258,15 @@ async function checkOfflineScanners(): Promise<void> {
 // considered, via first_seen_at: a host discovered five minutes ago by a
 // one-off ad-hoc scan of a range nothing else covers hasn't "disappeared"
 // just because nothing has scanned it since.
+// One small query per alerting host. Unlike the ingest path - which
+// batches, because it can alert on hundreds of hosts from one scan - this
+// check only ever fires for hosts crossing the threshold, which is a
+// handful at a time and only until each is flagged.
+async function hostTags(hostId: string): Promise<string[]> {
+  const rows = await db.selectFrom("host_tags").select(["tag"]).where("host_id", "=", hostId).execute();
+  return rows.map((r) => r.tag);
+}
+
 async function checkDisappearedHosts(): Promise<void> {
   const { hostDisappearedThresholdDays } = await getAppSettings();
   const threshold = new Date(Date.now() - hostDisappearedThresholdDays * 24 * 60 * 60_000);
@@ -262,6 +279,7 @@ async function checkDisappearedHosts(): Promise<void> {
       "hosts.ip as ip",
       "hosts.hostname as hostname",
       "hosts.last_seen_at as last_seen_at",
+      "hosts.scanner_agent_id as scanner_agent_id",
       "scanner_agents.name as scanner_agent_name",
     ])
     .where("hosts.disappeared_alert_sent_at", "is", null)
@@ -277,14 +295,19 @@ async function checkDisappearedHosts(): Promise<void> {
     const label = host.hostname || host.ip;
     const message = `Host ${label} has not been seen since ${new Date(host.last_seen_at).toISOString()} (threshold ${hostDisappearedThresholdDays} days) - decommissioned, or down`;
 
-    await dispatchWebhook("host.disappeared", message, {
-      host_id: host.id,
-      ip: host.ip,
-      hostname: host.hostname,
-      last_seen_at: host.last_seen_at,
-      scanner_agent_name: host.scanner_agent_name,
-      threshold_days: hostDisappearedThresholdDays,
-    });
+    await dispatchWebhook(
+      "host.disappeared",
+      message,
+      {
+        host_id: host.id,
+        ip: host.ip,
+        hostname: host.hostname,
+        last_seen_at: host.last_seen_at,
+        scanner_agent_name: host.scanner_agent_name,
+        threshold_days: hostDisappearedThresholdDays,
+      },
+      { scannerAgentId: host.scanner_agent_id, hostTags: await hostTags(host.id) }
+    );
 
     await db.updateTable("hosts").set({ disappeared_alert_sent_at: new Date().toISOString() }).where("id", "=", host.id).execute();
     logger.info({ event: "webhook.host_disappeared_alerted", host_id: host.id, ip: host.ip });

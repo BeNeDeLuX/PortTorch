@@ -2910,3 +2910,12 @@ th {
   color: var(--warning);
   font-weight: 600;
 }
+
+/* A finding dismissed by a fleet-wide rule rather than by a decision on
+   this host - visually distinct from the per-host triage badges, since
+   the difference decides who can change it and where. */
+.triage-badge.triage-rule {
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--muted);
+}

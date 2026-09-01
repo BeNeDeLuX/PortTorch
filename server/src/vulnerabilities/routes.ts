@@ -37,6 +37,7 @@ vulnerabilitiesRouter.get("/", asyncHandler(async (req, res) => {
     triage_note: string | null;
     triage_review_at: Date | string | null;
     triage_expired: boolean | null;
+    triage_from_rule: boolean | null;
   }>`
     SELECT DISTINCT
       h.id AS host_id,
@@ -51,12 +52,20 @@ vulnerabilitiesRouter.get("/", asyncHandler(async (req, res) => {
       ec.percentile AS epss_percentile,
       kc.date_added AS kev_date_added,
       kc.known_ransomware_campaign_use AS kev_known_ransomware_campaign_use,
-      ft.state AS triage_state,
-      ft.note AS triage_note,
+      -- The per-host decision wins; a fleet rule is the fallback. Someone
+      -- looked at this host and decided, which outranks a blanket
+      -- statement about the finding (see the fleet_triage_rules
+      -- migration).
+      coalesce(ft.state, ftr.state) AS triage_state,
+      coalesce(ft.note, ftr.note) AS triage_note,
       ft.review_at AS triage_review_at,
       -- Computed here rather than in the frontend so "expired" means the
       -- same instant everywhere - the client's clock isn't authoritative.
-      (ft.review_at IS NOT NULL AND ft.review_at <= now()) AS triage_expired
+      (ft.review_at IS NOT NULL AND ft.review_at <= now()) AS triage_expired,
+      -- So the UI can say *why* something is triaged when no per-host
+      -- decision exists - otherwise a fleet rule would look like a
+      -- decision somebody made about this host and never took back.
+      (ft.state IS NULL AND ftr.state IS NOT NULL) AS triage_from_rule
     FROM current_host_ports chp
     JOIN hosts h ON h.id = chp.host_id
     JOIN cve_cache cc ON cc.cpe = ANY(chp.cpes)
@@ -73,6 +82,8 @@ vulnerabilitiesRouter.get("/", asyncHandler(async (req, res) => {
     -- comes back, just with a null state meaning "open".
     LEFT JOIN finding_triage ft
       ON ft.kind = 'cve' AND ft.host_id = h.id AND ft.cve_id = cve_elem->>'id'
+    LEFT JOIN finding_triage_rules ftr
+      ON ftr.kind = 'cve' AND ftr.cve_id = cve_elem->>'id'
     WHERE chp.state = 'open'
     ${restriction}
   `.execute(db);

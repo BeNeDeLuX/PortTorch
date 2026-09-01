@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api, FleetScreenshot, Me } from "../api";
-import Modal from "../components/Modal";
+import ScreenshotCompare from "../components/ScreenshotCompare";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime } from "../lib/formatDate";
 
@@ -138,35 +138,19 @@ export default function Screenshots({ me, onLogout }: { me: Me; onLogout: () => 
       )}
 
       {compare && compare.previous && (
-        <Modal title={`${compare.host_hostname || compare.host_ip}:${compare.port}`} wide onClose={() => setCompare(null)}>
-          <p className="host-meta">
-            What changed between the two captures, side by side. The images are shown in full rather than cropped -
-            the difference is often further down the page than a tile can show.
-          </p>
-          <div className="shot-compare">
-            <figure>
-              <figcaption className="shot-sub">
-                Before · {formatDateTime(compare.previous.captured_at, me.preferences)}
-                {compare.previous.http_status !== null && ` · HTTP ${compare.previous.http_status}`}
-                <br />
-                {compare.previous.page_title || <em>no title</em>}
-              </figcaption>
-              <img src={imageUrl(compare.kind, compare.previous.id)} alt="previous capture" />
-            </figure>
-            <figure>
-              <figcaption className="shot-sub">
-                After · {formatDateTime(compare.captured_at, me.preferences)}
-                {compare.http_status !== null && ` · HTTP ${compare.http_status}`}
-                <br />
-                {compare.page_title || <em>no title</em>}
-              </figcaption>
-              <img src={imageUrl(compare.kind, compare.id)} alt="current capture" />
-            </figure>
-          </div>
-          <p>
-            <Link to={`/hosts/${compare.host_id}`}>Open this host</Link>
-          </p>
-        </Modal>
+        <ScreenshotCompare
+          title={`${compare.host_hostname || compare.host_ip}:${compare.port}`}
+          kind={compare.kind}
+          current={compare}
+          previous={compare.previous}
+          preferences={me.preferences}
+          onClose={() => setCompare(null)}
+          footer={
+            <p>
+              <Link to={`/hosts/${compare.host_id}`}>Open this host</Link>
+            </p>
+          }
+        />
       )}
     </div>
   );

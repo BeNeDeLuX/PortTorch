@@ -256,6 +256,8 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
                       note={f.triage_note}
                       reviewAt={f.triage_review_at}
                       expired={f.triage_expired}
+                      fromRule={f.triage_from_rule}
+                      canSetRule={me.role === "admin"}
                       canEdit={canEdit}
                       onChanged={load}
                     />

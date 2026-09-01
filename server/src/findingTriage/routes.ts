@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { db } from "../db";
-import { requireAuth, requireOperator } from "../auth/middleware";
+import { requireAdmin, requireAuth, requireOperator } from "../auth/middleware";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
@@ -45,6 +45,121 @@ const setTriageSchema = z.intersection(
 );
 
 const clearTriageSchema = identitySchema;
+
+// A fleet-wide rule: "this finding never applies to us, anywhere". The
+// per-host decisions above stay the normal case; this exists for the one
+// shape they handle badly - a CVE that a CPE mismatch attaches to every
+// host running some product, where dismissing it host by host is both
+// endless and re-opened by the next host discovered.
+//
+// requireAdmin, unlike the per-host triage's requireOperator: this
+// silences a finding across the whole fleet, including on hosts nobody
+// has looked at and hosts that do not exist yet.
+const ruleIdentitySchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("cve"), cveId: z.string().min(1) }),
+  z.object({ kind: z.literal("nuclei"), templateId: z.string().min(1) }),
+]);
+
+const setRuleSchema = z.intersection(
+  ruleIdentitySchema,
+  z.object({
+    state: z.enum(TRIAGE_STATES),
+    note: z.string().trim().max(2000).optional(),
+  })
+);
+
+findingTriageRouter.get(
+  "/rules",
+  asyncHandler(async (_req, res) => {
+    const rules = await db
+      .selectFrom("finding_triage_rules")
+      .selectAll()
+      .orderBy("created_at", "desc")
+      .execute();
+    res.json(rules);
+  })
+);
+
+findingTriageRouter.put(
+  "/rules",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const parsed = setRuleSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const input = parsed.data;
+    const cveId = input.kind === "cve" ? input.cveId : null;
+    const templateId = input.kind === "nuclei" ? input.templateId : null;
+
+    // Upsert against the two partial unique indexes, one per kind - the
+    // same shape the per-host upsert above uses, and for the same reason:
+    // revising an existing rule is normal, not a conflict.
+    const rule = await db
+      .insertInto("finding_triage_rules")
+      .values({
+        kind: input.kind,
+        cve_id: cveId,
+        template_id: templateId,
+        state: input.state,
+        note: input.note ?? null,
+        created_by: req.session.username ?? null,
+      })
+      .onConflict((oc) =>
+        (input.kind === "cve"
+          ? oc.column("cve_id").where("kind", "=", "cve")
+          : oc.column("template_id").where("kind", "=", "nuclei")
+        ).doUpdateSet({
+          state: input.state,
+          note: input.note ?? null,
+          created_by: req.session.username ?? null,
+          updated_at: new Date().toISOString(),
+        })
+      )
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    logger.info({
+      event: "finding_triage_rule.set",
+      rule_id: rule.id,
+      kind: rule.kind,
+      cve_id: rule.cve_id,
+      template_id: rule.template_id,
+      state: rule.state,
+      set_by: req.session.username,
+    });
+    recordAudit("finding_triage_rule.set", req.session.username, req.ip, {
+      rule_id: rule.id,
+      kind: rule.kind,
+      cve_id: rule.cve_id,
+      template_id: rule.template_id,
+      state: rule.state,
+    });
+
+    res.json(rule);
+  })
+);
+
+findingTriageRouter.delete(
+  "/rules/:id",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    if (!z.string().uuid().safeParse(req.params.id).success) {
+      res.status(400).json({ error: "invalid rule id" });
+      return;
+    }
+    const result = await db.deleteFrom("finding_triage_rules").where("id", "=", req.params.id).executeTakeFirst();
+    if (result.numDeletedRows === 0n) {
+      res.status(404).json({ error: "rule not found" });
+      return;
+    }
+
+    logger.info({ event: "finding_triage_rule.cleared", rule_id: req.params.id, cleared_by: req.session.username });
+    recordAudit("finding_triage_rule.cleared", req.session.username, req.ip, { rule_id: req.params.id });
+    res.status(204).end();
+  })
+);
 
 // Upsert, not insert - re-triaging an already-triaged finding (e.g.
 // "accepted risk" that's since actually been fixed) is the normal case,

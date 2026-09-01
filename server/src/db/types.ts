@@ -625,6 +625,21 @@ export interface HecStateTable {
   events_forwarded: ColumnType<string, string | undefined, string>;
 }
 
+// Fleet-wide triage: "this finding never applies to us anywhere". A
+// per-host finding_triage row wins over a rule here - see the
+// fleet_triage_rules migration on why the specific beats the general.
+export interface FindingTriageRulesTable {
+  id: Generated<string>;
+  kind: string;
+  cve_id: string | null;
+  template_id: string | null;
+  state: string;
+  note: string | null;
+  created_by: string | null;
+  created_at: ColumnType<Date, string | undefined, never>;
+  updated_at: ColumnType<Date, string | undefined, string>;
+}
+
 export interface ScanExcludesTable {
   id: Generated<string>;
   kind: string;
@@ -657,6 +672,12 @@ export interface WebhooksTable {
   enabled: ColumnType<boolean, boolean | undefined, boolean>;
   events: string[];
   created_at: ColumnType<Date, string | undefined, never>;
+  // Empty arrays / null mean "everything", so every channel that predates
+  // these keeps behaving exactly as it did. See webhooks/filter.ts for
+  // why host-based filters only narrow host-scoped events.
+  filter_scanner_agent_ids: ColumnType<string[], string[] | undefined, string[]>;
+  filter_tags: ColumnType<string[], string[] | undefined, string[]>;
+  min_severity: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 // One row per actual delivery attempt (webhooks/dispatch.ts) - trimmed to
@@ -767,6 +788,7 @@ export interface Database {
   host_tags: HostTagsTable;
   host_comments: HostCommentsTable;
   scan_excludes: ScanExcludesTable;
+  finding_triage_rules: FindingTriageRulesTable;
   hec_state: HecStateTable;
   monitored_networks: MonitoredNetworksTable;
   ssh_shared_key_alerts: SshSharedKeyAlertsTable;

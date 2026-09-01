@@ -1,6 +1,7 @@
 import { db } from "../db";
 import { logger } from "../logger";
 import { sendEmailAlert } from "./email";
+import { shouldDeliver, type AlertContext } from "./filter";
 import { enqueueRetry } from "./retryQueue";
 
 // Most recent deliveries kept per webhook (webhook_deliveries table) -
@@ -206,12 +207,40 @@ export async function attemptDelivery(
   }
 }
 
-export async function dispatchWebhook(event: WebhookEvent, message: string, data: Record<string, unknown>): Promise<void> {
-  let channels: Array<{ id: string; channel_type: string; url: string | null; email_to: string | null; events: string[] }>;
+// context describes the thing being alerted on - which scanner it came
+// from, the host's tags, the finding's severity - so a channel can be
+// narrowed to what it actually wants to hear (see filter.ts). Every field
+// is optional and absence means "this event has no such thing", not "no
+// match": a fleet-level alert must not be swallowed by a host tag filter.
+export async function dispatchWebhook(
+  event: WebhookEvent,
+  message: string,
+  data: Record<string, unknown>,
+  context: AlertContext = {}
+): Promise<void> {
+  let channels: Array<{
+    id: string;
+    channel_type: string;
+    url: string | null;
+    email_to: string | null;
+    events: string[];
+    filter_scanner_agent_ids: string[];
+    filter_tags: string[];
+    min_severity: string | null;
+  }>;
   try {
     channels = await db
       .selectFrom("webhooks")
-      .select(["id", "channel_type", "url", "email_to", "events"])
+      .select([
+        "id",
+        "channel_type",
+        "url",
+        "email_to",
+        "events",
+        "filter_scanner_agent_ids",
+        "filter_tags",
+        "min_severity",
+      ])
       .where("enabled", "=", true)
       .execute();
   } catch (err) {
@@ -219,7 +248,7 @@ export async function dispatchWebhook(event: WebhookEvent, message: string, data
     return;
   }
 
-  for (const channel of channels.filter((c) => c.events.includes(event))) {
+  for (const channel of channels.filter((c) => c.events.includes(event) && shouldDeliver(c, context))) {
     // Still deliberately not awaited: a slow or dead alert target must
     // never hold up scanner ingest, which is what calls this.
     void attemptDelivery(channel, event, message, data).then(async (outcome) => {

@@ -5,6 +5,7 @@ import { certExpiryStatus, certExpiryLabel } from "../lib/certExpiry";
 import { cveSeverityClass } from "../lib/cveSeverity";
 import { isAutoTag } from "../lib/knownServiceTags";
 import PageHeader from "../components/PageHeader";
+import ScreenshotCompare from "../components/ScreenshotCompare";
 import { formatDateTime, formatDateOnly } from "../lib/formatDate";
 import Lightbox, { LightboxItem } from "../components/Lightbox";
 import HostExportModal from "../components/HostExportModal";
@@ -159,6 +160,10 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
   const [newComment, setNewComment] = useState("");
   const [probeHostnameInput, setProbeHostnameInput] = useState("");
   const [lightbox, setLightbox] = useState<{ items: LightboxItem[]; index: number } | null>(null);
+  const [compare, setCompare] = useState<{
+    current: HostDetailData["screenshots"][number];
+    previous: HostDetailData["screenshots"][number];
+  } | null>(null);
   const pollRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -314,6 +319,16 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
   // doesn't change that flat order, so each card just needs to look up its
   // own position in it rather than using its position within its date group.
   const screenshotIndexById = new Map(data.screenshots.map((s, i) => [s.id, i]));
+  // The capture immediately before each one *on the same port*. The array
+  // is already newest-first, so the next entry for that port is the
+  // previous capture - no extra request needed, the host detail response
+  // already carries the whole history.
+  const previousScreenshotById = new Map<string, HostDetailData["screenshots"][number]>();
+  for (let i = 0; i < data.screenshots.length; i += 1) {
+    const later = data.screenshots[i];
+    const earlier = data.screenshots.slice(i + 1).find((s) => s.port === later.port);
+    if (earlier) previousScreenshotById.set(later.id, earlier);
+  }
   const rdpScreenshotIndexById = new Map(data.rdpScreenshots.map((s, i) => [s.id, i]));
   // Both arrays are already newest-first (backend orders by captured_at
   // desc), so groupByDate's output is too - the first group is always the
@@ -374,6 +389,13 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
 
   function renderScreenshotCard(s: HostDetailData["screenshots"][number]) {
     const index = screenshotIndexById.get(s.id)!;
+    const previous = previousScreenshotById.get(s.id);
+    // Same rule as the gallery: a change is decided on the page title and
+    // the HTTP status, never on the images. Two captures of one page are
+    // essentially never byte-identical, so an image comparison would flag
+    // nearly every scan and be ignored within a week.
+    const changed =
+      previous !== undefined && (previous.page_title !== s.page_title || previous.http_status !== s.http_status);
     return (
       <div key={s.id} className="screenshot-card">
         <button className="screenshot-thumb-button" onClick={() => setLightbox({ items: screenshotItems, index })}>
@@ -388,7 +410,19 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
           {s.url} (Port {s.port})
         </div>
         {s.page_title && <div className="host-meta">{s.page_title}</div>}
-        <div className="host-meta">{formatDateTime(s.captured_at, me.preferences)}</div>
+        <div className="host-meta">
+          {formatDateTime(s.captured_at, me.preferences)}
+          {changed && (
+            <button
+              type="button"
+              className="link-button shot-changed"
+              title="This capture differs from the previous one on this port - compare them"
+              onClick={() => setCompare({ current: s, previous: previous! })}
+            >
+              changed
+            </button>
+          )}
+        </div>
         {s.tls_protocol && (
           <div className="host-meta">
             {s.tls_protocol} ({s.tls_cipher}) · {s.tls_subject}
@@ -966,6 +1000,17 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
 
       {lightbox && (
         <Lightbox items={lightbox.items} initialIndex={lightbox.index} onClose={() => setLightbox(null)} />
+      )}
+
+      {compare && (
+        <ScreenshotCompare
+          title={`${data.host.hostname || String(data.host.ip)}:${compare.current.port}`}
+          kind="web"
+          current={compare.current}
+          previous={compare.previous}
+          preferences={me.preferences}
+          onClose={() => setCompare(null)}
+        />
       )}
     </div>
   );

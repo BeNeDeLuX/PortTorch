@@ -32,6 +32,13 @@ nucleiFindingsRouter.get("/", asyncHandler(async (req, res) => {
         .onRef("finding_triage.matched_at", "=", "nuclei_findings.matched_at")
         .on("finding_triage.kind", "=", "nuclei")
     )
+    // The fleet-wide fallback, applied only where no per-host decision
+    // exists (see the coalesce below) - the specific beats the general.
+    .leftJoin("finding_triage_rules", (join) =>
+      join
+        .onRef("finding_triage_rules.template_id", "=", "nuclei_findings.template_id")
+        .on("finding_triage_rules.kind", "=", "nuclei")
+    )
     .select([
       "nuclei_findings.id as id",
       "hosts.id as host_id",
@@ -47,10 +54,13 @@ nucleiFindingsRouter.get("/", asyncHandler(async (req, res) => {
       "nuclei_findings.tags as tags",
       "nuclei_findings.curl_command as curl_command",
       "nuclei_findings.observed_at as observed_at",
-      "finding_triage.state as triage_state",
-      "finding_triage.note as triage_note",
+      sql<string | null>`coalesce(finding_triage.state, finding_triage_rules.state)`.as("triage_state"),
+      sql<string | null>`coalesce(finding_triage.note, finding_triage_rules.note)`.as("triage_note"),
       "finding_triage.review_at as triage_review_at",
       sql<boolean | null>`(finding_triage.review_at IS NOT NULL AND finding_triage.review_at <= now())`.as("triage_expired"),
+      // So the UI can say a finding is dismissed fleet-wide rather than
+      // presenting it as a decision someone made about this host.
+      sql<boolean | null>`(finding_triage.state IS NULL AND finding_triage_rules.state IS NOT NULL)`.as("triage_from_rule"),
     ])
     .distinctOn(["nuclei_findings.host_id", "nuclei_findings.template_id", "nuclei_findings.matched_at"])
     .orderBy("nuclei_findings.host_id")

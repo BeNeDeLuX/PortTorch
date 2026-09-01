@@ -346,18 +346,11 @@ export interface SavedSearch {
   created_at: string;
 }
 
-export type WebhookEvent =
-  | "host.new"
-  | "port.opened"
-  | "certificate.expiring_soon"
-  | "webserver_certificate.expiring_soon"
-  | "saved_search.match"
-  | "vulnerability.high_epss"
-  | "vulnerability.kev"
-  | "digest.daily"
-  | "scan.stale"
-  | "scanner.update_failed"
-  | "scan_queue.backlog";
+// A plain string, not a union of the known names: the list is served by
+// the API (GET /api/webhooks/events) precisely so it cannot drift, and a
+// closed union here would reintroduce the same problem one layer up - a
+// newly added event would fail to typecheck rather than simply appearing.
+export type WebhookEvent = string;
 
 export type WebhookChannelType = "webhook" | "email" | "teams";
 
@@ -370,6 +363,11 @@ export interface Webhook {
   enabled: boolean;
   events: WebhookEvent[];
   created_at: string;
+  // Empty arrays / null mean "everything" - a channel with no filters
+  // receives exactly what it did before filters existed.
+  filter_scanner_agent_ids: string[];
+  filter_tags: string[];
+  min_severity: string | null;
 }
 
 export interface WebhookDelivery {
@@ -452,6 +450,9 @@ export interface FleetVulnerability {
   // decision's review date has passed, so it no longer suppresses the
   // finding anywhere.
   triage_expired: boolean | null;
+  // The state came from a fleet-wide rule rather than a decision about
+  // this host.
+  triage_from_rule: boolean | null;
 }
 
 export interface ExpiringCertificate {
@@ -832,6 +833,9 @@ export interface FleetNucleiFinding extends NucleiFinding {
   // decision's review date has passed, so it no longer suppresses the
   // finding anywhere.
   triage_expired: boolean | null;
+  // The state came from a fleet-wide rule rather than a decision about
+  // this host.
+  triage_from_rule: boolean | null;
 }
 
 export interface Schedule {
@@ -1202,6 +1206,17 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ ...target, state, note, reviewAt }),
     }),
+  setFindingTriageRule: (target: TriageTarget, state: TriageState, note?: string) =>
+    request<unknown>("/api/finding-triage/rules", {
+      method: "PUT",
+      // The rule is keyed on the finding itself, never on a host - the
+      // host id in the target is deliberately dropped here.
+      body: JSON.stringify(
+        target.kind === "cve"
+          ? { kind: "cve", cveId: target.cveId, state, note }
+          : { kind: "nuclei", templateId: target.templateId, state, note }
+      ),
+    }),
   clearFindingTriage: (target: TriageTarget) =>
     request<void>("/api/finding-triage", { method: "DELETE", body: JSON.stringify(target) }),
 
@@ -1283,7 +1298,17 @@ export const api = {
     }),
 
   webhooks: () => request<Webhook[]>("/api/webhooks"),
-  createWebhook: (input: { name: string; channelType: WebhookChannelType; url?: string; emailTo?: string; events: WebhookEvent[] }) =>
+  webhookEvents: () => request<WebhookEvent[]>("/api/webhooks/events"),
+  createWebhook: (input: {
+    name: string;
+    channelType: WebhookChannelType;
+    url?: string;
+    emailTo?: string;
+    events: WebhookEvent[];
+    filterScannerAgentIds?: string[];
+    filterTags?: string[];
+    minSeverity?: string | null;
+  }) =>
     request<Webhook>("/api/webhooks", { method: "POST", body: JSON.stringify(input) }),
   setWebhookEnabled: (id: string, enabled: boolean) =>
     request<void>(`/api/webhooks/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),

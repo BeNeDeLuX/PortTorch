@@ -630,11 +630,15 @@ export async function ingestHostPayload(
   // alert. Port-open events are skipped for hosts that are new in this
   // same ingest (the single host.new notification already covers it;
   // otherwise a brand-new host with 10 open ports would fire 11 webhooks).
-  const hostNewEvents: Array<{ ip: string; hostname: string | null }> = [];
-  const portOpenedEvents: Array<{ ip: string; hostname: string | null; port: number; serviceName: string | null }> = [];
-  const nucleiFindingEvents: Array<{ ip: string; hostname: string | null; templateId: string; name: string; severity: string }> = [];
+  // hostId rides along purely so the alert filters (webhooks/filter.ts)
+  // can be given the host's tags - looked up once after the transaction
+  // commits rather than per event.
+  const hostNewEvents: Array<{ hostId: string; ip: string; hostname: string | null }> = [];
+  const portOpenedEvents: Array<{ hostId: string; ip: string; hostname: string | null; port: number; serviceName: string | null }> = [];
+  const nucleiFindingEvents: Array<{ hostId: string; ip: string; hostname: string | null; templateId: string; name: string; severity: string }> = [];
   const autoTagEvents: Array<{ hostId: string; ip: string; tag: string }> = [];
   const portClosedEvents: Array<{
+    hostId: string;
     ip: string;
     hostname: string | null;
     port: number;
@@ -712,11 +716,11 @@ export async function ingestHostPayload(
         .executeTakeFirstOrThrow();
 
       if (upserted.inserted) {
-        hostNewEvents.push({ ip: host.ip, hostname: host.hostname ?? null });
+        hostNewEvents.push({ hostId: upserted.id, ip: host.ip, hostname: host.hostname ?? null });
       } else {
         for (const p of host.ports) {
           if (p.state === "open" && !existingOpenPortSet.has(p.port)) {
-            portOpenedEvents.push({ ip: host.ip, hostname: host.hostname ?? null, port: p.port, serviceName: p.serviceName ?? null });
+            portOpenedEvents.push({ hostId: upserted.id, ip: host.ip, hostname: host.hostname ?? null, port: p.port, serviceName: p.serviceName ?? null });
           }
         }
       }
@@ -757,6 +761,7 @@ export async function ingestHostPayload(
             );
       for (const prior of closedRows) {
         portClosedEvents.push({
+          hostId: upserted.id,
           ip: host.ip,
           hostname: host.hostname ?? null,
           port: prior.port,
@@ -881,7 +886,7 @@ export async function ingestHostPayload(
 
         for (const f of host.nucleiFindings ?? []) {
           if (!existingFindingKeys.has(JSON.stringify([f.templateId, f.matchedAt]))) {
-            nucleiFindingEvents.push({ ip: host.ip, hostname: host.hostname ?? null, templateId: f.templateId, name: f.name, severity: f.severity });
+            nucleiFindingEvents.push({ hostId: upserted.id, ip: host.ip, hostname: host.hostname ?? null, templateId: f.templateId, name: f.name, severity: f.severity });
           }
         }
       }
@@ -908,28 +913,62 @@ export async function ingestHostPayload(
     }
   });
 
+  // One query for every host any of these events touched, so a channel
+  // filtered by tag can be evaluated without a lookup per alert. Includes
+  // the auto-tags applied in this same transaction, which is what makes
+  // "only alert for hosts tagged WebServer" work on the very scan that
+  // discovered the web server.
+  const alertHostIds = [
+    ...new Set([
+      ...hostNewEvents.map((e) => e.hostId),
+      ...portOpenedEvents.map((e) => e.hostId),
+      ...portClosedEvents.map((e) => e.hostId),
+      ...nucleiFindingEvents.map((e) => e.hostId),
+    ]),
+  ];
+  const tagRows = alertHostIds.length
+    ? await db.selectFrom("host_tags").select(["host_id", "tag"]).where("host_id", "in", alertHostIds).execute()
+    : [];
+  const tagsByHost = new Map<string, string[]>();
+  for (const row of tagRows) {
+    tagsByHost.set(row.host_id, [...(tagsByHost.get(row.host_id) ?? []), row.tag]);
+  }
+  const alertContext = (hostId: string, severity?: string) => ({
+    scannerAgentId: ctx.scannerAgentId,
+    hostTags: tagsByHost.get(hostId) ?? [],
+    severity,
+  });
+
   for (const e of hostNewEvents) {
-    dispatchWebhook("host.new", `New host discovered: ${e.hostname || e.ip}`, { ip: e.ip, hostname: e.hostname });
+    dispatchWebhook(
+      "host.new",
+      `New host discovered: ${e.hostname || e.ip}`,
+      { ip: e.ip, hostname: e.hostname },
+      alertContext(e.hostId)
+    );
   }
   for (const e of portOpenedEvents) {
     dispatchWebhook(
       "port.opened",
       `Port ${e.port}${e.serviceName ? `/${e.serviceName}` : ""} newly open on ${e.hostname || e.ip}`,
-      { ip: e.ip, hostname: e.hostname, port: e.port, service_name: e.serviceName }
+      { ip: e.ip, hostname: e.hostname, port: e.port, service_name: e.serviceName },
+      alertContext(e.hostId)
     );
   }
   for (const e of portClosedEvents) {
     dispatchWebhook(
       "port.closed",
       `Port ${e.port}/${e.protocol}${e.serviceName ? ` (${e.serviceName})` : ""} no longer open on ${e.hostname || e.ip}`,
-      { ip: e.ip, hostname: e.hostname, port: e.port, protocol: e.protocol, service_name: e.serviceName }
+      { ip: e.ip, hostname: e.hostname, port: e.port, protocol: e.protocol, service_name: e.serviceName },
+      alertContext(e.hostId)
     );
   }
   for (const e of nucleiFindingEvents) {
     dispatchWebhook(
       "nuclei.finding",
       `${e.severity} nuclei finding "${e.name}" on ${e.hostname || e.ip}`,
-      { ip: e.ip, hostname: e.hostname, template_id: e.templateId, name: e.name, severity: e.severity }
+      { ip: e.ip, hostname: e.hostname, template_id: e.templateId, name: e.name, severity: e.severity },
+      alertContext(e.hostId, e.severity)
     );
   }
   for (const e of autoTagEvents) {
