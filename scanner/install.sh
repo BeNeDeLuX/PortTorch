@@ -423,6 +423,16 @@ else
     useradd --system --create-home --home-dir "$SERVICE_HOME" --shell /usr/sbin/nologin "$SERVICE_USER"
   fi
   mkdir -p "$CONFIG_DIR"
+  # Handed to the service user here, not only by the chown -R further down
+  # (after the config.yaml block): mkdir runs as root, and the nuclei
+  # template fetch below runs *as* $SERVICE_USER and needs to create its
+  # own $HOME/.config/nuclei inside it. A root-owned .config makes that
+  # impossible - "failed to create config directory ... permission denied",
+  # then "nuclei-templates are not installed", which is precisely the
+  # silent end state (a scanner that finds no web vulnerabilities and
+  # reports no template age) the block below goes out of its way to avoid.
+  # Confirmed on a real fresh install, not reasoned about.
+  chown -R "$SERVICE_USER:$SERVICE_USER" "$SERVICE_HOME"
 
   # Fresh-install counterpart of the chown+ACL block right after the
   # build step above: $SERVICE_USER didn't exist yet at that point on a
@@ -508,6 +518,18 @@ Wants=network-online.target
 Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_USER
+# Pinned rather than left to systemd, which derives HOME from the account's
+# passwd entry: nuclei resolves its template tree against \$HOME (see
+# pipeline.DefaultNucleiTemplatesDir), and this installer fetches those
+# templates into \$SERVICE_HOME. Those two agree only as long as the passwd
+# home *is* \$SERVICE_HOME - which is not the case when the account already
+# existed before this script ran (it is only created here if missing, and a
+# host can easily have a real login account of the same name). The scanner
+# then reads an empty template tree while the populated one sits in
+# \$SERVICE_HOME, finds no web vulnerabilities, and reports no template age -
+# the exact silent failure the fetch step above documents, arriving through
+# a different door. Confirmed on a real install, not reasoned about.
+Environment=HOME=$SERVICE_HOME
 ExecStart=$BIN_PATH serve --config $CONFIG_PATH
 Restart=on-failure
 RestartSec=5s
