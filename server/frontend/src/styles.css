@@ -1761,6 +1761,16 @@ th {
   font-size: 0.85rem;
 }
 
+/* Two or three small buttons inside a table cell. On a <div>, never on
+   the <td> itself: display:flex on a table cell strips its table-cell
+   box and the row's border ends up drawn too high (see server/CLAUDE.md's
+   note about the Scanner Agents actions column). */
+.inline-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
 .inline-form {
   display: flex;
   gap: 0.5rem;
@@ -2394,6 +2404,12 @@ th {
   align-items: start;
 }
 
+/* A section with a single chart: without this the lone card stretches to
+   the full page width and puts a 200px donut in the middle of it. */
+.chart-grid-single {
+  grid-template-columns: repeat(auto-fit, minmax(340px, 480px));
+}
+
 .chart-card {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -2987,6 +3003,17 @@ th {
 
   .digest-print-range {
     display: block !important;
+  }
+
+  /* The bulk-triage toolbar and its row checkboxes are actions, not
+     content - a printed finding list is a record, and empty checkboxes
+     next to every row read as a form to fill in. The column itself stays
+     (hiding a table column in CSS means touching every th and td), so a
+     narrow blank one is left, which is a fair trade for not restructuring
+     the tables for print. */
+  .bulk-bar,
+  .table-scroll input[type="checkbox"] {
+    display: none !important;
   }
 }
 

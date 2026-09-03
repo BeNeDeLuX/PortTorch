@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -89,7 +90,7 @@ func runDoctor(configPath string) error {
 	checks = append(checks, checkBinary("ImageMagick import (RDP screenshots)", cfg.ImportPath, false))
 	checks = append(checks, checkBinary("tesseract (screenshot OCR)", cfg.TesseractPath, false))
 	checks = append(checks, checkBinary("nuclei (web vulnerability scanning)", cfg.NucleiPath, false))
-	checks = append(checks, checkNucleiTemplates())
+	checks = append(checks, checkNucleiTemplates(configPath))
 
 	checks = append(checks, checkWebserver(cfg))
 
@@ -229,6 +230,25 @@ func firstLine(s string) string {
 	return s
 }
 
+// nucleiTemplatesDirForConfig derives the service account's template tree
+// from where its config file lives - install.sh writes it to
+// $SERVICE_HOME/.config/porttorch/config.yaml, so the home is whatever
+// sits above that ".config". Returns "" for a config path that doesn't
+// have that shape (a standalone/dev config), in which case the invoking
+// user's own home is the only sensible answer anyway.
+func nucleiTemplatesDirForConfig(configPath string) string {
+	abs, err := filepath.Abs(configPath)
+	if err != nil {
+		return ""
+	}
+	marker := string(filepath.Separator) + ".config" + string(filepath.Separator)
+	idx := strings.Index(abs, marker)
+	if idx <= 0 {
+		return ""
+	}
+	return filepath.Join(abs[:idx], "nuclei-templates")
+}
+
 // checkChrome mirrors gowitness's own resolution order (explicit
 // chromePath, then whatever chromedp/gowitness would find on $PATH) -
 // google-chrome and chromium are both common depending on distro.
@@ -279,8 +299,21 @@ const nucleiTemplatesWarnDays = 30
 // Warning-only, never a failure: running without nuclei at all is a
 // supported configuration (the whole stage is opt-in per scan), same as
 // gowitness/RDP/tesseract above.
-func checkNucleiTemplates() check {
+func checkNucleiTemplates(configPath string) check {
 	dir := pipeline.DefaultNucleiTemplatesDir()
+	// The tree the *service* would read, which is not this user's when an
+	// admin runs doctor by hand: the config lives under the service
+	// account's home, and the systemd unit pins HOME to it. Without this,
+	// `sudo porttorch doctor` reported "not found" against root's home
+	// while the service had a perfectly current tree - a warning about a
+	// problem that did not exist, which is worse than none.
+	if serviceDir := nucleiTemplatesDirForConfig(configPath); serviceDir != "" && serviceDir != dir {
+		if _, err := pipeline.NucleiTemplatesUpdatedAt(serviceDir); err == nil {
+			dir = serviceDir
+		} else if dir == "" {
+			dir = serviceDir
+		}
+	}
 	if dir == "" {
 		return check{"nuclei templates", statusWarn, "could not determine this user's home directory"}
 	}
@@ -288,7 +321,7 @@ func checkNucleiTemplates() check {
 
 	updated, err := pipeline.NucleiTemplatesUpdatedAt(dir)
 	if err != nil {
-		return check{name, statusWarn, "not found - run 'nuclei -update-templates' as this user, or trigger it from the dashboard (Scanner Agents -> Update templates)"}
+		return check{name, statusWarn, "not found - run 'nuclei -update-templates' as the user the service runs as, or trigger it from the dashboard (Scanner Agents -> Update templates)"}
 	}
 
 	days := int(time.Since(updated).Hours() / 24)

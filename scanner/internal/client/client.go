@@ -150,8 +150,19 @@ func New(cfg *config.Config) (*Client, error) {
 		baseURL: strings.TrimSuffix(cfg.WebserverURL, "/"),
 		apiKey:  cfg.APIKey,
 		http: &http.Client{
-			Timeout:   60 * time.Second,
-			Transport: &http.Transport{TLSClientConfig: tlsConfig},
+			Timeout: 60 * time.Second,
+			// ProxyFromEnvironment, which a hand-built Transport does not
+			// get by default the way http.DefaultTransport does - so this
+			// client ignored HTTP_PROXY/HTTPS_PROXY/NO_PROXY entirely
+			// while the self-updater (which uses http.DefaultClient)
+			// honoured them, an inconsistency with no reason behind it.
+			// Matters wherever a scanner reaches its webserver through a
+			// proxy; NO_PROXY is how you keep a directly-reachable
+			// webserver direct.
+			Transport: &http.Transport{
+				Proxy:           http.ProxyFromEnvironment,
+				TLSClientConfig: tlsConfig,
+			},
 		},
 	}
 	// Resolved here rather than at each of the four call sites, so every

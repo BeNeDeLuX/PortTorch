@@ -35,6 +35,8 @@ interface StatsBody {
     certificates: number;
     selfSigned: number;
     expiringSoon: number;
+    unconfirmedPorts: number;
+    hostsWithUnconfirmedPorts: number;
   };
   comparison: { days: number; since: string; hosts: number; openPorts: number; certificates: number } | null;
   perScanner: Array<{ id: string | null; name: string; hosts: number; openPorts: number; certificates: number }>;
@@ -53,6 +55,12 @@ interface StatsBody {
   }>;
   topHostsByPorts: Array<{ hostId: string; ip: string; openPorts: number }>;
   topSubnets: Array<{ subnet: string; hosts: number; openPorts: number }>;
+  certIssuers: Slice[];
+  weakCertKeys: number;
+  sshKeyTypes: Slice[];
+  sshKeys: { total: number; weak: number; sharedFingerprints: number };
+  screenshotCoverage: { webPorts: number; captured: number };
+  networkCoverage: { tracked: number; stale: number; neverCovered: number; averageCoverage: number | null };
   topPorts: Slice[];
   portCategories: Slice[];
   protocols: Slice[];
@@ -89,6 +97,9 @@ describe("scan stats", () => {
   let agentB: TestAgent;
   let admin: TestUser;
   let adminClient: SessionClient;
+  let hostA: string;
+  let hostB: string;
+  let jobId: string;
 
   beforeAll(async () => {
     agentA = await createTestAgent("it-stats-a");
@@ -160,12 +171,17 @@ describe("scan stats", () => {
         port: 443,
         fingerprintSha256: "it-stats-ca-fingerprint",
         selfSigned: false,
+        issuerCn: "Internal Issuing CA",
         tlsVersion: "TLSv1.2",
         keyAlgorithm: "EC",
         keyBits: 256,
         notAfter: new Date(Date.now() + 200 * 864e5).toISOString(),
       });
     expect(certB.status).toBe(201);
+
+    hostA = (await db.selectFrom("hosts").select(["id"]).where("ip", "=", "240.30.0.1").executeTakeFirstOrThrow()).id;
+    hostB = (await db.selectFrom("hosts").select(["id"]).where("ip", "=", "240.30.0.2").executeTakeFirstOrThrow()).id;
+    jobId = jobA;
 
     // Finished, so it counts toward the scan-performance figures - those
     // deliberately ignore a job still running, which has no duration yet.
@@ -324,6 +340,58 @@ describe("scan stats", () => {
     // append-only observations table.
     const bogus = await stats(`?scannerAgentId=${agentA.id}&compareDays=4000`);
     expect(bogus.comparison).toBeNull();
+  });
+
+  it("counts SSH host keys once per key, flagging weak and shared ones", async () => {
+    // ssh-dss is weak whatever its bit count; RSA is weak below 2048; and
+    // the same fingerprint on two addresses is the finding the SSH Keys
+    // page exists for - a cloned image, not two healthy hosts.
+    await db
+      .insertInto("ssh_host_keys")
+      .values([
+        { host_id: hostA, scan_job_id: jobId, port: 22, key_type: "ssh-rsa", bits: 4096, fingerprint_sha256: "it-stats-fp-strong" },
+        { host_id: hostA, scan_job_id: jobId, port: 22, key_type: "ssh-dss", bits: 1024, fingerprint_sha256: "it-stats-fp-weak" },
+        { host_id: hostB, scan_job_id: jobId, port: 22, key_type: "ssh-rsa", bits: 4096, fingerprint_sha256: "it-stats-fp-strong" },
+      ])
+      .execute();
+
+    const body = await stats(`?scannerAgentId=${agentA.id}`);
+    expect(body.sshKeys.total).toBe(3);
+    expect(body.sshKeys.weak).toBe(1);
+    expect(body.sshKeys.sharedFingerprints).toBe(1);
+    expect(sliceValue(body.sshKeyTypes, "ssh-rsa")).toBe(2);
+
+    await db.deleteFrom("ssh_host_keys").where("fingerprint_sha256", "like", "it-stats-fp-%").execute();
+  });
+
+  it("reports certificate issuers, with self-signed as one slice", async () => {
+    const body = await stats(`?scannerAgentId=${agentA.id}`);
+    // The .1 certificate is self-signed and the .2 one names an issuer -
+    // without the self-signed collapse this chart would be one slice per
+    // host and say nothing.
+    expect(sliceValue(body.certIssuers, "Self-signed")).toBe(1);
+    expect(sliceValue(body.certIssuers, "Internal Issuing CA")).toBe(1);
+    expect(body.certIssuers.reduce((sum, s) => sum + s.value, 0)).toBe(body.totals.certificates);
+    expect(body.weakCertKeys).toBe(0);
+  });
+
+  it("counts unconfirmed ports against the host's own newest observation", async () => {
+    const fresh = await stats(`?scannerAgentId=${agentA.id}`);
+    // Everything was observed in the same submission, so nothing is
+    // behind anything else yet.
+    expect(fresh.totals.unconfirmedPorts).toBe(0);
+
+    // Age one port's observation: it is now older than the newest
+    // observation of its own host, which is exactly what "unconfirmed"
+    // means on the Dashboard.
+    await sql`
+      UPDATE host_port_observations SET observed_at = now() - interval '2 days'
+      WHERE host_id = ${hostA} AND port = 22
+    `.execute(db);
+
+    const aged = await stats(`?scannerAgentId=${agentA.id}`);
+    expect(aged.totals.unconfirmedPorts).toBe(1);
+    expect(aged.totals.hostsWithUnconfirmedPorts).toBe(1);
   });
 
   it("includes retired hosts by default and drops them on request", async () => {

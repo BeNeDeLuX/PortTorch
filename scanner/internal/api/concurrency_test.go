@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -29,6 +30,16 @@ type fakeWebserver struct {
 	release  chan struct{}
 	pending  atomic.Int64
 	releaseO sync.Once
+	// Every X-Scanner-Scan-Slots value seen on a queue poll, so a test can
+	// assert what the dashboard would have been told.
+	slotHeaders atomic.Value
+}
+
+func (f *fakeWebserver) slotHeadersSnapshot() []string {
+	if v, ok := f.slotHeaders.Load().([]string); ok {
+		return v
+	}
+	return nil
 }
 
 func newFakeWebserver(t *testing.T, pending int64) *fakeWebserver {
@@ -38,6 +49,7 @@ func newFakeWebserver(t *testing.T, pending int64) *fakeWebserver {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/ingest/scan-requests/next", func(w http.ResponseWriter, r *http.Request) {
+		f.slotHeaders.Store(append(f.slotHeadersSnapshot(), r.Header.Get("X-Scanner-Scan-Slots")))
 		if f.pending.Add(-1) < 0 {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -197,6 +209,15 @@ func TestAnEmptyQueueCostsOnePollPerTick(t *testing.T) {
 	}
 	if got := f.pending.Load(); got != -1 {
 		t.Fatalf("expected exactly 1 poll against the webserver, got %d", -got)
+	}
+
+	// The poll itself reserves a slot before asking, so this header used
+	// to report the scanner as busy for the entire time it had nothing to
+	// do - the dashboard showed an idle scanner at 1/4.
+	for _, header := range f.slotHeadersSnapshot() {
+		if header != "" && !strings.HasPrefix(header, "0/") {
+			t.Fatalf("an idle poll reported busy slots: %q", header)
+		}
 	}
 }
 

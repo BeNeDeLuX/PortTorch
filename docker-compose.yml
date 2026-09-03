@@ -65,6 +65,14 @@ services:
       PORT: ${PORT}
       CERT_DIR: /data/certs
       SCREENSHOT_DIR: /data/screenshots
+      # Only needed where egress requires a proxy - leave them unset in
+      # .env otherwise and everything connects directly. NO_PROXY should
+      # cover anything reachable without it (an internal SIEM collector,
+      # an internal webhook target), or those requests take a needless
+      # detour and may be refused by the proxy outright.
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-}
     ports:
       - "443:${PORT}"
     volumes:

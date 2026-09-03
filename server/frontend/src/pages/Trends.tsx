@@ -3,7 +3,15 @@ import { api, Me, ScannerAgent, TrendsResult } from "../api";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 
-type SeriesKey = "totalHosts" | "newHosts" | "scans" | "hostsScanned" | "openPorts" | "cveMatches";
+type SeriesKey =
+  | "totalHosts"
+  | "newHosts"
+  | "scans"
+  | "hostsScanned"
+  | "openPorts"
+  | "cveMatches"
+  | "highCveMatches"
+  | "kevMatches";
 
 interface SeriesDef {
   key: SeriesKey;
@@ -20,6 +28,17 @@ const ACTIVITY_SERIES: SeriesDef[] = [
   { key: "scans", label: "Scans", color: "var(--chart-series-2)" },
   { key: "openPorts", label: "Open ports seen", color: "var(--chart-series-3)" },
   { key: "cveMatches", label: "CVE matches seen", color: "var(--chart-series-4)" },
+];
+
+// Severity-weighted counterparts to "CVE matches seen", so the page can
+// answer whether exposure is getting better or worse rather than only how
+// many matches were seen. Colours are the status ones the rest of the app
+// uses for severity, not categorical slots - these three are ordered by
+// how bad they are, unlike the activity series above.
+const SECURITY_SERIES: SeriesDef[] = [
+  { key: "cveMatches", label: "CVE matches", color: "var(--chart-series-1)" },
+  { key: "highCveMatches", label: "CVSS 7.0+", color: "var(--warning)" },
+  { key: "kevMatches", label: "Known exploited (KEV)", color: "var(--danger)" },
 ];
 
 const DAY_PRESETS = [7, 30, 90, 365];
@@ -269,6 +288,28 @@ export default function Trends({ me, onLogout }: { me: Me; onLogout: () => void 
                 series={[{ key: "hostsScanned", label: "Hosts scanned", color: "var(--chart-scanned)" }]}
                 formatDateShort={formatDateShort}
               />
+            )}
+          </section>
+
+          <section>
+            <h2>Security findings seen per day</h2>
+            <p className="empty">
+              Counted the same way as everything else here: a match seen on that day's scans, not a point-in-time
+              inventory. Triage is deliberately not applied - a decision made today carries no date for when it started
+              applying, so honouring it would silently rewrite every past day. Scan Stats applies it, and answers the
+              other question: what is open right now.
+            </p>
+            {showTable ? (
+              <TrendTable
+                data={trends.series}
+                columns={[
+                  { key: "cveMatches", label: "CVE matches" },
+                  { key: "highCveMatches", label: "CVSS 7.0+" },
+                  { key: "kevMatches", label: "Known exploited (KEV)" },
+                ]}
+              />
+            ) : (
+              <TrendChart data={trends.series} series={SECURITY_SERIES} formatDateShort={formatDateShort} />
             )}
           </section>
 

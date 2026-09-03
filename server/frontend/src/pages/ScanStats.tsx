@@ -115,7 +115,19 @@ export default function ScanStats({ me, onLogout }: { me: Me; onLogout: () => vo
             <StatTile label="TLS certificates" value={stats.totals.certificates} previous={stats.comparison?.certificates} />
             <StatTile label="Self-signed" value={stats.totals.selfSigned} />
             <StatTile label="Expired / expiring ≤ 30d" value={stats.totals.expiringSoon} />
+            <StatTile label="Unconfirmed ports" value={stats.totals.unconfirmedPorts} />
           </div>
+          {stats.totals.unconfirmedPorts > 0 && (
+            <p className="empty">
+              {stats.totals.unconfirmedPorts.toLocaleString()} open{" "}
+              {stats.totals.unconfirmedPorts === 1 ? "port is" : "ports are"} counted above from an observation older
+              than the newest scan of {stats.totals.hostsWithUnconfirmedPorts === 1 ? "that host" : "their host"} -{" "}
+              {stats.totals.hostsWithUnconfirmedPorts.toLocaleString()}{" "}
+              {stats.totals.hostsWithUnconfirmedPorts === 1 ? "host" : "hosts"} in total. masscan only reports ports it
+              currently sees open, so a port that stops answering is never explicitly recorded as closed and keeps its
+              last known state. The Dashboard's "Only hosts with unconfirmed ports" filter lists them.
+            </p>
+          )}
           {stats.comparison && (
             <p className="empty">
               Change is measured against the state as of {new Date(stats.comparison.since).toLocaleDateString()},
@@ -359,6 +371,44 @@ export default function ScanStats({ me, onLogout }: { me: Me; onLogout: () => vo
           </section>
 
           <section>
+            <h2>Coverage and keys</h2>
+            <div className="stat-tiles">
+              <StatTile label="SSH host keys" value={stats.sshKeys.total} />
+              <StatTile label="Weak SSH keys" value={stats.sshKeys.weak} />
+              <StatTile label="Shared SSH keys" value={stats.sshKeys.sharedFingerprints} />
+              <StatTile label="Web ports captured" value={stats.screenshotCoverage.captured} />
+              <StatTile label="Tracked networks" value={stats.networkCoverage.tracked} />
+              <StatTile label={`Not covered in ${stats.networkCoverage.staleDays}d`} value={stats.networkCoverage.stale} />
+            </div>
+            <p className="empty">
+              {stats.screenshotCoverage.webPorts > 0 ? (
+                <>
+                  {stats.screenshotCoverage.captured.toLocaleString()} of{" "}
+                  {stats.screenshotCoverage.webPorts.toLocaleString()} open web ports have a screenshot
+                  {stats.screenshotCoverage.captured < stats.screenshotCoverage.webPorts &&
+                    " - a large gap usually means gowitness or its Chrome/Chromium is not working on that scanner"}
+                  .{" "}
+                </>
+              ) : null}
+              {stats.networkCoverage.tracked > 0 ? (
+                <>
+                  Tracked networks are on average{" "}
+                  {Math.round((stats.networkCoverage.averageCoverage ?? 0) * 100)}% covered, each range weighted
+                  equally; {stats.networkCoverage.neverCovered.toLocaleString()} have never been scanned at all. The
+                  Network Coverage page has the per-network detail.
+                </>
+              ) : (
+                "No monitored networks are declared yet - add them on the Network Coverage page to see how much of your address space is actually being scanned."
+              )}
+            </p>
+            <div className="chart-grid chart-grid-single">
+              <ChartCard title="SSH host key types" hint="Newest key per host, port and type; ssh-dss and RSA under 2048 bits count as weak">
+                <SliceView slices={stats.sshKeyTypes} showTable={showTable} unit="keys" />
+              </ChartCard>
+            </div>
+          </section>
+
+          <section>
             <h2>TLS certificates</h2>
             <div className="chart-grid">
               <ChartCard title="Issuance">
@@ -370,8 +420,11 @@ export default function ScanStats({ me, onLogout }: { me: Me; onLogout: () => vo
               <ChartCard title="TLS version">
                 <SliceView slices={stats.tlsVersions} showTable={showTable} unit="certificates" />
               </ChartCard>
-              <ChartCard title="Key algorithm">
+              <ChartCard title="Key algorithm" hint={stats.weakCertKeys > 0 ? `${stats.weakCertKeys} certificate(s) use RSA below 2048 bits` : undefined}>
                 <SliceView slices={stats.certKeys} showTable={showTable} unit="certificates" />
+              </ChartCard>
+              <ChartCard title="Issuer" hint="Who signed it; self-signed certificates are one slice rather than one per host">
+                <SliceView slices={stats.certIssuers} showTable={showTable} unit="certificates" />
               </ChartCard>
             </div>
           </section>
@@ -435,6 +488,8 @@ function exportRows(stats: ScanStatsResult, security: SecurityStatsResult | null
   add("Device type", stats.deviceTypes);
   add("Tags", stats.tags);
   add("Certificate issuance", stats.certIssuance);
+  add("Certificate issuer", stats.certIssuers);
+  add("SSH host key types", stats.sshKeyTypes);
   add("Certificate expiry", stats.certExpiry);
   add("TLS version", stats.tlsVersions);
   add("Key algorithm", stats.certKeys);

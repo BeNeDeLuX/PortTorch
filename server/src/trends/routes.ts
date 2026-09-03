@@ -64,7 +64,8 @@ trendsRouter.get("/", asyncHandler(async (req, res) => {
   const filterIds = parseScannerAgentIds(req.query.scannerAgentId);
   const needsHostJoin = allowed !== null || filterIds.length > 0;
 
-  const [newHostsRows, totalHostsBefore, scanRows, hostsScannedRows, openPortRows, cveRows] = await Promise.all([
+  const [newHostsRows, totalHostsBefore, scanRows, hostsScannedRows, openPortRows, cveRows, highCveRows, kevRows] =
+    await Promise.all([
     sql<DailyCountRow>`
       SELECT date_trunc('day', first_seen_at)::date AS date, count(*) AS count
       FROM hosts
@@ -148,6 +149,49 @@ trendsRouter.get("/", asyncHandler(async (req, res) => {
       GROUP BY 1
       ORDER BY 1
     `.execute(db),
+
+    // The two severity-weighted counterparts to cveMatches above, so the
+    // page can answer "is our exposure getting better or worse" rather
+    // than only "how many matches were seen". Same "seen that day"
+    // semantics and the same cve_cache caveat - they are the identical
+    // query with a filter on top, deliberately, so the three series can
+    // never disagree about what a match is.
+    //
+    // Triage is deliberately NOT applied here, unlike on Scan Stats: a
+    // decision made today has no date attached to when it started
+    // applying, so honouring it would silently rewrite history - a CVE
+    // dismissed this morning would vanish from every past day as if it
+    // had never been seen. The page says so rather than leaving the
+    // difference between the two pages unexplained.
+    sql<DailyCountRow>`
+      SELECT date_trunc('day', hpo.observed_at)::date AS date,
+             count(DISTINCT (hpo.host_id, hpo.port, cve_elem->>'id')) AS count
+      FROM host_port_observations hpo
+      JOIN cve_cache cc ON cc.cpe = ANY(hpo.cpes)
+      CROSS JOIN LATERAL jsonb_array_elements(cc.cves) AS cve_elem
+      ${needsHostJoin ? sql`JOIN hosts h ON h.id = hpo.host_id` : sql``}
+      WHERE hpo.state = 'open' AND hpo.observed_at >= ${since.toISOString()}
+        AND (cve_elem->>'cvssScore')::float >= 7
+        ${allowed ? sql`AND h.scanner_agent_id = ANY(${allowed})` : sql``}
+        ${filterIds.length > 0 ? sql`AND h.scanner_agent_id = ANY(${filterIds})` : sql``}
+      GROUP BY 1
+      ORDER BY 1
+    `.execute(db),
+
+    sql<DailyCountRow>`
+      SELECT date_trunc('day', hpo.observed_at)::date AS date,
+             count(DISTINCT (hpo.host_id, hpo.port, cve_elem->>'id')) AS count
+      FROM host_port_observations hpo
+      JOIN cve_cache cc ON cc.cpe = ANY(hpo.cpes)
+      CROSS JOIN LATERAL jsonb_array_elements(cc.cves) AS cve_elem
+      JOIN kev_cache kc ON kc.cve_id = cve_elem->>'id'
+      ${needsHostJoin ? sql`JOIN hosts h ON h.id = hpo.host_id` : sql``}
+      WHERE hpo.state = 'open' AND hpo.observed_at >= ${since.toISOString()}
+        ${allowed ? sql`AND h.scanner_agent_id = ANY(${allowed})` : sql``}
+        ${filterIds.length > 0 ? sql`AND h.scanner_agent_id = ANY(${filterIds})` : sql``}
+      GROUP BY 1
+      ORDER BY 1
+    `.execute(db),
   ]);
 
   const newHostsByDate = new Map(newHostsRows.rows.map((r) => [r.date.toISOString().slice(0, 10), Number(r.count)]));
@@ -157,6 +201,8 @@ trendsRouter.get("/", asyncHandler(async (req, res) => {
   );
   const openPortsByDate = new Map(openPortRows.rows.map((r) => [r.date.toISOString().slice(0, 10), Number(r.count)]));
   const cvesByDate = new Map(cveRows.rows.map((r) => [r.date.toISOString().slice(0, 10), Number(r.count)]));
+  const highCvesByDate = new Map(highCveRows.rows.map((r) => [r.date.toISOString().slice(0, 10), Number(r.count)]));
+  const kevByDate = new Map(kevRows.rows.map((r) => [r.date.toISOString().slice(0, 10), Number(r.count)]));
 
   const series: Array<{
     date: string;
@@ -166,6 +212,8 @@ trendsRouter.get("/", asyncHandler(async (req, res) => {
     hostsScanned: number;
     openPorts: number;
     cveMatches: number;
+    highCveMatches: number;
+    kevMatches: number;
   }> = [];
   let runningTotal = Number(totalHostsBefore.count);
   for (let i = 0; i < days; i++) {
@@ -181,6 +229,8 @@ trendsRouter.get("/", asyncHandler(async (req, res) => {
       hostsScanned: hostsScannedByDate.get(key) ?? 0,
       openPorts: openPortsByDate.get(key) ?? 0,
       cveMatches: cvesByDate.get(key) ?? 0,
+      highCveMatches: highCvesByDate.get(key) ?? 0,
+      kevMatches: kevByDate.get(key) ?? 0,
     });
   }
 

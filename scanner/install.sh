@@ -614,6 +614,11 @@ Group=$SERVICE_USER
 # the exact silent failure the fetch step above documents, arriving through
 # a different door. Confirmed on a real install, not reasoned about.
 Environment=HOME=$SERVICE_HOME
+# Optional, and the leading "-" means "carry on if it doesn't exist":
+# somewhere to put HTTP_PROXY/HTTPS_PROXY/NO_PROXY (and anything else the
+# environment needs) without editing this unit, which the installer
+# rewrites on every full run.
+EnvironmentFile=-/etc/porttorch-scanner.env
 ExecStart=$BIN_PATH serve --config $CONFIG_PATH
 Restart=on-failure
 RestartSec=5s

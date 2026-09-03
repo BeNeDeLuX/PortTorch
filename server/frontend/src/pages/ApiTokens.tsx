@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, ApiToken, Me, ScannerAgent } from "../api";
-import { IconBan, IconCheck, IconPlus } from "../components/icons";
+import { IconBan, IconCheck, IconEdit, IconPlus, IconSave, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import { formatDateTime } from "../lib/formatDate";
@@ -49,6 +49,13 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [name, setName] = useState("");
   const [scope, setScope] = useState<"read" | "read_write">("read");
+  // Which token's privileges are being edited, if any. Editing happens
+  // inline in its own row rather than in a form above: unlike creation
+  // there is nothing to reveal afterwards, and the row already shows the
+  // two values being changed.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editScope, setEditScope] = useState<"read" | "read_write">("read");
+  const [editScannerIds, setEditScannerIds] = useState<string[]>([]);
   const [scannerAgentIds, setScannerAgentIds] = useState<string[]>([]);
   const [agents, setAgents] = useState<ScannerAgent[]>([]);
   const [expiryDays, setExpiryDays] = useState(0);
@@ -94,6 +101,15 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
     setNewToken({ name: created.name, token: created.token });
     setName("");
     setExpiryDays(0);
+    await load();
+  }
+
+  async function handleSaveEdit(id: string) {
+    // Takes effect on that token's next request - tokenAuth reads the row
+    // per call, so there is no "applies at next login" delay to warn
+    // about the way a user's session-cached role has.
+    await api.updateApiToken(id, editScope, editScannerIds);
+    setEditingId(null);
     await load();
   }
 
@@ -185,7 +201,12 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
                   <td>{t.last_used_at ? formatDateTime(t.last_used_at, me.preferences) : "never"}</td>
                   <td>{formatDateTime(t.created_at, me.preferences)}</td>
                   <td>
-                    {t.scope === "read_write" ? (
+                    {editingId === t.id ? (
+                      <select value={editScope} onChange={(e) => setEditScope(e.target.value as "read" | "read_write")}>
+                        <option value="read">read only</option>
+                        <option value="read_write">read + scan</option>
+                      </select>
+                    ) : t.scope === "read_write" ? (
                       <span className="chip-inline" title="Can start and cancel scans and change triage">
                         read + scan
                       </span>
@@ -194,11 +215,15 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
                     )}
                   </td>
                   <td>
-                    {t.scanner_agent_ids.length === 0
-                      ? "all"
-                      : t.scanner_agent_ids
-                          .map((id) => agents.find((a) => a.id === id)?.name ?? id.slice(0, 8))
-                          .join(", ")}
+                    {editingId === t.id ? (
+                      <ScannerMultiSelect agents={agents} selectedIds={editScannerIds} onChange={setEditScannerIds} align="left" />
+                    ) : t.scanner_agent_ids.length === 0 ? (
+                      "all"
+                    ) : (
+                      t.scanner_agent_ids
+                        .map((id) => agents.find((a) => a.id === id)?.name ?? id.slice(0, 8))
+                        .join(", ")
+                    )}
                   </td>
                   <td>
                     {t.expires_at ? (
@@ -212,11 +237,35 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
                   </td>
                   <td>{t.revoked_at ? `revoked ${formatDateTime(t.revoked_at, me.preferences)}` : "active"}</td>
                   <td>
-                    {!t.revoked_at && (
-                      <button className="btn-icon-label" onClick={() => handleRevoke(t)}>
-                        <IconBan /> Revoke
-                      </button>
-                    )}
+                    <div className="inline-actions">
+                      {!t.revoked_at &&
+                        (editingId === t.id ? (
+                          <>
+                            <button className="btn-icon-label" onClick={() => handleSaveEdit(t.id)}>
+                              <IconSave /> Save
+                            </button>
+                            <button className="link-button btn-icon-label" onClick={() => setEditingId(null)}>
+                              <IconX /> Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              className="btn-icon-label"
+                              onClick={() => {
+                                setEditingId(t.id);
+                                setEditScope(t.scope === "read_write" ? "read_write" : "read");
+                                setEditScannerIds(t.scanner_agent_ids);
+                              }}
+                            >
+                              <IconEdit /> Edit
+                            </button>
+                            <button className="btn-icon-label" onClick={() => handleRevoke(t)}>
+                              <IconBan /> Revoke
+                            </button>
+                          </>
+                        ))}
+                    </div>
                   </td>
                 </tr>
               ))}

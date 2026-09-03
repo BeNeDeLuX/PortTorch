@@ -427,6 +427,8 @@ export interface TrendsResult {
     hostsScanned: number;
     openPorts: number;
     cveMatches: number;
+    highCveMatches: number;
+    kevMatches: number;
   }>;
 }
 
@@ -451,6 +453,8 @@ export interface ScanStatsResult {
     certificates: number;
     selfSigned: number;
     expiringSoon: number;
+    unconfirmedPorts: number;
+    hostsWithUnconfirmedPorts: number;
   };
   perScanner: Array<{
     id: string | null;
@@ -480,6 +484,19 @@ export interface ScanStatsResult {
   }>;
   topHostsByPorts: Array<{ hostId: string; ip: string; hostname: string | null; openPorts: number }>;
   topSubnets: Array<{ subnet: string; hosts: number; openPorts: number }>;
+  certIssuers: StatSlice[];
+  weakCertKeys: number;
+  sshKeyTypes: StatSlice[];
+  sshKeys: { total: number; weak: number; sharedFingerprints: number };
+  screenshotCoverage: { webPorts: number; captured: number };
+  networkCoverage: {
+    tracked: number;
+    fullyCovered: number;
+    neverCovered: number;
+    stale: number;
+    staleDays: number;
+    averageCoverage: number | null;
+  };
   certIssuance: StatSlice[];
   certExpiry: StatSlice[];
   tlsVersions: StatSlice[];
@@ -1250,6 +1267,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name, expiresAt, scope, scannerAgentIds }),
     }),
+  updateApiToken: (id: string, scope: "read" | "read_write", scannerAgentIds: string[]) =>
+    request<{ id: string; scope: string; scanner_agent_ids: string[] }>(`/api/api-tokens/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ scope, scannerAgentIds }),
+    }),
+
   revokeApiToken: (id: string) => request<void>(`/api/api-tokens/${id}/revoke`, { method: "POST" }),
 
   schedules: () => request<Schedule[]>("/api/schedules"),

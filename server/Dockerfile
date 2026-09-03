@@ -10,6 +10,13 @@ RUN npm run build
 FROM node:26-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+# Node's fetch (undici) ignores HTTP_PROXY/HTTPS_PROXY/NO_PROXY unless this
+# is set, which is how the NVD, EPSS, KEV and GitHub syncs would silently
+# time out in a network that requires a proxy - with nothing in the logs
+# pointing at the proxy as the cause. Set unconditionally because it only
+# ever means "honour those variables if they are set at all": with none
+# set, connections go direct exactly as before (verified, not assumed).
+ENV NODE_USE_ENV_PROXY=1
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
 COPY --from=build /app/dist ./dist

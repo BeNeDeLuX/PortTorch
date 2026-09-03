@@ -52,6 +52,14 @@ type Server struct {
 	// webserver (claiming mutates scan_requests), so there is a window
 	// where a slot is taken but no cancel func exists yet.
 	runningScans int
+	// activeScans is what the dashboard is told about, and is deliberately
+	// NOT runningScans: a slot is reserved before the queue is even asked
+	// whether it has work (claiming mutates scan_requests, so the capacity
+	// check has to come first), and the poll request itself carries the
+	// slot header - so an idle scanner reported "1/1 busy" on every poll
+	// and 0/1 in between, flapping for the entire time it had nothing to
+	// do. This one counts scans that are actually running.
+	activeScans int
 
 	// pcfg and maxScans are read by every scan and written by the config
 	// watcher (StartConfigWatcher), so they need their own lock.
@@ -508,9 +516,10 @@ func (s *Server) tryAcquireScanSlot() bool {
 		return false
 	}
 	s.runningScans++
-	running := s.runningScans
 	s.mu.Unlock()
-	s.client.SetScanSlots(running, limit)
+	// Deliberately does not publish: a reservation is not a running scan,
+	// and this one is taken before the queue is even asked whether it has
+	// work. See activeScans on the struct.
 	return true
 }
 
@@ -522,9 +531,7 @@ func (s *Server) tryAcquireScanSlot() bool {
 func (s *Server) reserveScanSlot() {
 	s.mu.Lock()
 	s.runningScans++
-	running := s.runningScans
 	s.mu.Unlock()
-	s.client.SetScanSlots(running, s.maxConcurrentScans())
 }
 
 func (s *Server) releaseScanSlot() {
@@ -532,9 +539,25 @@ func (s *Server) releaseScanSlot() {
 	if s.runningScans > 0 {
 		s.runningScans--
 	}
-	running := s.runningScans
 	s.mu.Unlock()
-	s.client.SetScanSlots(running, s.maxConcurrentScans())
+}
+
+// beginActiveScan/endActiveScan track what is actually running, for the
+// header only - capacity is still decided by runningScans above.
+func (s *Server) beginActiveScan() {
+	s.mu.Lock()
+	s.activeScans++
+	s.mu.Unlock()
+	s.PublishScanSlots()
+}
+
+func (s *Server) endActiveScan() {
+	s.mu.Lock()
+	if s.activeScans > 0 {
+		s.activeScans--
+	}
+	s.mu.Unlock()
+	s.PublishScanSlots()
 }
 
 // PublishScanSlots pushes the current slot usage to the client so it rides
@@ -543,9 +566,9 @@ func (s *Server) releaseScanSlot() {
 // first scan) and again whenever the dashboard changes the limit.
 func (s *Server) PublishScanSlots() {
 	s.mu.RLock()
-	running := s.runningScans
+	active := s.activeScans
 	s.mu.RUnlock()
-	s.client.SetScanSlots(running, s.maxConcurrentScans())
+	s.client.SetScanSlots(active, s.maxConcurrentScans())
 }
 
 func (s *Server) maxConcurrentScans() int {
@@ -735,6 +758,12 @@ func resolveNucleiProfile(profile string, tags []string) *pipeline.NucleiProfile
 // (main.go, tui/commands.go) never register anything here, but registering
 // unconditionally is harmless and keeps this function the same for both.
 func (s *Server) runScan(jobID, target, ports string, nseScripts []string, nucleiProfile *pipeline.NucleiProfile, masscanRate *int, state *scanState) {
+	// Both entry points (the queue loop's goroutine and the local REST
+	// API) funnel through here, so this is the one place that knows a
+	// scan is genuinely under way rather than merely accounted for.
+	s.beginActiveScan()
+	defer s.endActiveScan()
+
 	start := time.Now()
 	s.logger.Info("scan started", "event", "scan.started", "scan_job_id", jobID, "target", target, "ports", ports)
 

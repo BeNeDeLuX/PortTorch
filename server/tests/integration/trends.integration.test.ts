@@ -71,11 +71,26 @@ describe("GET /api/trends", () => {
         { cpe: CPE_B, cves: JSON.stringify([{ id: "CVE-1999-0002", description: "test", cvssScore: 5.0, cvssSeverity: "MEDIUM", published: null }]) },
       ])
       .execute();
+
+    // One of the two is in CISA's KEV catalog, which is what separates
+    // the two new severity-weighted series from the plain cveMatches one.
+    await db
+      .insertInto("kev_cache")
+      .values({
+        cve_id: "CVE-1999-0001",
+        vendor_project: "porttorch-test",
+        product: "trend-a",
+        vulnerability_name: "test",
+        date_added: "2024-01-01",
+      })
+      .onConflict((oc) => oc.column("cve_id").doNothing())
+      .execute();
   });
 
   afterAll(async () => {
     await db.deleteFrom("hosts").where("ip", "in", [IP_A, IP_B]).execute();
     await db.deleteFrom("cve_cache").where("cpe", "in", [CPE_A, CPE_B]).execute();
+    await db.deleteFrom("kev_cache").where("cve_id", "=", "CVE-1999-0001").execute();
     await deleteTestUser(admin.id);
     await deleteTestUser(restrictedOperator.id);
     await deleteTestAgent(agentA.id);
@@ -98,6 +113,27 @@ describe("GET /api/trends", () => {
     expect(today.openPorts).toBeGreaterThanOrEqual(2);
     expect(today.cveMatches).toBeGreaterThanOrEqual(2);
     expect(today.totalHosts).toBeGreaterThanOrEqual(today.newHosts);
+  });
+
+  it("separates high-severity and known-exploited matches from the plain CVE count", async () => {
+    const res = await adminClient.get("/api/trends").query({ days: 7, scannerAgentId: agentA.id });
+    const today = res.body.series.find((d: { date: string }) => d.date === todayKey());
+
+    // Scoped to agent A, whose only CVE is the CVSS 9.8 KEV-listed one -
+    // so all three series see it, which is what makes the assertions
+    // below exact rather than >= like the fleet-wide test above.
+    expect(today.cveMatches).toBe(1);
+    expect(today.highCveMatches).toBe(1);
+    expect(today.kevMatches).toBe(1);
+
+    // Agent B's CVE is a 5.0 that is not KEV-listed, so it counts once
+    // and only once - the case that would break if the severity filter
+    // were dropped or the KEV join were made a left join by accident.
+    const resB = await adminClient.get("/api/trends").query({ days: 7, scannerAgentId: agentB.id });
+    const todayB = resB.body.series.find((d: { date: string }) => d.date === todayKey());
+    expect(todayB.cveMatches).toBe(1);
+    expect(todayB.highCveMatches).toBe(0);
+    expect(todayB.kevMatches).toBe(0);
   });
 
   it("defaults to 90 days and clamps an out-of-range days value", async () => {

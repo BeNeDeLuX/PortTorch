@@ -166,21 +166,21 @@ Each item below is a one-line summary - click **Details** to expand it.
   <details>
   <summary>Details</summary>
 
-  Every TLS certificate across the whole fleet, sorted soonest-expiring first. Searchable by host, port, CN, or issuer, plus a checkbox to show only already-expired certificates. Exportable as CSV or JSON, scoped to whatever the current search/filter is showing.
+  Every TLS certificate across the whole fleet, sorted soonest-expiring first. Searchable by host, port, CN, or issuer, plus a checkbox to show only already-expired certificates. Exportable as CSV, JSON or PDF (the printed view drops the nav and the bulk-action controls), scoped to whatever the current search/filter is showing.
   </details>
 
 - :shield: **Vulnerabilities overview** - every known CVE match across the fleet in one sortable table.
   <details>
   <summary>Details</summary>
 
-  Every known CVE match (see vulnerability correlation below) across the whole fleet in one sortable table - host, port, CVE, severity, description - instead of having to check each host's detail page individually. Exportable as CSV or JSON (including triage state), scoped to whatever the current search/filter is showing.
+  Every known CVE match (see vulnerability correlation below) across the whole fleet in one sortable table - host, port, CVE, severity, description - instead of having to check each host's detail page individually. Exportable as CSV, JSON or PDF (including triage state; the printed view drops the nav and the bulk-action controls), scoped to whatever the current search/filter is showing.
   </details>
 
 - :spider_web: **Web Findings** - every nuclei web-vulnerability match across the fleet in one sortable table.
   <details>
   <summary>Details</summary>
 
-  Every nuclei template match (see Nuclei Profiles above) across the whole fleet in one sortable table - host, port, template id, severity, matched URL, description - a separate table from Vulnerabilities overview since a template match's shape (template id/severity/tags) doesn't map onto CVE/CPE/CVSS/EPSS/KEV columns at all. Named "Web Findings" rather than "Nuclei Findings" - nuclei is the tool that generates them, already explained above, not something a user needs to know to understand what this page shows. Only ever populated for a scan that had a non-"Off" nuclei profile selected. Exportable as CSV or JSON (including triage state), scoped to whatever the current search/filter is showing.
+  Every nuclei template match (see Nuclei Profiles above) across the whole fleet in one sortable table - host, port, template id, severity, matched URL, description - a separate table from Vulnerabilities overview since a template match's shape (template id/severity/tags) doesn't map onto CVE/CPE/CVSS/EPSS/KEV columns at all. Named "Web Findings" rather than "Nuclei Findings" - nuclei is the tool that generates them, already explained above, not something a user needs to know to understand what this page shows. Only ever populated for a scan that had a non-"Off" nuclei profile selected. Exportable as CSV, JSON or PDF (including triage state; the printed view drops the nav and the bulk-action controls), scoped to whatever the current search/filter is showing.
   </details>
 
 - :white_check_mark: **Finding triage** - mark a CVE or web finding as a false positive, accepted risk, or fixed so it stops resurfacing.
@@ -213,7 +213,7 @@ Each item below is a one-line summary - click **Details** to expand it.
   <details>
   <summary>Details</summary>
 
-  Fleet-wide time series (cumulative total hosts, and daily new hosts/scans/open-ports-seen/CVE-matches-seen) over a selectable range (7/30/90/365 days), filterable to one or more scanner agents. Chart or table view, same toggle style as the main dashboard's Grid/Table switch.
+  Fleet-wide time series (cumulative total hosts, and daily new hosts/scans/open-ports-seen/CVE-matches-seen) over a selectable range (7/30/90/365 days), filterable to one or more scanner agents. A separate **Security findings seen per day** chart splits that CVE count by how bad it is - all matches, CVSS 7.0+, and CISA KEV-listed - which is what makes "are we getting better or worse" answerable. Triage is deliberately not applied there (unlike Scan Stats): a decision carries no date for when it started applying, so honouring it would silently rewrite every past day. Chart or table view, same toggle style as the main dashboard's Grid/Table switch.
   </details>
 
 - :bar_chart: **Statistics -> Scan Stats** - what the fleet currently consists of, and how bad its open findings are.
@@ -224,7 +224,7 @@ Each item below is a one-line summary - click **Details** to expand it.
 
   Donut charts (or tables, same toggle) for open ports by port number, port type (Web / Remote access / Databases / File sharing / Mail / Directory / Network infrastructure / Industrial-OT), TCP vs UDP, nmap-detected services, operating system, device type, tags, and four for TLS certificates (self-signed vs CA-issued, expiry, TLS version, key algorithm). Plus a **Security findings** section - CVE severity, EPSS exploit probability, web-finding severity, counts for KEV-listed and ransomware-associated CVEs, and a "most exposed hosts" shortlist ordered the way the Vulnerabilities page orders findings (confirmed-exploited first, then highest CVSS). A finding counts once per host and CVE, never once per port; findings marked a false positive or fixed are left out, while an accepted risk still counts, since the host is still exposed.
 
-  Also per-scanner breakdowns (hosts, open ports, certificates), scan performance over the last 30 days (median/average/longest duration, failures, cancellations - durations from completed scans only), the hosts and /24 subnets with the most open ports, an opt-in comparison against 7/30/90 days ago, and CSV/JSON export. Everything on the page respects the scanner filter and an optional "hide retired hosts" toggle.
+  Also per-scanner breakdowns (hosts, open ports, certificates), scan performance over the last 30 days (median/average/longest duration, failures, cancellations - durations from completed scans only), the hosts and /24 subnets with the most open ports, an opt-in comparison against 7/30/90 days ago, and CSV/JSON export. Plus a **Coverage and keys** section: SSH host key types with weak (`ssh-dss`, RSA under 2048) and shared-across-addresses counts, how many open web ports actually have a screenshot (a large gap usually means gowitness or its Chrome isn't working on that scanner), how much of your declared networks is covered, and how many open ports are **unconfirmed** - last seen before their own host's newest scan, which is the honest measure of how stale the inventory is. Everything on the page respects the scanner filter and an optional "hide retired hosts" toggle.
 
   Operating system and device type stay empty unless the scanner can run nmap's `-O`, which needs root or the sudo wrapper `install.sh` sets up - see "Grant scanning capabilities" below. Hosts without a classification are counted as "Not classified" rather than dropped, so the chart says which case you are in.
   </details>
@@ -282,7 +282,7 @@ Each item below is a one-line summary - click **Details** to expand it.
   <details>
   <summary>Details</summary>
 
-  Manage tokens for external tools (see "External API" below); separate from Scanner Agent keys. An optional expiry (never / 30 / 90 / 365 days) can be set at creation time, after which the token stops authenticating on its own - no separate revoke step needed.
+  Manage tokens for external tools (see "External API" below); separate from Scanner Agent keys. An optional expiry (never / 30 / 90 / 365 days) can be set at creation time, after which the token stops authenticating on its own - no separate revoke step needed. A live token's **scope** (read only / read + scan) and its scanner restriction can be changed afterwards with the row's Edit button, effective on that token's very next request - so a token issued with more access than it turned out to need can be narrowed without reissuing it and updating every caller. The secret and the expiry stay fixed: the secret is stored hashed and shown once, so there is nothing to edit, and a revoked token is left exactly as it was, since its row is the record of what it could do while it existed.
   </details>
 
 - :busts_in_silhouette: **Multi-user accounts with roles** - admin/operator/user, plus optional per-account scanner restriction.
@@ -905,6 +905,31 @@ scrape_configs:
 ```
 
 ## Firewall / proxy allowlist
+
+### Using an HTTP proxy
+
+Set `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` in `.env` (see
+`.env.example`); Compose passes them into the webserver container, and
+the image already sets `NODE_USE_ENV_PROXY=1`, which is what makes Node's
+own `fetch` honour them at all - without it the vulnerability-data syncs
+just time out, with nothing in the logs pointing at the proxy. Webhook,
+Teams and SIEM deliveries go through the proxy too (plain HTTP in
+absolute form, HTTPS through a `CONNECT` tunnel, so an uploaded internal
+CA and the per-channel verify-TLS switch keep working exactly as they do
+without one). Put anything reachable without the proxy in `NO_PROXY` -
+an internal collector or webhook target - or those requests take a
+needless detour and may be refused outright.
+
+For the scanner, drop the same variables into
+`/etc/porttorch-scanner.env`; the systemd unit reads that file if it
+exists (`EnvironmentFile=-`), and both the connection to the webserver
+and the self-updater honour them. Add the webserver's own address to
+`NO_PROXY` unless it genuinely has to be reached through the proxy.
+
+Credentials embedded in the proxy URL (`http://user:pass@proxy:3128`) are
+supported and sent as `Proxy-Authorization`; nothing logs that header.
+
+### Domains
 
 If either service sits behind an egress firewall or proxy, these are the
 external domains each component actually needs - split by which component

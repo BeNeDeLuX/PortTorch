@@ -89,6 +89,73 @@ apiTokensRouter.post("/", asyncHandler(async (req, res) => {
 
 const uuidSchema = z.string().uuid();
 
+// A token's privileges are editable after creation; its secret and its
+// expiry are not. The secret is only ever shown once and is stored
+// hashed, so there is nothing to edit - and moving an expiry is a
+// different, quieter kind of change than tightening a scope, worth
+// staying a delete-and-reissue. What this fixes is the case that
+// actually comes up: a token issued read_write that turns out to only
+// need read, or one that should be confined to a single scanner, where
+// the only previous answer was to revoke it and update every caller.
+const updateTokenSchema = z.object({
+  scope: z.enum(["read", "read_write"]).optional(),
+  scannerAgentIds: z.array(z.string().uuid()).optional(),
+});
+
+apiTokensRouter.patch("/:id", asyncHandler(async (req, res) => {
+  if (!uuidSchema.safeParse(req.params.id).success) {
+    res.status(400).json({ error: "invalid api token id" });
+    return;
+  }
+  const parsed = updateTokenSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  if (parsed.data.scope === undefined && parsed.data.scannerAgentIds === undefined) {
+    res.status(400).json({ error: "nothing to update" });
+    return;
+  }
+
+  // Only a live token: a revoked one stays exactly as it was, since its
+  // row is the record of what it could do while it existed.
+  const updated = await db
+    .updateTable("api_tokens")
+    .set({
+      ...(parsed.data.scope !== undefined ? { scope: parsed.data.scope } : {}),
+      ...(parsed.data.scannerAgentIds !== undefined ? { scanner_agent_ids: parsed.data.scannerAgentIds } : {}),
+    })
+    .where("id", "=", req.params.id)
+    .where("revoked_at", "is", null)
+    .returning(["id", "name", "scope", "scanner_agent_ids"])
+    .executeTakeFirst();
+
+  if (!updated) {
+    res.status(404).json({ error: "api token not found or already revoked" });
+    return;
+  }
+
+  logger.info({
+    event: "api_token.updated",
+    api_token_id: updated.id,
+    name: updated.name,
+    scope: updated.scope,
+    scanner_agent_ids: updated.scanner_agent_ids,
+    updated_by: req.session.username,
+  });
+  recordAudit("api_token.updated", req.session.username, req.ip, {
+    api_token_id: updated.id,
+    name: updated.name,
+    scope: updated.scope,
+    scanner_agent_ids: updated.scanner_agent_ids,
+  });
+
+  // Takes effect on the token's very next request: tokenAuth reads the
+  // row per call rather than caching it, so there is no session-style
+  // "applies at next login" delay to explain here.
+  res.json(updated);
+}));
+
 apiTokensRouter.post("/:id/revoke", asyncHandler(async (req, res) => {
   if (!uuidSchema.safeParse(req.params.id).success) {
     res.status(400).json({ error: "invalid api token id" });

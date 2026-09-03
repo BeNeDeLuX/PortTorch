@@ -2,7 +2,18 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 import { sql } from "kysely";
 import { db } from "../../src/db";
-import { closeDb, createTestAgent, deleteTestAgent, getApp, type TestAgent } from "./helpers";
+import {
+  closeDb,
+  createTestAgent,
+  createTestUser,
+  deleteTestAgent,
+  deleteTestUser,
+  getApp,
+  loginAs,
+  type SessionClient,
+  type TestAgent,
+  type TestUser,
+} from "./helpers";
 import crypto from "crypto";
 import { hashApiKey } from "../../src/ingest/apiKeyAuth";
 
@@ -16,6 +27,8 @@ const IP_B = "240.80.0.2";
 describe("API token scopes and scanner restriction", () => {
   let agentA: TestAgent;
   let agentB: TestAgent;
+  let admin: TestUser;
+  let adminClient: SessionClient;
   const tokens: Record<string, string> = {};
   const tokenIds: string[] = [];
 
@@ -48,6 +61,8 @@ describe("API token scopes and scanner restriction", () => {
     tokens.read = await makeToken("it-read", "read");
     tokens.write = await makeToken("it-write", "read_write");
     tokens.scopedToA = await makeToken("it-scoped", "read", [agentA.id]);
+    admin = await createTestUser("admin");
+    adminClient = await loginAs(admin.username, admin.password);
   });
 
   afterAll(async () => {
@@ -55,6 +70,7 @@ describe("API token scopes and scanner restriction", () => {
     await sql`DELETE FROM hosts WHERE ip = ${IP_A}::inet OR ip = ${IP_B}::inet`.execute(db);
     await deleteTestAgent(agentA.id);
     await deleteTestAgent(agentB.id);
+    await deleteTestUser(admin.id);
     await closeDb();
   });
 
@@ -110,6 +126,43 @@ describe("API token scopes and scanner restriction", () => {
     expect((await get(`/api/v1/hosts/lookup?ip=${IP_B}`, tokens.scopedToA)).status).toBe(404);
     // An unrestricted token still sees both.
     expect((await get(`/api/v1/hosts/lookup?ip=${IP_B}`, tokens.read)).status).toBe(200);
+  });
+
+  it("narrows a live token's privileges in place, effective on its next request", async () => {
+    const secret = await makeToken("it-editable", "read_write");
+    const id = tokenIds[tokenIds.length - 1];
+
+    // It can trigger a scan while it is read_write...
+    const before = await post("/api/v1/hosts/rescan", secret).send({ ip: IP_A });
+    expect(before.status).not.toBe(403);
+
+    const patched = await adminClient.patch(`/api/api-tokens/${id}`).send({ scope: "read", scannerAgentIds: [agentB.id] });
+    expect(patched.status).toBe(200);
+    expect(patched.body.scope).toBe("read");
+
+    // ...and not afterwards, with no re-issue and no restart in between:
+    // tokenAuth reads the row per request rather than caching it.
+    const after = await post("/api/v1/hosts/rescan", secret).send({ ip: IP_A });
+    expect(after.status).toBe(403);
+
+    // The scanner restriction moved with it - IP_A belongs to agent A,
+    // which this token may no longer see at all.
+    const lookup = await get(`/api/v1/hosts/lookup?ip=${IP_A}`, secret);
+    expect(lookup.status).toBe(404);
+    expect((await get(`/api/v1/hosts/lookup?ip=${IP_B}`, secret)).status).toBe(200);
+  });
+
+  it("refuses an empty update and an already-revoked token", async () => {
+    const secret = await makeToken("it-revoked-edit", "read");
+    const id = tokenIds[tokenIds.length - 1];
+    expect(secret).toBeTruthy();
+
+    expect((await adminClient.patch(`/api/api-tokens/${id}`).send({})).status).toBe(400);
+
+    await db.updateTable("api_tokens").set({ revoked_at: new Date() }).where("id", "=", id).execute();
+    // A revoked token's row is the record of what it could do while it
+    // existed, so it is not editable rather than silently updated.
+    expect((await adminClient.patch(`/api/api-tokens/${id}`).send({ scope: "read_write" })).status).toBe(404);
   });
 
   it("defaults a token created before scopes existed to read_write", async () => {

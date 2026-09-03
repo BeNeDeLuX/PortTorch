@@ -14,8 +14,15 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      "/auth": apiProxy,
-      "/api": apiProxy,
+      // Anchored regexes, not plain prefixes: a bare "/api" key matches
+      // by prefix, so the SPA's own /api-tokens route was proxied to the
+      // backend and answered 404 - that page was simply unreachable in
+      // `npm run dev`, while production served it fine (nothing there
+      // matches /api-tokens either, so its SPA fallback takes it). The
+      // trailing slash is what distinguishes a real API call from a
+      // client-side route that merely starts with the same letters.
+      "^/auth/": apiProxy,
+      "^/api/": apiProxy,
     },
   },
   build: {

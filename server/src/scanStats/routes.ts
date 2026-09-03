@@ -6,6 +6,7 @@ import { getAllowedScannerAgentIds } from "../auth/scannerScope";
 import { asyncHandler } from "../lib/asyncHandler";
 import { categorisePort, PORT_CATEGORY_ORDER, type PortCategory } from "./portCategories";
 import { computeSecurityStats } from "./security";
+import { computeNetworkCoverage } from "../networks/coverage";
 import type { Slice } from "./types";
 
 export const scanStatsRouter = Router();
@@ -51,6 +52,7 @@ interface CertRow {
   tls_version: string | null;
   key_algorithm: string | null;
   key_bits: number | null;
+  issuer_cn: string | null;
 }
 
 // Current-state composition of the fleet, the counterpart to the Trends
@@ -108,7 +110,7 @@ scanStatsRouter.get("/", asyncHandler(async (req, res) => {
     ${hideRetired ? sql`AND h.retired_at IS NULL` : sql``}
   `;
 
-  const [agents, hostRows, portRows, certRows, osRows, deviceRows, tagRows, scanRows, subnetRows, topHostRows] =
+  const [agents, hostRows, portRows, certRows, osRows, deviceRows, tagRows, scanRows, subnetRows, staleRows, sshRows, shotRows, topHostRows] =
     await Promise.all([
     db.selectFrom("scanner_agents").select(["id", "name"]).where("revoked_at", "is", null).execute(),
 
@@ -140,7 +142,7 @@ scanStatsRouter.get("/", asyncHandler(async (req, res) => {
     sql<CertRow>`
       SELECT DISTINCT ON (tc.host_id, tc.port)
              h.scanner_agent_id, tc.self_signed, tc.not_after, tc.tls_version,
-             tc.key_algorithm, tc.key_bits
+             tc.key_algorithm, tc.key_bits, tc.issuer_cn
       FROM tls_certificates tc
       JOIN hosts h ON h.id = tc.host_id
       WHERE true ${hostWhere}
@@ -223,6 +225,45 @@ scanStatsRouter.get("/", asyncHandler(async (req, res) => {
       GROUP BY 1
     `.execute(db),
 
+    // "Unconfirmed" ports: open, but last seen before this host's own most
+    // recent observation - so the newest scan did not re-confirm them.
+    // The definition is deliberately the same one GET /api/hosts uses per
+    // host (see search/routes.ts's stale_port_count), including comparing
+    // against the host's own newest observation rather than
+    // hosts.last_seen_at: that column is set from the webserver's clock
+    // while observed_at comes from Postgres's, and mixing the two produces
+    // false positives on a perfectly fresh scan.
+    sql<{ ports: string | number; hosts: string | number }>`
+      SELECT count(*) AS ports, count(DISTINCT chp.host_id) AS hosts
+      FROM current_host_ports chp
+      JOIN hosts h ON h.id = chp.host_id
+      WHERE chp.state = 'open' ${hostWhere}
+        AND chp.observed_at < (
+          SELECT max(newest.observed_at) FROM current_host_ports newest
+          WHERE newest.host_id = chp.host_id
+        )
+    `.execute(db),
+
+    // Newest key per (host, port, key_type) - the same identity the
+    // fleet-wide SSH Keys page dedups on, since a rescan re-reports the
+    // same key and counting rows would count scans.
+    sql<{ key_type: string; bits: number | null; fingerprint: string | null; ip: string }>`
+      SELECT DISTINCT ON (k.host_id, k.port, k.key_type)
+             k.key_type, k.bits, k.fingerprint_sha256 AS fingerprint, host(h.ip) AS ip
+      FROM ssh_host_keys k
+      JOIN hosts h ON h.id = k.host_id
+      WHERE true ${hostWhere}
+      ORDER BY k.host_id, k.port, k.key_type, k.captured_at DESC
+    `.execute(db),
+
+    // Screenshot coverage, counted per (host, port) so a host rescanned
+    // ten times counts once - the question is "did this interface ever
+    // get captured", not how many captures exist.
+    sql<{ host_id: string; port: number }>`
+      SELECT DISTINCT host_id, port FROM screenshots
+      WHERE host_id IN (SELECT h.id FROM hosts h WHERE true ${hostWhere})
+    `.execute(db),
+
     sql<{ id: string; ip: string; hostname: string | null; open_ports: string | number }>`
       -- host(), not ip::text: casting an inet to text appends the /32 that
       -- Postgres omits when the value is rendered on its own, so the plain
@@ -272,6 +313,8 @@ scanStatsRouter.get("/", asyncHandler(async (req, res) => {
   let expiryLater = 0;
   let expiryUnknown = 0;
   const tlsVersionCounts = new Map<string, number>();
+  const issuerCounts = new Map<string, number>();
+  let weakCertKeys = 0;
   const keyCounts = new Map<string, number>();
   const certsByScanner = new Map<string | null, number>();
 
@@ -293,6 +336,19 @@ scanStatsRouter.get("/", asyncHandler(async (req, res) => {
       ? `${cert.key_algorithm}${cert.key_bits ? ` ${cert.key_bits}` : ""}`
       : "unknown";
     keyCounts.set(key, (keyCounts.get(key) ?? 0) + 1);
+    // RSA below 2048 bits, matching the SSH weak-key rule's spirit; EC
+    // is left out because its own small numbers are not weak (EC 256 is
+    // roughly RSA 3072), which a bit-count threshold alone would get
+    // exactly backwards.
+    if ((cert.key_algorithm ?? "").toUpperCase().includes("RSA") && cert.key_bits !== null && cert.key_bits < 2048) {
+      weakCertKeys++;
+    }
+    // Who actually signed it. A self-signed certificate is its own
+    // issuer, so it is labelled as such rather than listing every
+    // host's own CN separately - otherwise this chart is one slice per
+    // self-signed host and says nothing.
+    const issuer = cert.self_signed ? "Self-signed" : cert.issuer_cn?.trim() || "Unknown issuer";
+    issuerCounts.set(issuer, (issuerCounts.get(issuer) ?? 0) + 1);
   }
 
   // "Not classified" rather than "unknown": for these two the absence has
@@ -388,6 +444,43 @@ scanStatsRouter.get("/", asyncHandler(async (req, res) => {
     openPorts: Number(r.open_ports),
   }));
 
+  // SSH host keys. "Weak" is deliberately the same narrow definition the
+  // SSH Keys page uses (frontend/src/lib/sshKeyRisk.ts): ssh-dss always,
+  // RSA under 2048 bits, and nothing else - a badge that fires on healthy
+  // keys is one people learn to ignore. A null bit count is missing data,
+  // not a small key, so it stays unflagged.
+  const sshKeyTypeCounts = new Map<string, number>();
+  const sshIpsByFingerprint = new Map<string, Set<string>>();
+  let sshWeakKeys = 0;
+  for (const key of sshRows.rows) {
+    const type = key.key_type || "unknown";
+    sshKeyTypeCounts.set(type, (sshKeyTypeCounts.get(type) ?? 0) + 1);
+    if (type === "ssh-dss" || (type === "ssh-rsa" && key.bits !== null && key.bits < 2048)) sshWeakKeys++;
+    if (key.fingerprint) {
+      const ips = sshIpsByFingerprint.get(key.fingerprint) ?? new Set<string>();
+      // Distinct addresses, not rows: host identity is (ip, scanner), so
+      // one machine reached from two scanners legitimately serves the
+      // same key and must not be reported as a clone. Same reasoning as
+      // the SSH Keys page's own sharing count.
+      ips.add(String(key.ip));
+      sshIpsByFingerprint.set(key.fingerprint, ips);
+    }
+  }
+  const sshSharedKeys = [...sshIpsByFingerprint.values()].filter((ips) => ips.size > 1).length;
+
+  // Screenshot coverage over the ports this page already classifies as
+  // Web - the scanner's own isHTTPPort lives in Go and is not importable
+  // here, and the port-category table is the closest honest stand-in.
+  // Named "web ports" rather than "HTTP ports" for that reason.
+  const capturedPorts = new Set(shotRows.rows.map((r) => `${r.host_id}:${r.port}`));
+  let webPorts = 0;
+  let webPortsCaptured = 0;
+  for (const row of portRows.rows) {
+    if (categorisePort(row.port, row.protocol) !== "Web") continue;
+    webPorts += Number(row.count);
+  }
+  webPortsCaptured = capturedPorts.size;
+
   const topSubnets = subnetRows.rows
     .map((r) => ({ subnet: r.subnet, hosts: Number(r.hosts), openPorts: Number(r.open_ports) }))
     .sort((a, b) => b.openPorts - a.openPorts || b.hosts - a.hosts || a.subnet.localeCompare(b.subnet))
@@ -453,9 +546,38 @@ scanStatsRouter.get("/", asyncHandler(async (req, res) => {
     };
   }
 
+  // Reuses the Networks page's own computation rather than a second,
+  // "equivalent" query - the same reason the coverage_stale alert does
+  // (see server/CLAUDE.md): an alert or a summary reaching its verdict
+  // by a different route is how the two end up disagreeing. Summarised
+  // here rather than repeated: the page itself is where the per-network
+  // detail belongs.
+  const coverage = await computeNetworkCoverage(allowed);
+  const coverageNetworks = filterIds.length > 0
+    ? coverage.networks.filter((n) => n.scanner_agent_id === null || filterIds.includes(n.scanner_agent_id))
+    : coverage.networks;
+  const now2 = Date.now();
+  const networkCoverage = {
+    tracked: coverageNetworks.length,
+    fullyCovered: coverageNetworks.filter((n) => n.covered_fraction >= 1).length,
+    neverCovered: coverageNetworks.filter((n) => n.last_covered_at === null).length,
+    staleDays: coverage.staleDays,
+    stale: coverageNetworks.filter(
+      (n) => n.last_covered_at === null || now2 - new Date(n.last_covered_at).getTime() > coverage.staleDays * 86400000
+    ).length,
+    // Averaged over tracked networks, each weighted equally - a /16 and a
+    // /24 are two ranges somebody chose to track, and address-weighting
+    // would let one large mostly-empty range decide the whole number.
+    averageCoverage:
+      coverageNetworks.length === 0
+        ? null
+        : coverageNetworks.reduce((sum, n) => sum + n.covered_fraction, 0) / coverageNetworks.length,
+  };
+
   res.json({
     hideRetired,
     comparison,
+    networkCoverage,
     totals: {
       hosts,
       openPorts,
@@ -464,6 +586,8 @@ scanStatsRouter.get("/", asyncHandler(async (req, res) => {
       certificates: certRows.rows.length,
       selfSigned,
       expiringSoon: expired + expiring30,
+      unconfirmedPorts: Number(staleRows.rows[0]?.ports ?? 0),
+      hostsWithUnconfirmedPorts: Number(staleRows.rows[0]?.hosts ?? 0),
     },
     perScanner,
     topPorts: topSlices(portCounts),
@@ -490,6 +614,11 @@ scanStatsRouter.get("/", asyncHandler(async (req, res) => {
     certExpiry,
     tlsVersions: topSlices(tlsVersionCounts, 6),
     certKeys: topSlices(keyCounts, 6),
+    certIssuers: topSlices(issuerCounts),
+    weakCertKeys,
+    sshKeyTypes: topSlices(sshKeyTypeCounts),
+    sshKeys: { total: sshRows.rows.length, weak: sshWeakKeys, sharedFingerprints: sshSharedKeys },
+    screenshotCoverage: { webPorts, captured: Math.min(webPortsCaptured, webPorts) },
   });
 }));
 
