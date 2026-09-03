@@ -209,11 +209,24 @@ Each item below is a one-line summary - click **Details** to expand it.
   A fleet-wide "what changed" view (newly discovered hosts, newly opened/closed ports) over the last 24 hours or 7 days. Also available as a daily email/webhook (`digest.daily`, see Webhooks below) - a fixed UTC hour (Admin -> Settings -> Alerting, default 8) rather than a per-schedule picker.
   </details>
 
-- :chart_with_upwards_trend: **Trends** - fleet-wide time series for hosts, scans, open ports, and CVE matches over a selectable range.
+- :chart_with_upwards_trend: **Statistics -> Trends** - fleet-wide time series for hosts, scans, open ports, and CVE matches over a selectable range.
   <details>
   <summary>Details</summary>
 
   Fleet-wide time series (cumulative total hosts, and daily new hosts/scans/open-ports-seen/CVE-matches-seen) over a selectable range (7/30/90/365 days), filterable to one or more scanner agents. Chart or table view, same toggle style as the main dashboard's Grid/Table switch.
+  </details>
+
+- :bar_chart: **Statistics -> Scan Stats** - what the fleet currently consists of, and how bad its open findings are.
+  <details>
+  <summary>Details</summary>
+
+  The composition counterpart to Trends: Trends plots activity per day, this shows the current state - counted from the most recent observation of every host and port, so a port since found closed is not counted. The two therefore answer different questions and their "open ports" numbers are not expected to match.
+
+  Donut charts (or tables, same toggle) for open ports by port number, port type (Web / Remote access / Databases / File sharing / Mail / Directory / Network infrastructure / Industrial-OT), TCP vs UDP, nmap-detected services, operating system, device type, tags, and four for TLS certificates (self-signed vs CA-issued, expiry, TLS version, key algorithm). Plus a **Security findings** section - CVE severity, EPSS exploit probability, web-finding severity, counts for KEV-listed and ransomware-associated CVEs, and a "most exposed hosts" shortlist ordered the way the Vulnerabilities page orders findings (confirmed-exploited first, then highest CVSS). A finding counts once per host and CVE, never once per port; findings marked a false positive or fixed are left out, while an accepted risk still counts, since the host is still exposed.
+
+  Also per-scanner breakdowns (hosts, open ports, certificates), scan performance over the last 30 days (median/average/longest duration, failures, cancellations - durations from completed scans only), the hosts and /24 subnets with the most open ports, an opt-in comparison against 7/30/90 days ago, and CSV/JSON export. Everything on the page respects the scanner filter and an optional "hide retired hosts" toggle.
+
+  Operating system and device type stay empty unless the scanner can run nmap's `-O`, which needs root or the sudo wrapper `install.sh` sets up - see "Grant scanning capabilities" below. Hosts without a classification are counted as "Not classified" rather than dropped, so the chart says which case you are in.
   </details>
 
 - :bell: **Webhooks & email alerts** - Slack/Discord/Teams/email alerts for a long list of fleet events, with delivery history.
@@ -391,6 +404,19 @@ webserver URL/API key to write `config.yaml`, and installs a systemd
 service (`porttorch-scanner.service`) running `porttorch serve` so
 rescans and recurring schedules work unattended.
 
+> [!IMPORTANT]
+> It also writes a sudoers drop-in, `/etc/sudoers.d/porttorch-scanner`,
+> granting the service account passwordless root for exactly one command:
+> `/usr/local/bin/porttorch-nmap`, an argument-validating wrapper around
+> nmap. This is what makes OS/device fingerprinting and UDP scanning work
+> at all without running the whole scanner as root - nmap refuses those
+> for anyone but real root, and file capabilities don't cover them. The
+> file is validated with `visudo -cf` before being installed, and nmap
+> itself is deliberately never granted. See [Grant scanning
+> capabilities](#grant-scanning-capabilities) for what the wrapper does
+> and does not protect against, and set `nmapSudo: false` in
+> `config.yaml` if you'd rather not have it.
+
 > [!NOTE]
 > On Ubuntu, the *required* packages (`masscan`, `nmap`, `libcap2-bin`) install
 > the same as on Debian - core scanning needs nothing extra. The *optional*
@@ -480,8 +506,49 @@ sudo setcap cap_net_raw,cap_net_admin+eip $(which nmap)
 ```
 
 The scanner binary itself never needs to be root or setuid for normal
-scanning. (The one exception - OS/device-type fingerprinting - is covered
-below.)
+scanning.
+
+**Two nmap features are the exception, and capabilities do not cover
+them**: `-O` (OS/device-type fingerprinting) and `-sS`, which is needed
+whenever a scan includes UDP ports. nmap refuses both for anyone but real
+root - that is nmap's own check on the effective uid, not a kernel one, so
+the `setcap` above makes no difference to it. Without a way around it, a
+scanner that (correctly) does not run as root never classifies an
+operating system at all.
+
+`install.sh` handles this automatically. Doing it by hand takes three
+steps:
+
+```bash
+# 1. an argument-validating wrapper, the only thing granted root
+sudo install -o root -g root -m 0755 scanner/porttorch-nmap /usr/local/bin/porttorch-nmap
+
+# 2. grant it to the account the scanner runs as - and only it
+echo 'porttorch ALL=(root) NOPASSWD: /usr/local/bin/porttorch-nmap' | \
+  sudo tee /etc/sudoers.d/porttorch-scanner >/dev/null
+sudo chmod 0440 /etc/sudoers.d/porttorch-scanner
+sudo visudo -cf /etc/sudoers.d/porttorch-scanner   # never skip this
+
+# 3. point the config at it
+#    nmapPath: "/usr/local/bin/porttorch-nmap"
+#    nmapSudo: true
+```
+
+**Grant the wrapper, never nmap itself.** nmap runs NSE scripts, and
+`--script /tmp/anything.nse` is arbitrary code as root, so a sudoers line
+naming nmap would hand out a root shell in one step. The wrapper accepts
+only the arguments this scanner's own pipeline builds: script *names*
+rather than paths, XML output to stdout only, literal IP targets only,
+and nothing else - anything unrecognised is refused with a message saying
+what it rejected. What that does **not** do: it validates arguments, it
+does not sandbox nmap, so every NSE script nmap itself ships can still run
+as root against a target somebody can queue a scan for. If that trade is
+not one you want, leave `nmapSudo` at `false` - everything else keeps
+working, only OS/device classification and UDP scanning are lost.
+
+`porttorch doctor` reports which setup is in effect, and with the wrapper
+in place it runs a real one-port `-O` scan of loopback to confirm
+`sudo -n` actually works unattended.
 
 ### Register the scanner with the webserver
 
@@ -515,6 +582,13 @@ worth knowing about up front:
 - **TLS trust**: if you don't set `serverCaCertPath` to the webserver's
   self-signed cert, you'll need `insecureSkipVerify: true` for the scanner
   to be able to connect at all (not recommended outside quick tests).
+- **`nmapSudo`** (default `false`): run nmap through `sudo -n <nmapPath>`,
+  which is what makes OS/device fingerprinting (`-O`) and UDP scanning
+  (`-sS`) possible at all for a scanner that isn't running as root -
+  `install.sh` sets this to `true` and points `nmapPath` at its wrapper.
+  Set it up as described under [Grant scanning
+  capabilities](#grant-scanning-capabilities), or leave it off and lose
+  only those two features.
 - **`gowitnessPath`/`chromePath`**: only needed if those binaries aren't on
   `$PATH` under the exact names the scanner expects (e.g. `go install`
   puts `gowitness` in `~/go/bin`, which typically isn't on a service's
@@ -702,14 +776,16 @@ For every target, the pipeline runs:
    validity, fingerprint, self-signed detection) plus the negotiated
    handshake (TLS version, cipher suite) and the certificate's key
    algorithm/size.
-7. **OS/device-type fingerprinting** (optional, root-only) - if the
-   scanner process is running as root, nmap's `-O` also attempts to
-   classify the host (e.g. "Windows", "Linux", or device types like
-   "switch"/"router"/"printer"). This is skipped automatically when not
-   running as root - nmap refuses to run `-O` at all without it, so the
-   scanner only adds the flag when it detects `euid == 0`. Everything
-   else above works the same either way; this is the one feature that
-   genuinely needs root, not just the `setcap` capabilities above.
+7. **OS/device-type fingerprinting** (optional, needs root) - nmap's
+   `-O` also attempts to classify the host (e.g. "Windows", "Linux", or
+   device types like "switch"/"router"/"printer"). nmap refuses to run
+   `-O` at all for anyone but real root - not just skip it - and the
+   `setcap` capabilities above are not enough for this one feature, so
+   the scanner only adds the flag when it is either running as root or
+   configured to go through the sudo wrapper (`nmapSudo`, see "Grant
+   scanning capabilities" above). Without one of those, this step is
+   skipped and hosts stay unclassified; everything else works the same
+   either way.
 8. **MAC address** (best-effort, no root needed) - nmap resolves this via
    ARP, which only works for a target on the scanner's own local network
    segment; a target reached over a routed hop simply has none captured
