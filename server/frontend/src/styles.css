@@ -48,6 +48,21 @@
      against this app's actual --panel surface (#121820), not the skill's
      default: all checks pass. */
   --chart-scanned: #008300;
+  /* Categorical slots for the Scan Stats donut charts. 1-5 are literally
+     the line-chart colors above rather than a second palette, so a hue
+     means the same kind of thing on both pages; 6 and 7 extend it (pink
+     and cyan, validated against this app's actual --panel: 4.47:1 and
+     7.26:1, min pairwise deltaE 20.7 across all 8 slots), and slot 8 is
+     --muted on purpose - it is where "Other"/"unknown" always lands, and
+     a residual should not compete with a real category for attention. */
+  --chart-cat-1: var(--chart-series-1);
+  --chart-cat-2: var(--chart-series-2);
+  --chart-cat-3: var(--chart-series-3);
+  --chart-cat-4: var(--chart-series-4);
+  --chart-cat-5: var(--chart-headline);
+  --chart-cat-6: #d1518c;
+  --chart-cat-7: #4bb3c4;
+  --chart-cat-8: var(--muted);
 }
 
 :root[data-theme="light"] {
@@ -73,6 +88,20 @@
   --chart-series-4: #eda100;
   --chart-headline: #4a3aa7;
   --chart-scanned: #008300;
+  /* Light-mode steps of the same 8 slots. Slots 3 and 4 fall under the
+     3:1 contrast target here (2.82:1 / 2.17:1) for exactly the reason
+     the series palette above already documents, and the same relief
+     applies twice over: every donut slice carries its label and its
+     number in the legend beside it (never color-only identity), and the
+     page's Chart/Table toggle is the full escape hatch. */
+  --chart-cat-1: var(--chart-series-1);
+  --chart-cat-2: var(--chart-series-2);
+  --chart-cat-3: var(--chart-series-3);
+  --chart-cat-4: var(--chart-series-4);
+  --chart-cat-5: var(--chart-headline);
+  --chart-cat-6: #c2417a;
+  --chart-cat-7: #2c8fa3;
+  --chart-cat-8: var(--muted);
 }
 
 /* Orange is the default (baked into the two :root blocks above, no
@@ -2312,6 +2341,198 @@ th {
 .trend-tooltip-value {
   color: var(--text);
   font-weight: 600;
+}
+
+/* Scan Stats page (src/pages/ScanStats.tsx) - summary tiles, donut
+   charts and the per-scanner bars. Same no-chart-library approach as the
+   Trends line chart above. */
+.stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.75rem;
+  margin: 1rem 0 2rem;
+}
+
+.stat-tile {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.8rem 0.9rem;
+}
+
+.stat-tile-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.stat-tile-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 0.2rem;
+}
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  /* Cards are only as tall as their own content: a legend can be two
+     rows (Protocols) or eleven (Services), and stretching every card in
+     a row to the tallest one leaves the small ones mostly empty. */
+  align-items: start;
+}
+
+.chart-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+.chart-card h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.chart-card-hint {
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+/* Donut above, legend below at full card width - deliberately stacked
+   rather than side by side: a legend row carries a label, a count and a
+   share, and beside a 200px donut inside a grid cell there is not enough
+   width left for a label like "Network infrastructure" without
+   ellipsizing it away. Stacking also keeps every card on the page
+   laid out the same way, which side-by-side did not (whether it wrapped
+   depended on the longest label in that particular chart). */
+.donut-chart {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.donut-chart svg {
+  flex-shrink: 0;
+}
+
+/* A hairline in the surface color between neighbouring slices, so two
+   adjacent slices stay separable even where their colors are close in
+   lightness - which is the one thing a legend beside the chart cannot
+   fix. */
+.donut-slice {
+  stroke: var(--panel);
+  stroke-width: 2;
+  cursor: default;
+}
+
+.donut-slice.dimmed,
+.donut-legend li.dimmed {
+  opacity: 0.35;
+}
+
+.donut-center-value {
+  fill: var(--text);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.donut-center-label {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+.donut-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  font-size: 0.82rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.donut-legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.donut-legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.donut-legend-label {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.donut-legend-value {
+  margin-left: auto;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.donut-legend-share {
+  color: var(--muted);
+  min-width: 3.2rem;
+  text-align: right;
+}
+
+.bar-chart {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+}
+
+.bar-chart li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.bar-chart-label {
+  flex: 0 0 40%;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-chart-track {
+  flex: 1 1 auto;
+  height: 10px;
+  background: var(--bg);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.bar-chart-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+
+.bar-chart-value {
+  color: var(--text);
+  font-weight: 600;
+  min-width: 3rem;
+  text-align: right;
 }
 
 .table-scroll {

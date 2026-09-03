@@ -20,6 +20,7 @@ import Vulnerabilities from "./pages/Vulnerabilities";
 import Users from "./pages/Users";
 import Digest from "./pages/Digest";
 import Trends from "./pages/Trends";
+import ScanStats from "./pages/ScanStats";
 import Webhooks from "./pages/Webhooks";
 import Audit from "./pages/Audit";
 import Excludes from "./pages/Excludes";
@@ -150,6 +151,10 @@ export default function App() {
       <Route
         path="/trends"
         element={routeElement(false, (m) => <Trends me={m} onLogout={() => setMe(null)} />)}
+      />
+      <Route
+        path="/scan-stats"
+        element={routeElement(false, (m) => <ScanStats me={m} onLogout={() => setMe(null)} />)}
       />
       <Route
         path="/webhooks"

@@ -55,7 +55,13 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
         <NavLink to="/vulnerabilities">Vulnerabilities</NavLink>
         <NavLink to="/web-findings">Web Findings</NavLink>
         <NavLink to="/digest">Digest</NavLink>
-        <NavLink to="/trends">Trends</NavLink>
+        <NavGroup
+          label="Statistics"
+          items={[
+            { to: "/trends", label: "Trends" },
+            { to: "/scan-stats", label: "Scan Stats" },
+          ]}
+        />
         <NavLink to="/health">Health</NavLink>
         {me.role === "admin" && (
           <NavGroup

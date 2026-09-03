@@ -430,6 +430,42 @@ export interface TrendsResult {
   }>;
 }
 
+export interface StatSlice {
+  label: string;
+  value: number;
+}
+
+// Current-state composition of the fleet (GET /api/scan-stats) - the
+// counterpart to TrendsResult's time series. Every field except totals/
+// perScanner is a slice list ready to hand straight to DonutChart.
+export interface ScanStatsResult {
+  hideRetired: boolean;
+  totals: {
+    hosts: number;
+    openPorts: number;
+    distinctPorts: number;
+    distinctServices: number;
+    certificates: number;
+    selfSigned: number;
+    expiringSoon: number;
+  };
+  perScanner: Array<{
+    id: string | null;
+    name: string;
+    hosts: number;
+    openPorts: number;
+    certificates: number;
+  }>;
+  topPorts: StatSlice[];
+  portCategories: StatSlice[];
+  protocols: StatSlice[];
+  services: StatSlice[];
+  certIssuance: StatSlice[];
+  certExpiry: StatSlice[];
+  tlsVersions: StatSlice[];
+  certKeys: StatSlice[];
+}
+
 // Triage state for a security finding - null/absent means untriaged
 // ("open"). See the finding_triage migration for why only deliberate
 // exceptions are stored server-side.
@@ -1072,6 +1108,14 @@ export const api = {
   vulnerabilities: () => request<FleetVulnerability[]>("/api/vulnerabilities"),
   digest: (from: string, to: string) =>
     request<DigestResult>(`/api/digest?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+  scanStats: (scannerAgentIds: string[] = [], hideRetired = false) =>
+    request<ScanStatsResult>(
+      `/api/scan-stats?${new URLSearchParams({
+        ...(scannerAgentIds.length ? { scannerAgentId: scannerAgentIds.join(",") } : {}),
+        ...(hideRetired ? { hideRetired: "1" } : {}),
+      }).toString()}`
+    ),
+
   trends: (days: number, scannerAgentIds: string[] = []) =>
     request<TrendsResult>(
       `/api/trends?days=${days}${scannerAgentIds.length ? `&scannerAgentId=${scannerAgentIds.join(",")}` : ""}`
