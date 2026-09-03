@@ -8,8 +8,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net"
-	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -256,13 +254,34 @@ type nmapPort struct {
 // doesn't know about profiles (the one-shot scan CLI, the menu TUI, the
 // scanner's own local serve REST API, and any scan_requests/scan_schedules
 // row created before this feature existed) keeps working unchanged.
-func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult, nseScripts []string) (*HostResult, error) {
+func RunNmap(ctx context.Context, nmap NmapCmd, ip string, ports []PortResult, nseScripts []string) (*HostResult, error) {
 	if len(ports) == 0 {
 		return &HostResult{IP: ip}, nil
 	}
 
 	portSpec, needsUDP, needsTCP := nmapPortSpec(ports)
+	isIPv6 := false
+	if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() == nil {
+		isIPv6 = true
+	}
+	args := nmapEnrichArgs(portSpec, ip, nseScripts, needsUDP, needsTCP, nmap.elevated(), isIPv6)
 
+	run, err := runNmapAndParse(ctx, nmap, args, ip)
+	if err != nil {
+		return nil, err
+	}
+	if len(run.Hosts) == 0 {
+		return &HostResult{IP: ip}, nil
+	}
+	return hostResultFromNmapHost(ip, run.Hosts[0]), nil
+}
+
+// nmapEnrichArgs is the enrichment stage's command line, split out from
+// RunNmap purely so it can be asserted on without running nmap - which
+// matters most for the -O flag, whose presence depends on privileges the
+// test process doesn't have and whose absence is invisible in the results
+// (a host simply has no OS, exactly as if fingerprinting had failed).
+func nmapEnrichArgs(portSpec, ip string, nseScripts []string, needsUDP, needsTCP, elevated, isIPv6 bool) []string {
 	scripts := nseScripts
 	if len(scripts) == 0 {
 		scripts = DefaultNSEScripts
@@ -282,29 +301,24 @@ func RunNmap(ctx context.Context, binPath, ip string, ports []PortResult, nseScr
 			args = append(args, "-sS")
 		}
 	}
-	if os.Geteuid() == 0 {
+	// OS/device fingerprinting only runs when nmap will actually have the
+	// privileges for it - real root, or the sudo wrapper. Asking for -O
+	// without them doesn't degrade gracefully: nmap refuses to start at
+	// all ("requires root privileges"), taking the whole enrichment run
+	// with it.
+	if elevated {
 		args = append(args, "-O")
 	}
 	// nmap requires -6 to scan an IPv6 literal target at all - without it,
 	// it either errors or misinterprets the argument as a hostname.
-	// Detected here (rather than threaded through as a parameter) so this
-	// stays correct regardless of which caller/path reached it.
-	if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() == nil {
+	if isIPv6 {
 		args = append(args, "-6")
 	}
-	args = append(args,
+	return append(args,
 		"-p", portSpec,
 		"-oX", "-",
 		ip,
 	)
-	run, err := runNmapAndParse(ctx, binPath, args, ip)
-	if err != nil {
-		return nil, err
-	}
-	if len(run.Hosts) == 0 {
-		return &HostResult{IP: ip}, nil
-	}
-	return hostResultFromNmapHost(ip, run.Hosts[0]), nil
 }
 
 // nmapPortSpec turns the ports masscan discovered into nmap's -p argument,
@@ -448,8 +462,8 @@ func hostResultFromNmapHost(ip string, host nmapHost) *HostResult {
 // two - they differ only in which args they build and what they do with
 // the resulting *nmapRun. targetDesc is just for the error message (a
 // single ip for RunNmap, the whole target list for RunNmapDiscovery).
-func runNmapAndParse(ctx context.Context, binPath string, args []string, targetDesc string) (*nmapRun, error) {
-	cmd := exec.CommandContext(ctx, binPath, args...)
+func runNmapAndParse(ctx context.Context, nmap NmapCmd, args []string, targetDesc string) (*nmapRun, error) {
+	cmd := nmap.command(ctx, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -477,7 +491,7 @@ func runNmapAndParse(ctx context.Context, binPath string, args []string, targetD
 // banner/OS info - the same two-stage split the IPv4 path already has).
 // Only ports nmap reports as "open" are kept, matching masscan's own
 // behavior of only ever reporting open ports, never closed/filtered ones.
-func RunNmapDiscovery(ctx context.Context, binPath, portSpec string, ips []string) (map[string][]PortResult, error) {
+func RunNmapDiscovery(ctx context.Context, nmap NmapCmd, portSpec string, ips []string) (map[string][]PortResult, error) {
 	args := []string{
 		"-6", "-Pn", "--privileged", "-sS",
 		"-p", portSpec,
@@ -485,7 +499,7 @@ func RunNmapDiscovery(ctx context.Context, binPath, portSpec string, ips []strin
 	}
 	args = append(args, ips...)
 
-	run, err := runNmapAndParse(ctx, binPath, args, strings.Join(ips, ","))
+	run, err := runNmapAndParse(ctx, nmap, args, strings.Join(ips, ","))
 	if err != nil {
 		return nil, err
 	}

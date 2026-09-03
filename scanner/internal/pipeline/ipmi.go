@@ -18,7 +18,7 @@ import (
 // Returns (nil, nil) - not an error - when nothing answered: same
 // "absence means access was denied, not a failure" reasoning as
 // RunSNMPProbe.
-func RunIPMIProbe(ctx context.Context, binPath, ip string) (*PortResult, error) {
+func RunIPMIProbe(ctx context.Context, nmap NmapCmd, ip string) (*PortResult, error) {
 	args := []string{
 		"-Pn", "-R", "--privileged",
 		"-sU", "-p", "623",
@@ -35,7 +35,7 @@ func RunIPMIProbe(ctx context.Context, binPath, ip string) (*PortResult, error) 
 	}
 	args = append(args, ip)
 
-	run, err := runNmapAndParse(ctx, binPath, args, ip)
+	run, err := runNmapAndParse(ctx, nmap, args, ip)
 	if err != nil {
 		return nil, err
 	}

@@ -15,6 +15,9 @@ import (
 type Config struct {
 	MasscanPath string
 	NmapPath    string
+	// NmapSudo runs nmap through "sudo -n" - see NmapCmd. Off by default,
+	// which is byte-identical to the behaviour that existed before it.
+	NmapSudo    bool
 	MasscanRate int
 	// MasscanRetries is masscan's own --retries - see RunMasscan's doc
 	// comment for why a stateless SYN scanner benefits from resending
@@ -346,7 +349,7 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 		}
 
 		onProgress("nmap", fmt.Sprintf("scanning %s (ports %s) via nmap discovery (IPv6, masscan unsupported)", strings.Join(survivors, ","), effectivePortSpec))
-		discovered, err = RunNmapDiscovery(ctx, cfg.NmapPath, effectivePortSpec, survivors)
+		discovered, err = RunNmapDiscovery(ctx, cfg.nmapCmd(), effectivePortSpec, survivors)
 		if err != nil {
 			return nil, fmt.Errorf("nmap discovery stage: %w", err)
 		}
@@ -449,7 +452,7 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 					onProgress("nmap", fmt.Sprintf("panic recovered probing %s: %v", j.ip, r))
 				}, func() {
 					onProgress("nmap", fmt.Sprintf("probing %s (%d port(s))", j.ip, len(j.ports)))
-					host, err := RunNmap(ctx, cfg.NmapPath, j.ip, j.ports, nseScripts)
+					host, err := RunNmap(ctx, cfg.nmapCmd(), j.ip, j.ports, nseScripts)
 					if err != nil {
 						onProgress("nmap", fmt.Sprintf("failed for %s: %v", j.ip, err))
 						nmapCountMu.Lock()
@@ -888,7 +891,7 @@ func startSNMPWorkers(ctx context.Context, cfg Config, jobs <-chan snmpJob, trac
 					tracker.complete(j.ip, nil)
 				}, func() {
 					onProgress("snmp", fmt.Sprintf("probing %s (udp/161)", j.ip))
-					port, err := RunSNMPProbe(ctx, cfg.NmapPath, j.ip)
+					port, err := RunSNMPProbe(ctx, cfg.nmapCmd(), j.ip)
 					if err != nil {
 						onProgress("snmp", fmt.Sprintf("failed for %s: %v", j.ip, err))
 						tracker.complete(j.ip, nil)
@@ -926,7 +929,7 @@ func startIPMIWorkers(ctx context.Context, cfg Config, jobs <-chan ipmiJob, trac
 					tracker.complete(j.ip, nil)
 				}, func() {
 					onProgress("ipmi", fmt.Sprintf("probing %s (udp/623)", j.ip))
-					port, err := RunIPMIProbe(ctx, cfg.NmapPath, j.ip)
+					port, err := RunIPMIProbe(ctx, cfg.nmapCmd(), j.ip)
 					if err != nil {
 						onProgress("ipmi", fmt.Sprintf("failed for %s: %v", j.ip, err))
 						tracker.complete(j.ip, nil)
@@ -965,7 +968,7 @@ func startDNSRecursionWorkers(ctx context.Context, cfg Config, jobs <-chan dnsRe
 					tracker.complete(j.ip, nil)
 				}, func() {
 					onProgress("dnsrecursion", fmt.Sprintf("probing %s (udp/53)", j.ip))
-					port, err := RunDNSRecursionProbe(ctx, cfg.NmapPath, j.ip)
+					port, err := RunDNSRecursionProbe(ctx, cfg.nmapCmd(), j.ip)
 					if err != nil {
 						onProgress("dnsrecursion", fmt.Sprintf("failed for %s: %v", j.ip, err))
 						tracker.complete(j.ip, nil)
@@ -1003,7 +1006,7 @@ func startUPnPWorkers(ctx context.Context, cfg Config, jobs <-chan upnpJob, trac
 					tracker.complete(j.ip, nil)
 				}, func() {
 					onProgress("upnp", fmt.Sprintf("probing %s (udp/1900)", j.ip))
-					port, err := RunUPnPProbe(ctx, cfg.NmapPath, j.ip)
+					port, err := RunUPnPProbe(ctx, cfg.nmapCmd(), j.ip)
 					if err != nil {
 						onProgress("upnp", fmt.Sprintf("failed for %s: %v", j.ip, err))
 						tracker.complete(j.ip, nil)

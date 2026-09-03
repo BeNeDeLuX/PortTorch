@@ -19,7 +19,16 @@ type Config struct {
 
 	MasscanPath string `yaml:"masscanPath"`
 	NmapPath    string `yaml:"nmapPath"`
-	MasscanRate int    `yaml:"masscanRate"`
+	// NmapSudo runs nmap as "sudo -n <nmapPath>". Set by install.sh
+	// together with the argument-validating wrapper it points NmapPath
+	// at, so the unprivileged service user can still use the two nmap
+	// features that refuse to run for anyone but real root: -O
+	// (OS/device fingerprinting) and -sS (which every UDP scan needs
+	// alongside -sU). Defaults to false - an existing config that never
+	// mentions it keeps invoking nmap exactly as before, just without
+	// OS classification. See pipeline.NmapCmd.
+	NmapSudo    bool `yaml:"nmapSudo"`
+	MasscanRate int  `yaml:"masscanRate"`
 	// MasscanRetries: masscan is a stateless SYN scanner, so a single lost
 	// packet in either direction means a genuinely open port simply isn't
 	// reported that run - retries resend the probe (1s apart) regardless
@@ -211,6 +220,7 @@ func (c *Config) Pipeline() pipeline.Config {
 	return pipeline.Config{
 		MasscanPath:              c.MasscanPath,
 		NmapPath:                 c.NmapPath,
+		NmapSudo:                 c.NmapSudo,
 		MasscanRate:              c.MasscanRate,
 		MasscanRetries:           c.MasscanRetries,
 		Concurrency:              c.Concurrency,

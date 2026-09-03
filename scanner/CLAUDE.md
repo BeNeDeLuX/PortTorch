@@ -128,6 +128,61 @@ Supports two distro families, detected from `/etc/os-release`'s `ID`/`ID_LIKE` (
 
 
 
+### nmap's root-only features go through a validating sudo wrapper
+
+Two nmap features this pipeline wants are refused for anyone but uid 0:
+`-O` (OS/device fingerprinting) and `-sS`, which every UDP scan needs
+alongside `-sU`. That refusal is **nmap's own euid check, not a kernel
+one** - the `cap_net_raw,cap_net_admin` capabilities `install.sh` grants
+cover every other mode but not these two, confirmed by running both as the
+unprivileged service user on a host where `getcap` showed the capabilities
+present (`TCP/IP fingerprinting (for OS scan) requires root privileges`).
+Since the service deliberately does not run as root, a normally installed
+scanner could therefore never classify an operating system at all: every
+`hosts.os_family`/`device_type`/`mac_vendor` stayed null, on a real
+deployment for every one of its hosts, and the Dashboard's OS/Device
+facets were permanently empty with nothing saying why. `config.example.yaml`
+had documented the limitation for a long time; what was missing was a way
+out of it.
+
+`porttorch-nmap` (installed to `/usr/local/bin`, granted to the service
+user in `/etc/sudoers.d/porttorch-scanner`) is that way out, and the
+**allowlist inside it is the actual security boundary**. Putting nmap
+itself in sudoers instead would be a full root shell in one step -
+`--script /tmp/anything.nse` is arbitrary Lua as root - so the wrapper
+accepts only the flags this pipeline actually builds, takes `--script`
+values as *names* (rejecting anything containing a `/`, so no script
+paths and no script directories), allows `-oX` only to stdout, and
+requires targets to be literal IP addresses (which they always are by the
+time nmap runs - hostnames are resolved earlier, see the DNS-hostname
+section above). Anything else exits 64 with a line saying what it
+refused, so a pipeline change that adds a flag fails loudly rather than
+silently losing a feature. What it deliberately does **not** claim: every
+NSE script nmap itself ships can still run as root, and a target someone
+can queue a scan for is still probed with root privileges - this narrows
+an escalation to "the scripts nmap ships, against a target you could
+already scan", it does not sandbox nmap.
+
+`pipeline.NmapCmd` (`{Path, Sudo}`) is what the pipeline passes around
+instead of a bare binary path, and `elevated()` - sudo, or already root -
+is what gates `-O`. Asking for `-O` without the privileges doesn't
+degrade gracefully: nmap refuses to start at all, taking the whole
+enrichment run with it. `nmapSudo` defaults to false, and
+`nmapEnrichArgs` is split out of `RunNmap` precisely so a test can assert
+that the non-sudo command line is byte-identical to the one that existed
+before any of this - a scanner without the wrapper keeps behaving exactly
+as it did. `porttorch doctor` reports the two setups differently: without
+sudo it runs the existing capability check plus a note that OS detection
+will be skipped; with it, it runs a real one-port `-O` scan of loopback
+through sudo, since what matters there is whether `sudo -n` actually
+works unattended, not a proxy for it.
+
+The wrapper is tested as the shell script it is
+(`nmapcmd_test.go`'s `TestNmapWrapperArgumentAllowlist`, running it
+against a stand-in for nmap): every "allow" case is a real argument list
+this package builds, and every "reject" case is a way of turning nmap
+into arbitrary root code execution.
+
 ### The queue loop runs several scans at once (`maxConcurrentScans`)
 
 `StartPolling` used to call `pollOnce` inline, so the loop blocked for the entire duration of a queue-triggered scan: a `/16` or a wide UDP sweep held the queue for hours, and the webserver's scan priority could only decide *who's next*, never *who gets in now*. `config.yaml`'s `maxConcurrentScans` (default **1** - byte-for-byte the old behaviour) caps how many queued requests this process works on at once, and the ticker branch keeps claiming until the slots are full or the queue is empty.

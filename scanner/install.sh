@@ -65,6 +65,8 @@ SERVICE_HOME="/var/lib/porttorch"
 CONFIG_DIR="$SERVICE_HOME/.config/porttorch"
 CONFIG_PATH="$CONFIG_DIR/config.yaml"
 BIN_PATH="/usr/local/bin/porttorch"
+NMAP_WRAPPER_PATH="/usr/local/bin/porttorch-nmap"
+SUDOERS_PATH="/etc/sudoers.d/porttorch-scanner"
 SYSTEMD_UNIT="/etc/systemd/system/porttorch-scanner.service"
 
 log()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
@@ -364,6 +366,76 @@ grant_bin_dir_access() {
   setfacl -m "u:$SERVICE_USER:rwx" "$BIN_DIR"
 }
 
+# nmap refuses -O (OS/device fingerprinting) and -sS (which every UDP scan
+# needs alongside -sU) for anyone but real root, and the setcap
+# capabilities below are NOT enough for those two - confirmed by running
+# them as $SERVICE_USER on a host where the capabilities were verified
+# present. So an install like this one, where the service deliberately
+# does not run as root, could never classify an operating system at all.
+#
+# The fix is one narrowly-scoped sudo grant rather than running the whole
+# scanner as root. It names the wrapper, never nmap itself: "sudo nmap"
+# would be a root shell in one step ("--script /tmp/anything.nse" is
+# arbitrary Lua as root), while the wrapper validates every argument
+# against an allowlist first - see porttorch-nmap's own header for what
+# that does and does not protect against.
+install_nmap_sudo_wrapper() {
+  if [[ ! -f "$SCRIPT_DIR/porttorch-nmap" ]]; then
+    warn "porttorch-nmap not found next to this script - skipping the sudo wrapper (OS/device detection will stay unavailable)"
+    return 0
+  fi
+  if ! command -v sudo >/dev/null 2>&1; then
+    warn "sudo not installed - skipping the nmap sudo wrapper (OS/device detection will stay unavailable)"
+    return 0
+  fi
+
+  install -o root -g root -m 0755 "$SCRIPT_DIR/porttorch-nmap" "$NMAP_WRAPPER_PATH"
+
+  # Written to a temp file and validated before being put in place:
+  # a syntactically broken file in /etc/sudoers.d breaks sudo for
+  # *everyone* on the host, including the operator running this script.
+  local tmp
+  tmp="$(mktemp)"
+  cat > "$tmp" <<SUDOEOF
+# Installed by PortTorch's scanner install.sh. Lets the scanner service
+# user run one argument-validating wrapper as root, so nmap's root-only
+# features (-O, -sS) work without the service itself running as root.
+# Deliberately not nmap itself: nmap can run arbitrary NSE scripts.
+$SERVICE_USER ALL=(root) NOPASSWD: $NMAP_WRAPPER_PATH
+SUDOEOF
+  if visudo -cf "$tmp" >/dev/null 2>&1; then
+    install -o root -g root -m 0440 "$tmp" "$SUDOERS_PATH"
+    rm -f "$tmp"
+    log "nmap sudo wrapper installed ($NMAP_WRAPPER_PATH, granted to $SERVICE_USER only)"
+    return 0
+  fi
+  rm -f "$tmp"
+  warn "generated sudoers entry failed visudo validation - not installed, OS/device detection will stay unavailable"
+  return 0
+}
+
+# Points an existing config.yaml at the wrapper. Kept separate from the
+# interactive first-run config block below, which deliberately never
+# touches a file that already exists: these two keys are the exception
+# because they are ours rather than the operator's, and without them an
+# upgraded install keeps invoking nmap directly and silently never
+# classifies an OS. Both edits are idempotent and additive.
+point_config_at_nmap_wrapper() {
+  [[ -f "$CONFIG_PATH" ]] || return 0
+  [[ -x "$NMAP_WRAPPER_PATH" && -f "$SUDOERS_PATH" ]] || return 0
+
+  if grep -q '^nmapSudo:' "$CONFIG_PATH"; then
+    sed -i "s|^nmapSudo:.*|nmapSudo: true|" "$CONFIG_PATH"
+  else
+    printf '\n# Run nmap through the argument-validating sudo wrapper, so its\n# root-only features (-O OS detection, -sS) work while the service\n# itself stays unprivileged. Installed by install.sh.\nnmapSudo: true\n' >> "$CONFIG_PATH"
+  fi
+  if grep -q '^nmapPath:' "$CONFIG_PATH"; then
+    sed -i "s|^nmapPath:.*|nmapPath: \"$NMAP_WRAPPER_PATH\"|" "$CONFIG_PATH"
+  else
+    printf 'nmapPath: "%s"\n' "$NMAP_WRAPPER_PATH" >> "$CONFIG_PATH"
+  fi
+}
+
 # Covers both the from-source-build and downloaded-release paths above in
 # one place. On a fresh full install $SERVICE_USER doesn't exist yet at
 # this point (created further below), so this whole block is a no-op
@@ -375,6 +447,10 @@ grant_bin_dir_access() {
 if id "$SERVICE_USER" >/dev/null 2>&1; then
   chown "$SERVICE_USER:$SERVICE_USER" "$BIN_PATH"
   grant_bin_dir_access
+  # Same "--rebuild-only alone retroactively fixes an existing
+  # deployment" reasoning as grant_bin_dir_access above.
+  install_nmap_sudo_wrapper
+  point_config_at_nmap_wrapper
 fi
 
 if $REBUILD_ONLY; then
@@ -441,6 +517,9 @@ else
   chown "$SERVICE_USER:$SERVICE_USER" "$BIN_PATH"
   grant_bin_dir_access
 
+  # --- nmap sudo wrapper (OS/device detection) ----------------------------
+  install_nmap_sudo_wrapper
+
   # --- nuclei templates ---------------------------------------------------
   # Deliberately here, after the service user exists, and deliberately run
   # AS that user: nuclei resolves its template tree against the invoking
@@ -502,6 +581,11 @@ else
       sed -i "s|^xfreerdpPath:.*|xfreerdpPath: \"xfreerdp\"|" "$CONFIG_PATH"
     fi
   fi
+
+  # After the config block above, since it only ever runs against a file
+  # that already exists - and deliberately also on the "config already
+  # present, left untouched" path, so an upgrade picks the wrapper up.
+  point_config_at_nmap_wrapper
 
   chown -R "$SERVICE_USER:$SERVICE_USER" "$SERVICE_HOME"
   chmod 600 "$CONFIG_PATH"

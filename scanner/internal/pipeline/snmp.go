@@ -35,7 +35,7 @@ import (
 // same "absence means access was denied, not a failure" reasoning as
 // ftp-anon/smb-enum-shares, so callers never fabricate a port row for a
 // service that was never actually confirmed present.
-func RunSNMPProbe(ctx context.Context, binPath, ip string) (*PortResult, error) {
+func RunSNMPProbe(ctx context.Context, nmap NmapCmd, ip string) (*PortResult, error) {
 	args := []string{
 		"-Pn", "-R", "--privileged",
 		"-sU", "-p", "161",
@@ -54,7 +54,7 @@ func RunSNMPProbe(ctx context.Context, binPath, ip string) (*PortResult, error) 
 	}
 	args = append(args, ip)
 
-	run, err := runNmapAndParse(ctx, binPath, args, ip)
+	run, err := runNmapAndParse(ctx, nmap, args, ip)
 	if err != nil {
 		return nil, err
 	}

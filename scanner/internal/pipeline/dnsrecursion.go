@@ -26,7 +26,7 @@ import (
 // Returns (nil, nil) - not an error - when nothing answered or the
 // server isn't actually recursive: same "absence means access was
 // denied, not a failure" reasoning as RunSNMPProbe/RunIPMIProbe.
-func RunDNSRecursionProbe(ctx context.Context, binPath, ip string) (*PortResult, error) {
+func RunDNSRecursionProbe(ctx context.Context, nmap NmapCmd, ip string) (*PortResult, error) {
 	args := []string{
 		"-Pn", "-R", "--privileged",
 		"-sU", "-p", "53",
@@ -43,7 +43,7 @@ func RunDNSRecursionProbe(ctx context.Context, binPath, ip string) (*PortResult,
 	}
 	args = append(args, ip)
 
-	run, err := runNmapAndParse(ctx, binPath, args, ip)
+	run, err := runNmapAndParse(ctx, nmap, args, ip)
 	if err != nil {
 		return nil, err
 	}

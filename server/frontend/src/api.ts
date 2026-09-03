@@ -440,6 +440,9 @@ export interface StatSlice {
 // perScanner is a slice list ready to hand straight to DonutChart.
 export interface ScanStatsResult {
   hideRetired: boolean;
+  // Null unless compareDays was asked for - see the route's own note on
+  // why the "as of" figures are opt-in.
+  comparison: { days: number; since: string; hosts: number; openPorts: number; certificates: number } | null;
   totals: {
     hosts: number;
     openPorts: number;
@@ -460,10 +463,54 @@ export interface ScanStatsResult {
   portCategories: StatSlice[];
   protocols: StatSlice[];
   services: StatSlice[];
+  osFamilies: StatSlice[];
+  deviceTypes: StatSlice[];
+  tags: StatSlice[];
+  performanceWindowDays: number;
+  scanPerformance: Array<{
+    id: string | null;
+    name: string;
+    scans: number;
+    completed: number;
+    failed: number;
+    cancelled: number;
+    avgDurationMs: number | null;
+    medianDurationMs: number | null;
+    maxDurationMs: number | null;
+  }>;
+  topHostsByPorts: Array<{ hostId: string; ip: string; hostname: string | null; openPorts: number }>;
+  topSubnets: Array<{ subnet: string; hosts: number; openPorts: number }>;
   certIssuance: StatSlice[];
   certExpiry: StatSlice[];
   tlsVersions: StatSlice[];
   certKeys: StatSlice[];
+}
+
+// How bad the fleet's currently open findings are (GET
+// /api/scan-stats/security) - its own request rather than part of
+// ScanStatsResult because the query behind it is much heavier, so the
+// composition charts don't wait on it.
+export interface SecurityStatsResult {
+  totals: {
+    cveFindings: number;
+    affectedHosts: number;
+    kevFindings: number;
+    kevHosts: number;
+    ransomwareCves: number;
+    webFindings: number;
+  };
+  cveSeverities: StatSlice[];
+  epssBuckets: StatSlice[];
+  nucleiSeverities: StatSlice[];
+  topHosts: Array<{
+    hostId: string;
+    ip: string;
+    hostname: string | null;
+    cveCount: number;
+    maxCvss: number | null;
+    kevCount: number;
+    webFindings: number;
+  }>;
 }
 
 // Triage state for a security finding - null/absent means untriaged
@@ -1108,9 +1155,18 @@ export const api = {
   vulnerabilities: () => request<FleetVulnerability[]>("/api/vulnerabilities"),
   digest: (from: string, to: string) =>
     request<DigestResult>(`/api/digest?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
-  scanStats: (scannerAgentIds: string[] = [], hideRetired = false) =>
+  scanStats: (scannerAgentIds: string[] = [], hideRetired = false, compareDays: number | null = null) =>
     request<ScanStatsResult>(
       `/api/scan-stats?${new URLSearchParams({
+        ...(scannerAgentIds.length ? { scannerAgentId: scannerAgentIds.join(",") } : {}),
+        ...(hideRetired ? { hideRetired: "1" } : {}),
+        ...(compareDays ? { compareDays: String(compareDays) } : {}),
+      }).toString()}`
+    ),
+
+  scanStatsSecurity: (scannerAgentIds: string[] = [], hideRetired = false) =>
+    request<SecurityStatsResult>(
+      `/api/scan-stats/security?${new URLSearchParams({
         ...(scannerAgentIds.length ? { scannerAgentId: scannerAgentIds.join(",") } : {}),
         ...(hideRetired ? { hideRetired: "1" } : {}),
       }).toString()}`

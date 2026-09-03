@@ -81,7 +81,7 @@ func runDoctor(configPath string) error {
 	// screenshots and RDP screenshots are best-effort features), so their
 	// absence is a warning, not a failure.
 	checks = append(checks, checkPrivilegedBinary("masscan", cfg.MasscanPath, true)...)
-	checks = append(checks, checkPrivilegedBinary("nmap", cfg.NmapPath, true)...)
+	checks = append(checks, checkNmap(cfg)...)
 	checks = append(checks, checkBinary("gowitness", cfg.GowitnessPath, false))
 	checks = append(checks, checkChrome(cfg.ChromePath))
 	checks = append(checks, checkBinary("xfreerdp (RDP screenshots)", cfg.XfreerdpPath, false))
@@ -168,6 +168,65 @@ func checkPrivilegedBinary(label, configuredPath string, required bool) []check 
 		}}
 	}
 	return []check{binCheck, {label + " privileges", statusOK, "cap_net_raw,cap_net_admin set"}}
+}
+
+// checkNmap reports on however this scanner actually invokes nmap, which
+// is one of two quite different setups.
+//
+// With nmapSudo off, nmap runs directly as this user and needs
+// cap_net_raw/cap_net_admin like masscan does - the same check, plus a
+// note that OS/device fingerprinting will be skipped, since those
+// capabilities are not enough for -O (nmap refuses it for anyone but real
+// root) and a permanently empty "OS" column otherwise looks like a bug in
+// the scan rather than a property of the install.
+//
+// With nmapSudo on, nmapPath is install.sh's argument-validating wrapper:
+// a plain shell script, which has no capabilities of its own and would
+// fail that check for entirely the wrong reason. What matters there is
+// whether "sudo -n" actually works unattended, so this runs a real
+// one-port -O scan of loopback and reports what came back - the same
+// thing a scan would do, rather than a proxy for it.
+func checkNmap(cfg *config.Config) []check {
+	if !cfg.NmapSudo {
+		checks := checkPrivilegedBinary("nmap", cfg.NmapPath, true)
+		if os.Geteuid() != 0 {
+			checks = append(checks, check{
+				"nmap OS detection", statusWarn,
+				"skipped - nmap allows -O only for real root, and capabilities do not cover it; install.sh's sudo wrapper (nmapSudo) enables it",
+			})
+		}
+		return checks
+	}
+
+	binCheck := checkBinary("nmap sudo wrapper", cfg.NmapPath, true)
+	if binCheck.status == statusFail {
+		return []check{binCheck}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sudo", "-n", cfg.NmapPath, "-Pn", "--privileged", "-O", "-p", "1", "-oX", "-", "127.0.0.1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(out))
+		if detail == "" {
+			detail = err.Error()
+		}
+		return []check{binCheck, {"nmap via sudo", statusFail, firstLine(detail)}}
+	}
+	if strings.Contains(string(out), "requires root privileges") {
+		return []check{binCheck, {"nmap via sudo", statusFail, "sudo ran but nmap still reports it is not root"}}
+	}
+	return []check{binCheck, {"nmap via sudo", statusOK, "sudo -n works and OS detection (-O) is available"}}
+}
+
+// firstLine keeps a doctor row to one line - sudo and nmap both like to
+// answer with several.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // checkChrome mirrors gowitness's own resolution order (explicit

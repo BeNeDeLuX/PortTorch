@@ -17,6 +17,15 @@ insecureSkipVerify: false
 
 masscanPath: "masscan"
 nmapPath: "nmap"
+# Run nmap through "sudo -n <nmapPath>". install.sh sets this to true and
+# points nmapPath at its own argument-validating wrapper
+# (/usr/local/bin/porttorch-nmap), which is the only command it grants the
+# service user in /etc/sudoers.d - never nmap itself, since nmap can run
+# arbitrary NSE scripts and a plain "sudo nmap" grant would therefore be a
+# root shell. Leave false to invoke nmap directly, exactly as before this
+# setting existed; the only thing lost is what the OS-detection note below
+# describes.
+nmapSudo: false
 masscanRate: 1000
 # masscan is a stateless SYN scanner - a single lost packet in either
 # direction means a genuinely open port just isn't reported that run.
@@ -119,12 +128,14 @@ nucleiConcurrency: 2
 
 # OS/device-type fingerprinting (nmap -O, e.g. "Windows", "Linux",
 # type="switch"/"router"/"printer" etc.): no separate toggle either, but
-# unlike everything else in this file, it needs the scanner process to
-# actually run as root - nmap refuses to run -O at all otherwise ("requires
-# root privileges"), not just skip it. The cap_net_raw/cap_net_admin
-# capabilities from setcap (see below) are NOT enough for this one nmap
-# feature. If the scanner isn't running as root, OS/device classification
-# is simply omitted; everything else in this file keeps working normally.
+# unlike everything else in this file, nmap will only do it with real root
+# - it refuses to run -O at all otherwise ("requires root privileges"),
+# not just skip it, and the cap_net_raw/cap_net_admin capabilities from
+# setcap (see below) are NOT enough for this one feature. The same is true
+# of -sS, which the pipeline needs whenever a scan includes UDP ports.
+# nmapSudo above is how a scanner that (correctly) does not run as root
+# gets both anyway; with it false and the process unprivileged, OS/device
+# classification is simply omitted and everything else keeps working.
 
 # Only relevant for "scanner serve" (REST API instead of TUI menu).
 listenAddr: ":9090"

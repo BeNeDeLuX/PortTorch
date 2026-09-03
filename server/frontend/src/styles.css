@@ -2366,6 +2366,17 @@ th {
   color: var(--text);
 }
 
+/* Change against an earlier date, beside the current figure rather than
+   under it - the number is the headline, the delta qualifies it. Up is
+   not "good" here (more open ports is usually worse), so both directions
+   use the same neutral muted colour and rely on the sign, not hue. */
+.stat-delta {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin-left: 0.4rem;
+}
+
 .stat-tile-label {
   font-size: 0.8rem;
   color: var(--muted);

@@ -36,7 +36,23 @@ interface StatsBody {
     selfSigned: number;
     expiringSoon: number;
   };
+  comparison: { days: number; since: string; hosts: number; openPorts: number; certificates: number } | null;
   perScanner: Array<{ id: string | null; name: string; hosts: number; openPorts: number; certificates: number }>;
+  osFamilies: Slice[];
+  deviceTypes: Slice[];
+  tags: Slice[];
+  performanceWindowDays: number;
+  scanPerformance: Array<{
+    id: string | null;
+    name: string;
+    scans: number;
+    completed: number;
+    failed: number;
+    cancelled: number;
+    medianDurationMs: number | null;
+  }>;
+  topHostsByPorts: Array<{ hostId: string; ip: string; openPorts: number }>;
+  topSubnets: Array<{ subnet: string; hosts: number; openPorts: number }>;
   topPorts: Slice[];
   portCategories: Slice[];
   protocols: Slice[];
@@ -58,6 +74,14 @@ async function startJob(agent: TestAgent, targetSpec: string): Promise<string> {
     .send({ targetSpec, portSpec: "1-65535" });
   expect(res.status).toBe(201);
   return res.body.id as string;
+}
+
+async function completeJob(agent: TestAgent, jobId: string): Promise<void> {
+  const res = await request(getApp())
+    .patch(`/api/ingest/scan-jobs/${jobId}`)
+    .set("Authorization", `Bearer ${agent.apiKey}`)
+    .send({ status: "completed" });
+  expect(res.status).toBe(204);
 }
 
 describe("scan stats", () => {
@@ -142,6 +166,10 @@ describe("scan stats", () => {
         notAfter: new Date(Date.now() + 200 * 864e5).toISOString(),
       });
     expect(certB.status).toBe(201);
+
+    // Finished, so it counts toward the scan-performance figures - those
+    // deliberately ignore a job still running, which has no duration yet.
+    await completeJob(agentA, jobA);
 
     // A second scanner with one host, so the per-scanner breakdown and
     // the scanner filter have something to actually separate.
@@ -234,6 +262,68 @@ describe("scan stats", () => {
     expect(onlyB.totals.hosts).toBe(1);
     expect(onlyB.perScanner).toHaveLength(1);
     expect(sliceValue(onlyB.portCategories, "Remote access")).toBe(1);
+  });
+
+  it("reports an unclassified fleet as such rather than as an empty chart", async () => {
+    const body = await stats(`?scannerAgentId=${agentA.id}`);
+
+    // Nothing in these fixtures carries OS data (nmap only fingerprints
+    // for real root - see the scanner's nmapSudo), so every host lands in
+    // one honest slice instead of the charts coming back empty.
+    expect(sliceValue(body.osFamilies, "Not classified")).toBe(2);
+    expect(sliceValue(body.deviceTypes, "Not classified")).toBe(2);
+    expect(body.osFamilies.reduce((sum, s) => sum + s.value, 0)).toBe(body.totals.hosts);
+
+    // Tags come from the ingest path's own service auto-tags. Unlike the
+    // charts above they do not partition the fleet - a host carries as
+    // many as apply - so this deliberately doesn't sum to the host count.
+    expect(sliceValue(body.tags, "WebServer")).toBe(2);
+    expect(sliceValue(body.tags, "SSH-Server")).toBe(1);
+  });
+
+  it("ranks hosts and subnets by open ports", async () => {
+    const body = await stats(`?scannerAgentId=${agentA.id}`);
+
+    expect(body.topHostsByPorts[0]).toMatchObject({ ip: "240.30.0.1", openPorts: 3 });
+    expect(body.topHostsByPorts[1]).toMatchObject({ ip: "240.30.0.2", openPorts: 2 });
+
+    // Both fixture hosts sit in the same /24, so they collapse into one
+    // subnet row carrying every open port between them.
+    expect(body.topSubnets).toHaveLength(1);
+    expect(body.topSubnets[0]).toMatchObject({ subnet: "240.30.0.0/24", hosts: 2, openPorts: 5 });
+  });
+
+  it("reports scan performance per scanner over its own window", async () => {
+    const body = await stats(`?scannerAgentId=${agentA.id}`);
+    expect(body.performanceWindowDays).toBe(30);
+
+    const perf = body.scanPerformance.find((p) => p.id === agentA.id);
+    expect(perf).toBeDefined();
+    expect(perf!.scans).toBe(1);
+    expect(perf!.completed).toBe(1);
+    expect(perf!.failed).toBe(0);
+    // A finished job always has a duration, even if it is near zero.
+    expect(perf!.medianDurationMs).not.toBeNull();
+  });
+
+  it("computes the comparison only when asked, and reconstructs the same measurement", async () => {
+    const withoutIt = await stats(`?scannerAgentId=${agentA.id}`);
+    expect(withoutIt.comparison).toBeNull();
+
+    const withIt = await stats(`?scannerAgentId=${agentA.id}&compareDays=7`);
+    expect(withIt.comparison).not.toBeNull();
+    expect(withIt.comparison!.days).toBe(7);
+    // Everything here was created seconds ago, so as of a week back this
+    // fleet did not exist - the whole current count is the change.
+    expect(withIt.comparison!.hosts).toBe(0);
+    expect(withIt.comparison!.openPorts).toBe(0);
+    expect(withIt.comparison!.certificates).toBe(0);
+
+    // An unsupported window is ignored rather than honoured, so a crafted
+    // value can't turn one page load into an unbounded scan of the
+    // append-only observations table.
+    const bogus = await stats(`?scannerAgentId=${agentA.id}&compareDays=4000`);
+    expect(bogus.comparison).toBeNull();
   });
 
   it("includes retired hosts by default and drops them on request", async () => {

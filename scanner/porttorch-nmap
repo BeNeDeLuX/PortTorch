@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+#
+# Argument-validating nmap launcher, installed to /usr/local/bin by
+# install.sh and the only command the scanner's service user is allowed to
+# run as root (see the sudoers drop-in that installer writes).
+#
+# Why this exists: nmap refuses -O (OS/device fingerprinting) and -sS for
+# anyone but real root - the cap_net_raw/cap_net_admin capabilities
+# install.sh grants are not enough for those two, confirmed by running them
+# as the service user against a host with the capabilities set. So without
+# something like this, a scanner installed the normal way can never
+# classify an operating system at all, and any UDP scan (-sU plus -sS)
+# fails outright.
+#
+# Why not simply put nmap itself in sudoers, or run the whole service as
+# root: nmap runs NSE scripts, and "--script /tmp/whatever.nse" is
+# arbitrary code execution as root. A sudoers line naming nmap directly
+# would therefore hand the service user a full root shell in one step. So
+# the allowlist below is the actual security boundary, and it is
+# deliberately an allowlist rather than a list of dangerous flags to
+# reject: nmap has hundreds of options and gains more over time, and only
+# the handful this pipeline actually builds (see internal/pipeline's
+# nmap.go, snmp.go, ipmi.go, dnsrecursion.go, upnp.go) needs to pass.
+#
+# Be honest about what it does NOT protect against: every NSE script nmap
+# itself ships can still be run as root, this validates arguments rather
+# than sandboxing nmap, and a target chosen by whoever can queue a scan is
+# still probed with root privileges. It narrows an escalation to root down
+# to "the scripts nmap ships, against a target you could already scan",
+# which is a much smaller surface than either alternative.
+#
+# Exits 64 (EX_USAGE) on a rejected argument, deliberately distinct from
+# nmap's own exit codes, and prints what it rejected so a pipeline change
+# that adds a flag fails loudly here instead of silently losing a feature.
+
+set -euo pipefail
+
+NMAP_BIN="${PORTTORCH_NMAP_BIN:-/usr/bin/nmap}"
+
+reject() {
+  printf 'porttorch-nmap: refusing to run: %s\n' "$1" >&2
+  exit 64
+}
+
+[[ -x "$NMAP_BIN" ]] || reject "nmap not found at $NMAP_BIN"
+
+# Flags taking no value.
+BOOL_FLAGS=(-Pn -R -6 -sV -sU -sS -sT -O --privileged --version-light)
+# Flags taking exactly one value, validated per flag below.
+VALUE_FLAGS=(-p -oX --host-timeout --max-retries --min-rate --scan-delay)
+
+is_in() {
+  local needle="$1"; shift
+  local item
+  for item in "$@"; do [[ "$item" == "$needle" ]] && return 0; done
+  return 1
+}
+
+# A script *name*, never a path: no slash, so "--script=/tmp/evil.nse" and
+# "--script=." (nmap reads a directory of scripts) are both rejected. The
+# categories nmap accepts here ("safe", "default") and its wildcards
+# ("http-*") are plain names too, so they still pass.
+valid_script_list() {
+  local list="$1" name
+  [[ -n "$list" ]] || return 1
+  local IFS=','
+  for name in $list; do
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._*+-]*$ ]] || return 1
+  done
+  return 0
+}
+
+valid_target() {
+  # The pipeline resolves hostnames to addresses before nmap ever runs
+  # (see RunScan's isHostname/resolveHostnameIPv4), so a literal address
+  # is the only target shape that should ever reach this script.
+  [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] && return 0
+  [[ "$1" =~ ^[0-9A-Fa-f:]+(%[A-Za-z0-9]+)?$ && "$1" == *:* ]] && return 0
+  return 1
+}
+
+args=()
+saw_target=false
+while [[ $# -gt 0 ]]; do
+  arg="$1"; shift
+  case "$arg" in
+    --script=*)
+      valid_script_list "${arg#--script=}" || reject "$arg (script names only - no paths, no directories)"
+      args+=("$arg")
+      ;;
+    -*)
+      if is_in "$arg" "${BOOL_FLAGS[@]}"; then
+        args+=("$arg")
+      elif is_in "$arg" "${VALUE_FLAGS[@]}"; then
+        [[ $# -gt 0 ]] || reject "$arg without a value"
+        value="$1"; shift
+        case "$arg" in
+          # Only nmap's XML output, only to stdout - never a file this
+          # script would then be writing as root.
+          -oX) [[ "$value" == "-" ]] || reject "-oX $value (stdout only)" ;;
+          -p)  [[ "$value" =~ ^[TU]?:?[0-9,:TU-]+$ ]] || reject "-p $value" ;;
+          --host-timeout|--scan-delay) [[ "$value" =~ ^[0-9]+(ms|s|m|h)?$ ]] || reject "$arg $value" ;;
+          --max-retries|--min-rate) [[ "$value" =~ ^[0-9]+$ ]] || reject "$arg $value" ;;
+        esac
+        args+=("$arg" "$value")
+      else
+        reject "$arg (not in this wrapper's allowlist)"
+      fi
+      ;;
+    *)
+      valid_target "$arg" || reject "$arg (targets must be literal IP addresses)"
+      args+=("$arg")
+      saw_target=true
+      ;;
+  esac
+done
+
+$saw_target || reject "no target given"
+
+exec "$NMAP_BIN" "${args[@]}"
