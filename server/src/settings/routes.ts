@@ -34,6 +34,7 @@ import { postToHec } from "../hec/client";
 import { CaCertificateError, caBundle, parseCaCertificate, resetCaBundle } from "../settings/caCertificates";
 import { runHecForward } from "../hec/forwarder";
 import { runRetentionSweep } from "../retention";
+import { backupRouter } from "../backup/routes";
 
 // Everything here is admin-only, like scanner agents/schedules/webhooks/
 // excludes/user management (see CLAUDE.md's "Roles and permissions") -
@@ -41,6 +42,11 @@ import { runRetentionSweep } from "../retention";
 // sensitive as any of those.
 export const settingsRouter = Router();
 settingsRouter.use(requireAuth, requireAdmin);
+
+// Creating and restoring a full backup - its own module, since the
+// archive format is shared with scripts/backup.sh and has nothing to do
+// with the individual settings around it.
+settingsRouter.use("/backup", backupRouter);
 
 settingsRouter.get("/tls-certificate", asyncHandler(async (req, res) => {
   res.json(getCurrentCertInfo(config.certDir));

@@ -52,6 +52,40 @@ export interface StorageUsage {
   screenshots: { files: number; bytes: number };
 }
 
+export interface BackupEstimate {
+  databaseBytes: number;
+  screenshotBytes: number;
+  certBytes: number;
+  /** Uncompressed total - the archive itself comes out smaller. */
+  totalBytes: number;
+  freeBytes: number;
+  requiredBytes: number;
+  enoughSpace: boolean;
+}
+
+// The manifest.txt inside the archive - the same key set
+// scripts/backup.sh writes, so an archive from either source reads the
+// same way here.
+export interface BackupManifest {
+  created_at?: string;
+  host?: string;
+  checkout_version?: string;
+  webserver_image?: string;
+  git_commit?: string;
+  schema_migration?: string;
+  created_by?: string;
+  source?: string;
+}
+
+export interface RestoreResult {
+  ok: boolean;
+  manifest: BackupManifest;
+  screenshotsRestored: number;
+  /** Set when the database restore succeeded but the screenshots did not fully. */
+  warning?: string;
+  restarting: boolean;
+}
+
 export interface AppSettings {
   requireAdminTotp: boolean;
   hostRetentionDays: number;
@@ -1496,6 +1530,28 @@ export const api = {
       body: JSON.stringify({ to }),
     }),
   storageUsage: () => request<StorageUsage>("/api/settings/storage"),
+  backupEstimate: () => request<BackupEstimate>("/api/settings/backup/estimate"),
+  // Deliberately not a fetch() returning a Blob: the browser streams a
+  // plain navigation straight to disk, while a Blob would hold the whole
+  // archive in memory first - fine for a small fleet, not for one with
+  // gigabytes of screenshots.
+  backupDownloadUrl: "/api/settings/backup/download",
+  restoreBackup: async (archive: File) => {
+    const formData = new FormData();
+    formData.append("archive", archive);
+    const res = await fetch("/api/settings/backup/restore", {
+      method: "POST",
+      credentials: "include",
+      body: formData,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const message =
+        typeof body.error === "string" ? body.error : body.error ? JSON.stringify(body.error) : `Request failed: ${res.status}`;
+      throw new Error(message);
+    }
+    return res.json() as Promise<RestoreResult>;
+  },
   runRetentionSweepNow: () =>
     request<{
       purgedHosts: number;

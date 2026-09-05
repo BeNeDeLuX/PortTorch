@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, AppSettings, Me } from "../api";
 import PageHeader from "../components/PageHeader";
 import AlertingCard from "./settings/AlertingCard";
+import BackupCard from "./settings/BackupCard";
 import HecCard from "./settings/HecCard";
 import RequireTotpCard from "./settings/RequireTotpCard";
 import RetentionCard from "./settings/RetentionCard";
@@ -74,6 +75,14 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
           {settings && <RetentionCard settings={settings} onUpdated={setSettings} />}
           {settings && <ScanLogRetentionCard settings={settings} onUpdated={setSettings} />}
           <StorageCard />
+        </div>
+        {/* Wide on its own row: it holds two separate actions plus the
+            warnings a restore has to carry, none of which fit a 400px
+            column. */}
+        <div className="settings-grid">
+          <div className="settings-grid-wide">
+            <BackupCard />
+          </div>
         </div>
       </section>
 

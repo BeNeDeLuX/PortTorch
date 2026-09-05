@@ -9,6 +9,11 @@ RUN npm run build
 
 FROM node:26-alpine AS runtime
 WORKDIR /app
+# pg_dump/psql for the dashboard's backup and restore actions (see
+# src/backup/). Pinned to the same major version as the postgres:16-alpine
+# server in docker-compose.yml - pg_dump refuses to dump a server newer
+# than itself, so these two move together. ~3 MB.
+RUN apk add --no-cache postgresql16-client
 ENV NODE_ENV=production
 # Node's fetch (undici) ignores HTTP_PROXY/HTTPS_PROXY/NO_PROXY unless this
 # is set, which is how the NVD, EPSS, KEV and GitHub syncs would silently

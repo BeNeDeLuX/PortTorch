@@ -187,6 +187,108 @@ Each card takes `settings` and `onUpdated` rather than fetching its own copy - e
 
 **Verified by driving all ten cards in a real browser and asserting every value round-trips through `GET /api/settings/app`** - 30 checks, including that saving scan-log retention leaves host retention alone (the two adjacent cards a crossed wire would most plausibly swap), and a real CA uploaded through the form and deleted again. A screenshot cannot catch a state variable rewired to the wrong field, which is the risk in an extraction this size. Two things that surfaced only because the test drove the real page: a triple click does not select the contents of `<input type="number">` (the new value is appended - "60" + "45" became 6045), and the range checks in the save handlers are effectively unreachable, because `min`/`max` on the input mean the browser refuses the submit first and shows its own message.
 
+### Backup and restore from the dashboard
+
+`scripts/backup.sh` and `restore.sh` have covered this since they were
+added, but only for someone with a shell on the host and rights on the
+Docker socket - which is not the same person as the one who administers
+PortTorch. `src/backup/` is the same capability behind Settings ->
+Backup & Restore.
+
+**The archive format is identical to the script's, and that is the
+requirement, not a nicety**: a gzipped tar of `manifest.txt` + `db.sql.gz`
++ `data.tar.gz`, with the same manifest keys (plus `created_by`/`source`).
+An archive taken here restores with `scripts/restore.sh` - the path that
+still works when the webserver won't start at all - and one taken by the
+nightly systemd timer uploads here. Two formats would guarantee that the
+archive you have is never the one the situation calls for.
+
+**What differs is how it is produced.** The script runs `pg_dump` inside
+the postgres container and reads the volumes through `docker run
+--volumes-from`, because it has a Docker socket. This process has neither,
+but it has a database connection and both `/data` volumes mounted, which
+is all the archive actually needs. `pg_dump`/`psql` therefore had to go
+into the runtime image (`postgresql16-client`, ~3 MB) - pinned to the same
+major as the `postgres:16-alpine` server, since pg_dump refuses to dump a
+server newer than itself, so those two move together.
+
+Three implementation details are load-bearing:
+
+- **Connection parameters are split into flags plus `PGPASSWORD`**, never
+  passed as a connection URI. Command-line arguments are visible in the
+  process list and a URI carries the password in it. The URL's userinfo is
+  percent-decoded, which a real password containing `:`/`/`/`@` needs -
+  covered by testing against exactly such a password rather than assuming.
+- **The two `/data` directories are tarred through a directory of
+  symlinks with `tar -h`.** They are separately configurable and needn't
+  share a parent, and busybox tar (what the runtime image ships) honours
+  only one `-C` - confirmed, a second one makes it look for the earlier
+  members in the later directory. Dereferencing symlinks gives the archive
+  the `./screenshots` + `./certs` layout `restore.sh` expects wherever the
+  originals actually live.
+- **Restore stages screenshots inside the screenshot directory itself.**
+  That directory is its own volume mount, so a sibling staging directory
+  under `/data` is a different filesystem and every move across it would
+  be a full copy (EXDEV). Staged in place, the swap is renames.
+
+**A pre-restore dump is taken before anything is dropped, and replayed if
+the restore fails.** `--clean --if-exists` drops every table before
+recreating it, so a dump that fails halfway leaves a half-dropped schema -
+and unlike the script's user, whoever triggered this has no shell to
+recover from. Proven rather than asserted: an archive crafted to drop
+everything and then fail on a syntax error returned a 400 saying the
+previous contents were put back, and the database was intact afterwards -
+agents, sessions and all. Screenshots are only replaced *after* the
+database restore has succeeded, so that path never touches them.
+
+**Restoring a newer schema is refused (409), where the script only
+warns.** Restoring an older backup is normal and safe - the entrypoint
+runs migrations on the restart that follows. The other direction cannot
+work, and the script's own reasoning for warning instead ("the operator is
+better placed to judge it") depends on that operator having a shell.
+
+**The process exits deliberately once a restore lands.** Its pool holds
+cached plans for tables that were just dropped and recreated, and its
+caches (app settings, CA bundle, SMTP transporter) describe a database
+that no longer exists. Exiting is also what re-runs migrations against a
+restored older schema. Compose restarts it (`restart: unless-stopped`);
+the UI polls `/healthz` - which needs no session, and that matters,
+because the session table was replaced too.
+
+**The TLS certificate is deliberately not restored**, though the archive
+carries it. A certificate identifies *this* deployment; restoring one from
+another instance installs a certificate issued for a different hostname
+and breaks the connection an admin would need to put it right. The script
+still restores it, which is right for the case that script exists for
+(rebuilding one host from its own backup) and wrong here.
+
+Two things only a real run surfaced, both since fixed:
+
+- **Sessions come back with the database.** The first draft of the UI said
+  everyone is signed out; in fact the session table is replaced by the
+  backup's, so a session that existed when the backup was taken keeps
+  working and anything newer is gone. The copy says that now.
+- **`tar` records a directory entry even for an empty directory**, so
+  matching `./screenshots/` as "this archive has screenshots" made a
+  backup taken with none look like a failed extraction: the old files were
+  kept rather than cleared, with a warning saying so. The check now looks
+  for entries *under* that prefix.
+
+**Path traversal is handled by extracting only explicitly named members**,
+not by the member-name check next to it. busybox tar strips a leading `/`
+or `../` itself and reports the *sanitised* name, so a hostile path never
+reaches that check - verified with an archive carrying
+`./screenshots/../../escaped.txt` and `/abs-escaped.txt`, neither of which
+landed outside the target. The check stays as defence in depth for a tar
+that does not sanitise. That same test is why the screenshot phase judges
+success by what landed on disk rather than by tar's exit code: busybox
+exits non-zero while having extracted the requested member perfectly well
+when an archive also holds entries it had to sanitise.
+
+Disk is checked before staging an archive and before accepting an upload
+(against `Content-Length`), returning `507` rather than filling the disk
+and failing partway.
+
 ### Outbound HTTP proxy
 
 Every outbound call this webserver makes was direct-only, which in a network that requires a proxy meant the NVD/EPSS/KEV syncs and the scanner release check simply timed out - with nothing in the logs pointing at the proxy, since a blocked connection and an unreachable host look identical from here.

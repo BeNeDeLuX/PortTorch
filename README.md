@@ -1335,8 +1335,41 @@ request queue they poll against.
 Everything PortTorch can't rebuild from this checkout lives in two places:
 the Postgres database (hosts, port observations, findings, triage
 decisions, users, audit log) and the webserver's `/data` volumes
-(screenshots and the TLS cert/key). `scripts/backup.sh` captures both into
-a single archive:
+(screenshots and the TLS cert/key). There are two ways to capture both
+into a single archive - from the dashboard, or from the host - and they
+write the **same archive format**, so an archive from either can be
+restored by either.
+
+### From the dashboard
+
+Admin -> Settings -> Backup & Restore creates a backup and downloads it
+in the browser, and takes an uploaded one back. This needs no shell access
+to the host, which is the point: it is the path for the person who
+administers PortTorch rather than the machine it runs on.
+
+Restoring here asks you to type `restore` to confirm, and then differs
+from the script in three deliberate ways:
+
+- **The TLS certificate in the archive is not restored.** It identifies
+  this deployment, and installing one issued for a different host would
+  break the very connection you would need to put that right. Use
+  `scripts/restore.sh` when you do want the certificate back too.
+- **A backup taken on a newer schema than the running webserver is
+  refused**, not merely flagged. The script warns and leaves the call to
+  an operator who has a shell to recover with; from the dashboard there
+  would be nothing left to recover with.
+- **The webserver restarts itself** when the restore finishes, so it comes
+  back with migrations re-run and no caches describing the old database.
+  Compose brings it straight back (`restart: unless-stopped`).
+
+If the database restore fails partway, the previous contents are put back
+automatically from a dump taken immediately beforehand, and the
+screenshots are never touched - they are only replaced once the database
+restore has already succeeded.
+
+### From the host
+
+`scripts/backup.sh` captures both into a single archive:
 
 ```bash
 sudo ./scripts/backup.sh                 # -> backups/porttorch-<utc-timestamp>.tar.gz
