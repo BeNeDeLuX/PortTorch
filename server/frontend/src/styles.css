@@ -3187,3 +3187,155 @@ th {
   white-space: pre;
   overflow-x: auto;
 }
+
+/* Settings page (pages/Settings.tsx plus pages/settings/*) - a grouped
+   card grid. Rebuilt from a single flat column, which at a 480px form
+   width inside a 1600px page left two thirds of the screen empty and made
+   the page nearly three times taller than it needed to be. */
+.settings-group-title {
+  margin: 1.75rem 0 0.75rem;
+  font-size: 1rem;
+}
+
+.settings-grid {
+  display: grid;
+  /* auto-fill, not auto-fit: a group holding a single card would
+     otherwise have that card stretched across the whole page, which
+     looks like a different component from its neighbours. auto-fill
+     keeps the empty tracks, so every card is one column wide wherever
+     it sits. */
+  /* 400px, not 340: at this page's width that lands on three columns,
+     which is exactly what the two three-card groups need to fill a row -
+     and it leaves a two-column span (Alerting, SMTP, SIEM) at a sensible
+     two thirds rather than half. */
+  /* min(400px, 100%), not a bare 400px: on a 390px phone a fixed floor
+     forces a column wider than the viewport and the whole page scrolls
+     sideways - measured, not assumed. */
+  grid-template-columns: repeat(auto-fill, minmax(min(400px, 100%), 1fr));
+  gap: 1rem;
+  /* Cards size to their own content instead of stretching to the tallest
+     in the row - same reason .chart-grid does it. */
+  align-items: start;
+  margin-bottom: 0.5rem;
+}
+
+/* The three sections whose form genuinely doesn't fit one column. */
+.settings-grid-wide {
+  grid-column: span 2;
+}
+
+.settings-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+.settings-card-title {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+}
+
+.settings-card-desc {
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.55;
+  margin-bottom: 0.9rem;
+}
+
+/* The form is already inside a bounded card, so the 480px cap that keeps
+   it readable on a full-width page would only shrink it further here. */
+.settings-card .settings-form {
+  max-width: none;
+  margin-bottom: 0.75rem;
+}
+
+.settings-card .settings-form:last-child,
+.settings-card .inline-actions:last-child {
+  margin-bottom: 0;
+}
+
+/* A two-column card lays its fields out in their own grid rather than
+   stretching a hostname input across 900px. */
+.settings-grid-wide .settings-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.75rem 1rem;
+  align-items: start;
+}
+
+/* Checkboxes carry a full sentence, and the actions row belongs under
+   everything - both take the whole width rather than a field's column. */
+.settings-grid-wide .settings-form > label.hide-empty-toggle,
+.settings-grid-wide .settings-form > .settings-form-actions,
+.settings-grid-wide .settings-form > label.settings-field-wide {
+  grid-column: 1 / -1;
+}
+
+.settings-num-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Key/value facts inside a card (the TLS certificate's own details),
+   replacing a full <table> that only ever had two columns. */
+.settings-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.3rem 0.75rem;
+  margin: 0 0 0.9rem;
+  font-size: 0.85rem;
+}
+
+.settings-facts dt {
+  color: var(--muted);
+}
+
+.settings-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-list {
+  list-style: none;
+  margin: 0 0 0.9rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.settings-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.settings-list-main {
+  font-weight: 600;
+}
+
+.settings-list .empty {
+  margin-right: auto;
+}
+
+.settings-state {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0 0 0.75rem;
+}
+
+.settings-table {
+  margin-top: 0.75rem;
+  font-size: 0.82rem;
+}
+
+@media (max-width: 900px) {
+  /* One column, so a two-column span has nothing to span. */
+  .settings-grid-wide {
+    grid-column: auto;
+  }
+}

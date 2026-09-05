@@ -157,6 +157,26 @@ The two cursors have different shapes because the tables do. `audit_log` has a m
 
 **The honest limitation, stated in the UI too:** retention deletes old audit rows and scan logs on its own schedule. If the collector stays unreachable longer than that window, those events are gone before they were ever forwarded, and the cursor simply resumes at what still exists rather than blocking forever on rows that no longer do. Forwarding is not a substitute for the retention settings.
 
+### The Settings page is a grouped card grid, one component per setting
+
+`Settings.tsx` had reached 1149 lines, 11 sections, 10 forms and 67 `useState` calls in one component, all in a flat column with no grouping - so host retention, scan-log retention and storage, which all answer "how long do we keep things and what does that cost", had two unrelated scan thresholds wedged between them. It is now a ~100-line layout shell over `pages/settings/*`, one component per setting, each owning its own state next to the markup that uses it.
+
+**The page's height was a width problem.** `.settings-form` is capped at 480px so a text input stays readable; in a single column inside a 1600px page that left two thirds of the screen empty and made the page 4254px tall. The cards sit in a grid instead - measured at 3198px, with nothing hidden. That is why the accordion and sidebar variants were rejected: both shorten the page by hiding things, on a page people reach by searching for a setting they already have in mind, where find-in-page not searching collapsed content is a real loss.
+
+Three grid decisions, each from a measurement rather than taste:
+
+- **`auto-fill`, not `auto-fit`.** With `auto-fit`, a group holding a single card has that card stretched across the whole page - Scan warnings became a 1400px card containing two small number inputs, reading as a different component from its neighbours. `auto-fill` keeps the empty tracks.
+- **A 400px column floor**, which lands on three columns at this page's width: exactly what the two three-card groups need to fill a row, and it leaves a `span 2` at a sensible two thirds rather than half.
+- **`minmax(min(400px, 100%), 1fr)`.** A bare 400px floor forces a column wider than a 390px phone and scrolls the whole page sideways - caught by the same overflow measurement the responsive pass established, not by looking at it.
+
+`.settings-grid-wide` spans the three sections whose form genuinely doesn't fit one column (Alerting has six fields, SMTP seven, SIEM seven); inside one, the form becomes its own grid so a hostname input isn't stretched across 900px, with checkboxes and the actions row spanning all of it.
+
+**Scan Staleness and Scan Queue Warning merged into one card with one Save.** They were two sections with two forms and two Save buttons both writing the same `PATCH /api/settings/app` - and in a card grid a single form cannot span two cards anyway, so keeping them apart would have kept the duplicate round trip for nothing. Host and scan-log retention stayed separate cards: their semantics differ (0 disables the sweep vs. 0 keeps logs forever) and only one carries the destructive "Clean up now".
+
+Each card takes `settings` and `onUpdated` rather than fetching its own copy - every write returns the whole updated object, so the shell holds it and hands it down. Each card also re-syncs its inputs from that object in an effect, or a neighbour's save would leave a stale copy behind the dirty marker and it would read "unsaved" against a value that matches.
+
+**Verified by driving all ten cards in a real browser and asserting every value round-trips through `GET /api/settings/app`** - 30 checks, including that saving scan-log retention leaves host retention alone (the two adjacent cards a crossed wire would most plausibly swap), and a real CA uploaded through the form and deleted again. A screenshot cannot catch a state variable rewired to the wrong field, which is the risk in an extraction this size. Two things that surfaced only because the test drove the real page: a triple click does not select the contents of `<input type="number">` (the new value is appended - "60" + "45" became 6045), and the range checks in the save handlers are effectively unreachable, because `min`/`max` on the input mean the browser refuses the submit first and shows its own message.
+
 ### Outbound HTTP proxy
 
 Every outbound call this webserver makes was direct-only, which in a network that requires a proxy meant the NVD/EPSS/KEV syncs and the scanner release check simply timed out - with nothing in the logs pointing at the proxy, since a blocked connection and an unreachable host look identical from here.
