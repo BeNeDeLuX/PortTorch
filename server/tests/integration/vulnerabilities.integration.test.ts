@@ -78,7 +78,7 @@ describe("GET /api/vulnerabilities", () => {
     const res = await adminClient.get("/api/vulnerabilities");
     expect(res.status).toBe(200);
 
-    const rows = res.body as Array<{ host_id: string; cve_id: string; epss_score: number | null; epss_percentile: number | null }>;
+    const rows = res.body.items as Array<{ host_id: string; cve_id: string; epss_score: number | null; epss_percentile: number | null }>;
     const ours = rows.filter((r) => r.host_id === hostId);
     expect(ours).toHaveLength(3);
 
@@ -95,7 +95,7 @@ describe("GET /api/vulnerabilities", () => {
     const res = await adminClient.get("/api/vulnerabilities");
     expect(res.status).toBe(200);
 
-    const rows = res.body as Array<{ host_id: string; cve_id: string; cvss_score: number | null; kev_date_added: string | null; kev_known_ransomware_campaign_use: string | null }>;
+    const rows = res.body.items as Array<{ host_id: string; cve_id: string; cvss_score: number | null; kev_date_added: string | null; kev_known_ransomware_campaign_use: string | null }>;
     const ours = rows.filter((r) => r.host_id === hostId);
 
     const kevRow = ours.find((r) => r.cve_id === CVE_IN_KEV);

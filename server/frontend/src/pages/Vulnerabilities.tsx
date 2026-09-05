@@ -3,6 +3,8 @@ import { Link } from "react-router";
 import { api, FleetVulnerability, Me } from "../api";
 import { cveSeverityClass } from "../lib/cveSeverity";
 import PageHeader from "../components/PageHeader";
+import TablePager, { pageSlice } from "../components/TablePager";
+import TruncationNotice from "../components/TruncationNotice";
 import TriageControl from "../components/TriageControl";
 import TriageFilterSelect from "../components/TriageFilterSelect";
 import BulkTriageBar from "../components/BulkTriageBar";
@@ -50,6 +52,8 @@ function compareVulns(a: FleetVulnerability, b: FleetVulnerability, key: SortKey
 
 export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [vulns, setVulns] = useState<FleetVulnerability[]>([]);
+  const [truncation, setTruncation] = useState<{ total: number; limit: number } | null>(null);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>("cvss_score");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -70,7 +74,9 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
   async function load() {
     setLoading(true);
     try {
-      setVulns(await api.vulnerabilities());
+      const result = await api.vulnerabilities();
+      setVulns(result.items);
+      setTruncation(result.truncated ? { total: result.total, limit: result.limit } : null);
     } finally {
       setLoading(false);
     }
@@ -136,6 +142,17 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
     );
   });
   const sortedVulns = [...filteredVulns].sort((a, b) => compareVulns(a, b, sortKey, sortDirection));
+  // Paged only for rendering. Everything else - the counts, the export,
+  // and "select all" - deliberately stays on the whole filtered list: a
+  // select-all that meant "this page" would be a trap on a page whose
+  // whole purpose is acting on many findings at once.
+  const pageRows = pageSlice(sortedVulns, page);
+  // A filter that narrows the list can leave the current page past the
+  // end of it - showing an empty table that looks like "no results" when
+  // the results are simply on page 1.
+  useEffect(() => {
+    setPage(1);
+  }, [sortedVulns.length]);
   // Computed against the whole fleet-wide set, not the filtered view -
   // it's a "what exists" summary, so it must not change as the filter
   // narrows (which would make it circular).
@@ -146,6 +163,8 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
       <PageHeader me={me} onLogout={onLogout} />
 
       <h2>Vulnerabilities</h2>
+
+      {truncation && <TruncationNotice total={truncation.total} limit={truncation.limit} noun="CVE findings" />}
       <p className="host-meta">
         Known CVEs matched against detected service versions across the whole fleet, most severe first. Synced daily
         from the NVD database - see a host's detail page for per-port context. EPSS (Exploit Prediction Scoring
@@ -254,7 +273,7 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
               </tr>
             </thead>
             <tbody>
-              {sortedVulns.map((v) => (
+              {pageRows.map((v) => (
                 <tr key={`${v.host_id}-${v.port}-${v.cve_id}`}>
                   {canEdit && (
                     <td className="select-col">
@@ -312,6 +331,8 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
           </table>
         </div>
       )}
+
+      <TablePager page={page} total={sortedVulns.length} onPage={setPage} />
     </div>
   );
 }

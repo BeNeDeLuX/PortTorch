@@ -62,11 +62,55 @@ async function tick(injectedNow?: Date): Promise<void> {
       continue;
     }
 
+    // A run whose predecessor is still sitting in the queue is *skipped*,
+    // not deferred - the opposite of the scan-window case above, and
+    // deliberately so. Deferring would leave next_run_at in the past and
+    // fire again on the very next tick; queueing anyway is what turns an
+    // hourly schedule into 24 requests a day against a scanner that has
+    // stopped polling, which then all run back-to-back when it returns.
+    // Neither is what "run this hourly" means: the point of an hourly
+    // sweep is a fresh picture every hour, and a two-hour-old request
+    // waiting to run produces a picture nobody asked for.
+    const alreadyQueued = await db
+      .selectFrom("scan_requests")
+      .select("id")
+      .where("schedule_id", "=", schedule.id)
+      .where("status", "=", "pending")
+      .executeTakeFirst();
+
+    if (alreadyQueued) {
+      await db.transaction().execute(async (trx) => {
+        // next_run_at still moves forward, so the schedule stays on its
+        // own cadence rather than retrying every 60 seconds; last_run_at
+        // deliberately does *not*, since nothing ran.
+        await trx
+          .updateTable("scan_schedules")
+          .set({
+            next_run_at: nextRunFor(schedule).toISOString(),
+            skipped_runs: (schedule.skipped_runs ?? 0) + 1,
+            last_skipped_at: new Date().toISOString(),
+          })
+          .where("id", "=", schedule.id)
+          .execute();
+      });
+
+      logger.warn({
+        event: "schedule.skipped_still_queued",
+        schedule_id: schedule.id,
+        scanner_agent_id: schedule.scanner_agent_id,
+        target_spec: schedule.target_spec,
+        pending_request_id: alreadyQueued.id,
+        skipped_runs: (schedule.skipped_runs ?? 0) + 1,
+      });
+      continue;
+    }
+
     await db.transaction().execute(async (trx) => {
       await trx
         .insertInto("scan_requests")
         .values({
           scanner_agent_id: schedule.scanner_agent_id,
+          schedule_id: schedule.id,
           host_id: null,
           target_spec: schedule.target_spec,
           port_spec: schedule.port_spec,
@@ -107,13 +151,9 @@ async function tick(injectedNow?: Date): Promise<void> {
           .where("id", "=", schedule.id)
           .execute();
       } else {
-        const nextRunAt =
-          schedule.schedule_type === "cron"
-            ? nextCronRun(schedule.cron_expression!)
-            : new Date(Date.now() + schedule.interval_minutes! * 60_000);
         await trx
           .updateTable("scan_schedules")
-          .set({ last_run_at: new Date().toISOString(), next_run_at: nextRunAt.toISOString() })
+          .set({ last_run_at: new Date().toISOString(), next_run_at: nextRunFor(schedule).toISOString() })
           .where("id", "=", schedule.id)
           .execute();
       }
@@ -127,4 +167,27 @@ async function tick(injectedNow?: Date): Promise<void> {
       port_spec: schedule.port_spec,
     });
   }
+}
+
+// When this schedule should next come due. Shared by the fired and the
+// skipped path so a skipped run cannot end up on a different cadence
+// from a normal one.
+//
+// A 'once' schedule has no next occurrence at all - it disables itself
+// after firing. It can still be skipped (re-armed via "Run again" while
+// its previous request is somehow still queued), and pushing it one
+// interval forward is the least surprising thing to do with a schedule
+// type that has no interval: it stays due, and the next tick tries again.
+function nextRunFor(schedule: {
+  schedule_type: string;
+  cron_expression: string | null;
+  interval_minutes: number | null;
+}): Date {
+  if (schedule.schedule_type === "cron") {
+    return nextCronRun(schedule.cron_expression!);
+  }
+  if (schedule.schedule_type === "interval") {
+    return new Date(Date.now() + schedule.interval_minutes! * 60_000);
+  }
+  return new Date(Date.now() + TICK_INTERVAL_MS);
 }

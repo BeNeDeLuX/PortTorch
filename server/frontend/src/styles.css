@@ -3339,3 +3339,13 @@ th {
     grid-column: auto;
   }
 }
+
+/* Paging under a fleet-wide finding table. Only rendered once a list
+   exceeds one page, so on most fleets this never appears at all. */
+.table-pager {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 1rem 0 2rem;
+}

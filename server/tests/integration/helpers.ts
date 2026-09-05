@@ -31,7 +31,7 @@ export interface TestUser {
   password: string;
 }
 
-export async function createTestUser(role: "admin" | "operator" | "user", password = "Test-Password1"): Promise<TestUser> {
+export async function createTestUser(role: "admin" | "operator" | "user", password = "correct-horse-battery-9"): Promise<TestUser> {
   const username = `it-${role}-${uniqueSuffix()}`;
   const passwordHash = await hashPassword(password);
   const user = await db

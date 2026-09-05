@@ -27,17 +27,28 @@ export function isLockedOut(key: string): boolean {
   return true;
 }
 
-export function recordFailure(key: string): void {
+/**
+ * Records a failed attempt for `key`, returning true only on the attempt
+ * that *causes* a lockout - never on the ones refused afterwards.
+ *
+ * That distinction is the whole reason it returns anything: a caller that
+ * alerted on every refused attempt would send one message per guess for
+ * the next fifteen minutes, which is how an alert worth reading becomes
+ * one people filter away.
+ */
+export function recordFailure(key: string): boolean {
   const now = Date.now();
   const state = attempts.get(key);
   if (!state || now - state.windowStartedAt > WINDOW_MS) {
     attempts.set(key, { count: 1, windowStartedAt: now });
-    return;
+    return false;
   }
   state.count += 1;
-  if (state.count >= MAX_ATTEMPTS) {
+  if (state.count >= MAX_ATTEMPTS && !state.lockedUntil) {
     state.lockedUntil = now + LOCKOUT_MS;
+    return true;
   }
+  return false;
 }
 
 export function recordSuccess(key: string): void {

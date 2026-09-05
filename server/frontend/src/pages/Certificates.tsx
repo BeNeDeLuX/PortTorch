@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { api, ExpiringCertificate, Me } from "../api";
 import { certExpiryStatus, certExpiryLabel } from "../lib/certExpiry";
 import PageHeader from "../components/PageHeader";
+import TruncationNotice from "../components/TruncationNotice";
 import TableExport from "../components/TableExport";
 import { formatDateOnly } from "../lib/formatDate";
 
@@ -36,6 +37,7 @@ function compareCerts(a: ExpiringCertificate, b: ExpiringCertificate, key: SortK
 
 export default function Certificates({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [certs, setCerts] = useState<ExpiringCertificate[]>([]);
+  const [truncation, setTruncation] = useState<{ total: number; limit: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>("not_after");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -49,7 +51,9 @@ export default function Certificates({ me, onLogout }: { me: Me; onLogout: () =>
   async function load() {
     setLoading(true);
     try {
-      setCerts(await api.expiringCertificates());
+      const result = await api.expiringCertificates();
+      setCerts(result.items);
+      setTruncation(result.truncated ? { total: result.total, limit: result.limit } : null);
     } finally {
       setLoading(false);
     }
@@ -88,6 +92,8 @@ export default function Certificates({ me, onLogout }: { me: Me; onLogout: () =>
       <PageHeader me={me} onLogout={onLogout} />
 
       <h2>Certificates</h2>
+
+      {truncation && <TruncationNotice total={truncation.total} limit={truncation.limit} noun="certificates" />}
       <p className="host-meta">All TLS certificates across every host, soonest-expiring first.</p>
 
       {certs.length > 0 && (

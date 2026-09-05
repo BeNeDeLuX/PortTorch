@@ -20,6 +20,8 @@ const EVENTS: WebhookEvent[] = [
   "vulnerability.high_epss",
   "vulnerability.kev",
   "digest.daily",
+  "auth.account_locked",
+  "scan.completed",
   "scan.stale",
   "scanner.update_failed",
   "scan_queue.backlog",

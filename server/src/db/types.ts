@@ -378,6 +378,12 @@ export interface ScanSchedulesTable {
   window_end_minute: number | null;
   window_days: number[] | null;
   window_timezone: string | null;
+  // How many times a due run was skipped because the previous one was
+  // still queued, and when that last happened. Counted rather than only
+  // logged so "this schedule has produced nothing for two days" is
+  // visible on the schedules page instead of only in a log stream.
+  skipped_runs: ColumnType<number, number | undefined, number>;
+  last_skipped_at: ColumnType<Date | null, string | undefined, string | null>;
 }
 
 export interface ScanRequestsTable {
@@ -410,6 +416,13 @@ export interface ScanRequestsTable {
   // src/scanPriority.ts. Snapshotted from the schedule for scheduled runs,
   // picked in the UI for ad-hoc scans and rescans.
   priority: ColumnType<"high" | "normal" | "low", "high" | "normal" | "low" | undefined, "high" | "normal" | "low">;
+  // Which schedule produced this request, null for a rescan/ad-hoc one.
+  // Also null once that schedule is deleted (ON DELETE SET NULL) - a
+  // request that already ran is history and outlives its cause. What it
+  // exists for: the scheduler's "does this schedule already have a run
+  // waiting?" check, which is what stops an hourly schedule stacking up
+  // 24 requests a day against a scanner that has stopped polling.
+  schedule_id: string | null;
 }
 
 export interface ScanProfilesTable {

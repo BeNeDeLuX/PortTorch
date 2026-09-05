@@ -1,0 +1,15 @@
+[Unit]
+Description=Run the PortTorch backup daily
+
+[Timer]
+# 03:30 rather than exactly midnight: a timer at a round hour competes
+# with every other daily job on the host, and the randomized delay below
+# spreads it further.
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=15m
+# The point of this one line: a machine that was off at 03:30 takes its
+# backup when it comes back, instead of silently skipping a day.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

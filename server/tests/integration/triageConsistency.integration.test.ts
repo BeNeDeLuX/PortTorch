@@ -132,7 +132,7 @@ describe("triage is respected consistently across surfaces", () => {
 
   it("hides triaged CVEs from the fleet-wide Vulnerabilities list by default", async () => {
     const res = await client.get("/api/vulnerabilities");
-    const forHost = res.body.filter((v: { host_id: string }) => v.host_id === hostId);
+    const forHost = res.body.items.filter((v: { host_id: string }) => v.host_id === hostId);
     const states = new Map(forHost.map((v: { cve_id: string; triage_state: string | null }) => [v.cve_id, v.triage_state]));
 
     // The route returns all of them with their state attached - the page
@@ -224,7 +224,7 @@ describe("an expired triage decision stops being honored everywhere", () => {
 
   it("flags the finding as expired on the fleet-wide list so it can be re-reviewed", async () => {
     const res = await client.get("/api/vulnerabilities");
-    const row = res.body.find((v: { host_id: string; cve_id: string }) => v.host_id === hostId && v.cve_id === CVE2);
+    const row = res.body.items.find((v: { host_id: string; cve_id: string }) => v.host_id === hostId && v.cve_id === CVE2);
     expect(row.triage_state).toBe("fixed");
     expect(row.triage_expired).toBe(true);
   });

@@ -5,6 +5,7 @@ import { certExpiryStatus, certExpiryLabel } from "../lib/certExpiry";
 import { cveSeverityClass } from "../lib/cveSeverity";
 import { isAutoTag } from "../lib/knownServiceTags";
 import PageHeader from "../components/PageHeader";
+import ScanCompare from "../components/ScanCompare";
 import ScreenshotCompare from "../components/ScreenshotCompare";
 import { formatDateTime, formatDateOnly } from "../lib/formatDate";
 import Lightbox, { LightboxItem } from "../components/Lightbox";
@@ -949,6 +950,9 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
       )}
 
       <section>
+        <h2>Compare two scans</h2>
+        <ScanCompare history={data.history} preferences={me.preferences} />
+
         <h2>History</h2>
         <div className="timeline">{recentHistory.map(renderHistoryEntry)}</div>
         {olderHistoryDateGroups.map((group) => (

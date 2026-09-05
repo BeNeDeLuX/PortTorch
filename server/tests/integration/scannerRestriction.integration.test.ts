@@ -260,12 +260,12 @@ describe("per-user scanner-agent visibility restriction", () => {
     expect(digestIps).not.toContain(IP_B);
 
     const vulns = await restrictedClient.get("/api/vulnerabilities");
-    const vulnHostIds = (vulns.body as Array<{ host_id: string }>).map((v) => v.host_id);
+    const vulnHostIds = (vulns.body.items as Array<{ host_id: string }>).map((v) => v.host_id);
     expect(vulnHostIds).toContain(hostAId);
     expect(vulnHostIds).not.toContain(hostBId);
 
     const certs = await restrictedClient.get("/api/certificates");
-    const certHostIds = (certs.body as Array<{ host_id: string }>).map((c) => c.host_id);
+    const certHostIds = (certs.body.items as Array<{ host_id: string }>).map((c) => c.host_id);
     expect(certHostIds).toContain(hostAId);
     expect(certHostIds).not.toContain(hostBId);
 
@@ -295,7 +295,7 @@ describe("per-user scanner-agent visibility restriction", () => {
   it("admin can create a user restricted to one scanner agent, and the users list reflects it", async () => {
     const res = await adminClient
       .post("/api/users")
-      .send({ username: `it-scoped-${Date.now()}`, password: "Test-Password1", role: "operator", scannerAgentIds: [agentA.id] });
+      .send({ username: `it-scoped-${Date.now()}`, password: "correct-horse-battery-9", role: "operator", scannerAgentIds: [agentA.id] });
     expect(res.status).toBe(201);
     expect(res.body.scannerAgentIds).toEqual([agentA.id]);
     createdUserIds.push(res.body.id);
@@ -308,7 +308,7 @@ describe("per-user scanner-agent visibility restriction", () => {
   it("ignores scannerAgentIds sent alongside an admin-role creation", async () => {
     const res = await adminClient
       .post("/api/users")
-      .send({ username: `it-admin-${Date.now()}`, password: "Test-Password1", role: "admin", scannerAgentIds: [agentA.id] });
+      .send({ username: `it-admin-${Date.now()}`, password: "correct-horse-battery-9", role: "admin", scannerAgentIds: [agentA.id] });
     expect(res.status).toBe(201);
     expect(res.body.scannerAgentIds).toEqual([]);
     createdUserIds.push(res.body.id);
@@ -320,14 +320,14 @@ describe("per-user scanner-agent visibility restriction", () => {
   it("rejects an unknown scanner agent id on creation", async () => {
     const res = await adminClient
       .post("/api/users")
-      .send({ username: `it-badagent-${Date.now()}`, password: "Test-Password1", role: "user", scannerAgentIds: ["00000000-0000-0000-0000-000000000000"] });
+      .send({ username: `it-badagent-${Date.now()}`, password: "correct-horse-battery-9", role: "user", scannerAgentIds: ["00000000-0000-0000-0000-000000000000"] });
     expect(res.status).toBe(400);
   });
 
   it("PATCH /:id/scanner-agents updates, clears (empty array), and rejects an admin target", async () => {
     const created = await adminClient
       .post("/api/users")
-      .send({ username: `it-patchtarget-${Date.now()}`, password: "Test-Password1", role: "user" });
+      .send({ username: `it-patchtarget-${Date.now()}`, password: "correct-horse-battery-9", role: "user" });
     createdUserIds.push(created.body.id);
 
     const setRes = await adminClient.patch(`/api/users/${created.body.id}/scanner-agents`).send({ scannerAgentIds: [agentA.id, agentB.id] });
@@ -343,7 +343,7 @@ describe("per-user scanner-agent visibility restriction", () => {
   });
 
   it("rejects a non-admin from managing users or scanner assignments", async () => {
-    const res = await restrictedClient.post("/api/users").send({ username: "should-fail", password: "Test-Password1", role: "user" });
+    const res = await restrictedClient.post("/api/users").send({ username: "should-fail", password: "correct-horse-battery-9", role: "user" });
     expect(res.status).toBe(403);
 
     const patchRes = await restrictedClient.patch(`/api/users/${unrestrictedOperator.id}/scanner-agents`).send({ scannerAgentIds: [] });

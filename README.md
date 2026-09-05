@@ -105,6 +105,8 @@ Each item below is a one-line summary - click **Details** to expand it.
   <summary>Details</summary>
 
   Open ports with banners/CPE/OS hints and known CVEs (matched against detected service versions, synced daily from the NVD database - see below), anonymous FTP directory listings, SMB share enumeration plus OS/computer-name/domain info (`smb-os-discovery`), NetBIOS name/domain (`nbstat`), and protocol/security-mode info (`smb-protocols`, `smb-security-mode`/`smb2-security-mode` - whether legacy SMBv1 is still enabled, whether signing is required), NFS/rsync listings, an anonymous LDAP root DSE, RPC portmapper/MSRPC endpoint enumeration, whether common database/service daemons (MongoDB, Redis, MySQL, Memcached, Oracle, Docker, CouchDB, Cassandra) are reachable with no authentication, which HTTP methods a server allows (`http-methods`), the HTTP auth scheme a server requires (`http-auth`) and any exposed `.git` repository (`http-git`), RDP hostname/domain/OS build and encryption level leaked pre-auth (`rdp-ntlm-info`/`rdp-enum-encryption`), SSH algorithm/protocol-version info (`ssh2-enum-algos`/`sshv1`), an SMTP open-relay check, whether a DNS server is an open recursive resolver, and SNMP/IPMI asset info (both via a small separate UDP probe - see below) - all when the target allows a no-credentials session (also matched by the free-text search box), OS/device classification and MAC address (when available - see "What each scan does" below), TLS certificates (with expiry status), SSH host keys, HTTP(S) and RDP screenshots (with detected technologies, response headers, and OCR'd screenshot text), a full scan history timeline (with which scanner agent produced each entry), a "changes since last scan" diff, host tags, and an append-only comment log (each comment keeps its author and timestamp). Prev/next buttons step through whichever filtered/sorted host list you came from (including across a page boundary), so you can click through a search's results without going back to the list each time. Its own **Export data** popup exports just this host - CSV (one row per open port, including banners/CPEs/CVE ids), JSON (the full host record plus its ports), or a PDF snapshot of the page as shown, screenshots included. Admins also get a **Delete Host** button here (and a bulk equivalent on the list view) for permanently removing a decommissioned or misidentified host and all its history, without waiting for the retention sweep to age it out.
+
+  A **Compare two scans** section diffs any two of that host's own scans: what opened, what is no longer reported, and where a service or version changed. Note that "closed" means the later scan did not report the port as open, which is a real close or a port that scan's spec never covered - masscan only reports what it finds open, so the two can't be told apart, and the page says so rather than implying a closure.
   </details>
 
 - :arrows_counterclockwise: **Rescan button** - on-demand rescan of a host's known open ports, with an NSE profile and nuclei profile choice.
@@ -132,6 +134,8 @@ Each item below is a one-line summary - click **Details** to expand it.
   <summary>Details</summary>
 
   Schedule a target/port spec to be scanned on a plain interval ("every N minutes"), a fixed schedule (every day, specific days of the week, or the Nth/last weekday of the month, all at a given time - with a point-and-click builder for the common cases plus a raw cron-expression field for anything else), or just once at a picked date and time. A one-time schedule auto-disables itself after it fires (kept, not deleted, for history) and can be re-armed to run again. Any schedule can also be confined to a **time window** - "only between 22:00 and 06:00", optionally only on selected weekdays, in a timezone of its own. A run that comes due outside its window waits for the window to open rather than being skipped, so a nightly sweep whose window starts at 22:00 starts at 22:00 instead of losing the night. Uses the same underlying request queue as the rescan button, including the same NSE script profile and nuclei profile choices.
+
+  If a scheduled run comes due while the **previous one is still queued**, it is skipped rather than stacked - otherwise an hourly schedule against a scanner that stopped polling piles up 24 requests a day, which then all run back-to-back when it returns. The schedule keeps its own cadence and the page shows how many runs were skipped, so "this has produced nothing for two days" is visible rather than silent.
   </details>
 
 - :test_tube: **Scan Profiles** (admin only) - choose which NSE scripts a scan actually runs: Default, All Safe Modules, or a Custom list.
@@ -235,7 +239,7 @@ Each item below is a one-line summary - click **Details** to expand it.
   <details>
   <summary>Details</summary>
 
-  Fire a JSON POST (compatible with Slack/Discord incoming webhooks), a Microsoft Teams Adaptive Card (the current "Workflows" webhook, not the deprecated classic connector), or an email to one or more addresses when a new host appears, a port newly opens, a certificate (either a scanned host's, or the webserver's own) is about to expire, a saved search matches a new host, a known CVE's EPSS (exploit prediction) score crosses a threshold (Admin -> Settings -> Alerting, default 0.5), a known CVE is added to CISA's Known Exploited Vulnerabilities catalog, a running scan looks stalled, a scanner's self-update fails, a scanner's request queue is backing up, or once a day for the fleet-wide digest. Three events cover the opposite direction - things that stop existing rather than appear: a **scanner stops reporting in** (`scanner.offline`, threshold under Admin -> Settings -> Alerting, default 30 minutes - this is the case `scan.stale` and the queue-backlog alert both miss, since a scanner with no running scan and an empty queue is otherwise silent), a **host stops responding** (`host.disappeared`, default 14 days - set it comfortably longer than the interval of whatever schedule covers that host, or every host alerts between scans), and a **port that was open no longer is** (`port.closed`). `port.closed` only fires when the scan's own port spec actually covered that port, so a targeted rescan of one port never claims the others closed; note that masscan cannot distinguish a dropped packet from a closed port, so a lost probe can produce a `port.closed` followed by a `port.opened` on the next scan. Email requires a mail server configured under Admin -> Settings -> Mail Server (SMTP), which also has a "send test email" button - webhook/Teams channels need no extra configuration. Every delivery attempt (success or failure) is recorded per webhook, viewable via a "History" button - the most recent 50 attempts, so you can tell whether a webhook is actually working without digging through logs.
+  Fire a JSON POST (compatible with Slack/Discord incoming webhooks), a Microsoft Teams Adaptive Card (the current "Workflows" webhook, not the deprecated classic connector), or an email to one or more addresses when a new host appears, a port newly opens, a certificate (either a scanned host's, or the webserver's own) is about to expire, a saved search matches a new host, a known CVE's EPSS (exploit prediction) score crosses a threshold (Admin -> Settings -> Alerting, default 0.5), a known CVE is added to CISA's Known Exploited Vulnerabilities catalog, a running scan looks stalled, a scanner's self-update fails, a scanner's request queue is backing up, or once a day for the fleet-wide digest. A **scan finishing** (`scan.completed`, only for a scan that actually completed - a cancellation is someone deciding to stop) and an **account being locked out** after repeated failed logins (`auth.account_locked`, fired once when the lockout starts, not on every attempt refused afterwards) round out the operational events. Three events cover the opposite direction - things that stop existing rather than appear: a **scanner stops reporting in** (`scanner.offline`, threshold under Admin -> Settings -> Alerting, default 30 minutes - this is the case `scan.stale` and the queue-backlog alert both miss, since a scanner with no running scan and an empty queue is otherwise silent), a **host stops responding** (`host.disappeared`, default 14 days - set it comfortably longer than the interval of whatever schedule covers that host, or every host alerts between scans), and a **port that was open no longer is** (`port.closed`). `port.closed` only fires when the scan's own port spec actually covered that port, so a targeted rescan of one port never claims the others closed; note that masscan cannot distinguish a dropped packet from a closed port, so a lost probe can produce a `port.closed` followed by a `port.opened` on the next scan. Email requires a mail server configured under Admin -> Settings -> Mail Server (SMTP), which also has a "send test email" button - webhook/Teams channels need no extra configuration. Every delivery attempt (success or failure) is recorded per webhook, viewable via a "History" button - the most recent 50 attempts, so you can tell whether a webhook is actually working without digging through logs.
   </details>
 
 - :dna: **Vulnerability correlation** - daily CVE/EPSS/KEV sync against every detected service version.
@@ -1374,6 +1378,30 @@ the other direction is not.
 Recovering onto a fresh host: clone the repo, restore your `.env`, run
 `docker compose up -d` once to create the volumes, then `restore.sh`.
 
+
+### Running it automatically
+
+The script above is manual, which means it runs exactly as often as
+someone remembers. `deploy/porttorch-backup.service` and
+`.timer` schedule it daily:
+
+```bash
+sudo cp deploy/porttorch-backup.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now porttorch-backup.timer
+systemctl list-timers porttorch-backup.timer   # when it last ran, when it's due
+```
+
+Adjust `WorkingDirectory` and `ExecStart` in the service file if your
+checkout is elsewhere. Two details in there are deliberate: `--keep 14`,
+because backups that accumulate forever eventually fill the disk and take
+down the thing they were protecting; and `Persistent=true`, so a machine
+that was off at 03:30 takes its backup when it comes back rather than
+silently skipping the day.
+
+**Test the restore, not just the backup.** A backup nobody has restored
+is a hypothesis. `scripts/restore.sh` against a throwaway copy of the
+stack is the only way to find out it works before you need it to.
 ## Versioning
 
 The webserver and scanner are versioned independently (they're deployed

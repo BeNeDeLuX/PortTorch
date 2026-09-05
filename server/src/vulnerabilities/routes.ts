@@ -4,6 +4,7 @@ import { db } from "../db";
 import { requireAuth } from "../auth/middleware";
 import { getAllowedScannerAgentIds } from "../auth/scannerScope";
 import { asyncHandler } from "../lib/asyncHandler";
+import { limitFindings } from "../lib/findingLimit";
 import { toDateOnlyString } from "../lib/dateOnly";
 
 export const vulnerabilitiesRouter = Router();
@@ -101,5 +102,5 @@ vulnerabilitiesRouter.get("/", asyncHandler(async (req, res) => {
       return (b.cvss_score ?? 0) - (a.cvss_score ?? 0);
     });
 
-  res.json(sorted);
+  res.json(limitFindings(sorted));
 }));

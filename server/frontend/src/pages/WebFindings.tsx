@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api, FleetNucleiFinding, Me } from "../api";
 import PageHeader from "../components/PageHeader";
+import TablePager, { pageSlice } from "../components/TablePager";
+import TruncationNotice from "../components/TruncationNotice";
 import TriageControl from "../components/TriageControl";
 import TriageFilterSelect from "../components/TriageFilterSelect";
 import BulkTriageBar from "../components/BulkTriageBar";
@@ -41,6 +43,8 @@ function compareFindings(a: FleetNucleiFinding, b: FleetNucleiFinding, key: Sort
 // CVSS/EPSS/KEV shape at all. See CLAUDE.md's nuclei section.
 export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [findings, setFindings] = useState<FleetNucleiFinding[]>([]);
+  const [truncation, setTruncation] = useState<{ total: number; limit: number } | null>(null);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>("severity");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -62,7 +66,9 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
   async function load() {
     setLoading(true);
     try {
-      setFindings(await api.nucleiFindings());
+      const result = await api.nucleiFindings();
+      setFindings(result.items);
+      setTruncation(result.truncated ? { total: result.total, limit: result.limit } : null);
     } finally {
       setLoading(false);
     }
@@ -127,6 +133,17 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
     );
   });
   const sorted = [...filtered].sort((a, b) => compareFindings(a, b, sortKey, sortDirection));
+  // Paged only for rendering. Everything else - the counts, the export,
+  // and "select all" - deliberately stays on the whole filtered list: a
+  // select-all that meant "this page" would be a trap on a page whose
+  // whole purpose is acting on many findings at once.
+  const pageRows = pageSlice(sorted, page);
+  // A filter that narrows the list can leave the current page past the
+  // end of it - showing an empty table that looks like "no results" when
+  // the results are simply on page 1.
+  useEffect(() => {
+    setPage(1);
+  }, [sorted.length]);
   // Against the whole set, not the filtered view - a "what exists"
   // summary that must not shift as the filter narrows.
   const triageBreakdown = triageCounts(findings);
@@ -136,6 +153,8 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
       <PageHeader me={me} onLogout={onLogout} />
 
       <h2>Web Findings</h2>
+
+      {truncation && <TruncationNotice total={truncation.total} limit={truncation.limit} noun="web findings" />}
       <p className="host-meta">
         Web-application findings from nuclei template scans against discovered HTTP(S) ports across the whole
         fleet, most severe first - exposed panels/config, known CVEs, and misconfigurations, depending on which
@@ -232,7 +251,7 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
               </tr>
             </thead>
             <tbody>
-              {sorted.map((f) => (
+              {pageRows.map((f) => (
                 <tr key={f.id}>
                   {canEdit && (
                     <td className="select-col">
@@ -268,6 +287,8 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
           </table>
         </div>
       )}
+
+      <TablePager page={page} total={sorted.length} onPage={setPage} />
     </div>
   );
 }

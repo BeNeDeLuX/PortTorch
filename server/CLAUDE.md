@@ -27,6 +27,16 @@ Writing the integration harness surfaced a real, pre-existing bug, not a hypothe
 
 ## Architecture
 
+### A schedule skips a run rather than stacking it
+
+`scheduler.ts`'s `tick()` inserted a `scan_requests` row every time a schedule came due and never checked whether the previous one had run - so an hourly schedule against a scanner that stopped polling queued 24 requests a day, which then all ran back-to-back when it returned. A real, observed case (20+ stacked for one agent); the queue page exists to clear that up afterwards, and nothing prevented it.
+
+`scan_requests.schedule_id` is what makes the check possible at all - a scheduled request previously carried only `requested_by = 'schedule'`, so nothing could tell one schedule's queued run from another's. `ON DELETE SET NULL`, matching how the column already treats a deleted agent or host: a request that has run is history and outlives its cause.
+
+**Skipped, not deferred - the opposite of the scan-window case, deliberately.** Deferring leaves `next_run_at` in the past and fires again on the very next tick; queueing anyway is the pile-up. Neither is what "run this hourly" means: the point of an hourly sweep is a fresh picture every hour, and a two-hour-old request waiting in line produces a picture nobody asked for. So `next_run_at` moves forward normally (the schedule keeps its cadence) while `last_run_at` does not (nothing ran), and `skipped_runs`/`last_skipped_at` record it. Only `'pending'` blocks: a `'claimed'` request is being worked on, so the next run is a fresh picture rather than a duplicate.
+
+The counter is a record rather than live state - it keeps climbing rather than resetting, so "this schedule has been missing runs" stays visible on the Schedules page after the cause is fixed.
+
 ### Schedule Scans, the rescan button, and Ad-hoc Scans share one mechanism
 
 All three features (dashboard "Rescan" button on a host, `scan_schedules` — the dashboard nav/page calls this "Schedule Scans", and the "Ad-hoc Scans" page below) write to a single `scan_requests` queue table rather than the webserver calling back into the scanner. Scanners running in `serve` mode poll `GET /api/ingest/scan-requests/next` (atomic claim via `FOR UPDATE SKIP LOCKED`) and report back via `PATCH /api/ingest/scan-requests/:id`. A schedule is just something that periodically inserts into the same queue (`server/src/scheduler.ts`, a 60s in-process ticker) — see `docs`-free context in `server/src/schedules/routes.ts` and `scanner/internal/api/server.go`'s `StartPolling`/`pollOnce`. When touching one of these three features, check whether the change belongs in the shared queue plumbing or in the feature-specific trigger.
@@ -526,6 +536,38 @@ The self-signed certificate `tls/generateCert.ts` writes to `config.certDir` (`/
 `saveCertKeyPair` writes atomically, mirroring the same discipline the scanner's own self-update binary replacement uses (see below): any existing `cert.pem`/`key.pem` are renamed aside to `cert.pem.bak-<timestamp>`/`key.pem.bak-<timestamp>` (not deleted - recoverable by an admin with filesystem access) before the new files are written to `.tmp` paths and `fs.renameSync`'d into place (`key.pem` at mode `0o600`, owner-only, same as `generateCert.ts` already used). `tls/activeServer.ts` holds a module-level reference to the live `https.Server` (set once in `index.ts` right before `.listen()`) specifically so the settings route doesn't have to import `index.ts` directly - after a successful upload, `server.setSecureContext({cert, key})` applies the new pair to every *new* TLS handshake immediately; already-established connections keep whatever context they negotiated, so there's no mid-request drop. Verified against a real listener (a fresh handshake after upload presents the new certificate) and a real container restart (the uploaded pair survives), not just reasoned about.
 
 **A second, independent hourly check (`settings/certExpiryAlert.ts`) alerts when the webserver's own certificate - self-signed or uploaded - is nearing expiry**, firing a `webserver_certificate.expiring_soon` webhook once it's within 30 days of `validTo` (same window as the sibling `certificate.expiring_soon` check for scanned-host certificates). Deliberately keyed by certificate **fingerprint** rather than a boolean or a fixed timestamp (`webserver_tls_alert_state`, migration `1742000000000_webserver_tls_alert_state.js` - another singleton id-1 row, `fingerprint`/`alert_sent_at`): since this is a single filesystem artifact rather than a table of many rows, uploading a replacement certificate (previous paragraph) is automatically treated as never-yet-alerted the moment its fingerprint no longer matches whatever was last alerted - no separate "reset the alert state on upload" step needed. The Settings page itself shows a live countdown next to "Valid to" (`certExpiryDaysLeft`, reusing the exact same `certExpiryStatus`/`certExpiryLabel` helpers the fleet-wide Certificates page already uses for scanned-host certs, rather than a second copy of the same 30-day-window logic) - `(Nd left)` or `(Nd ago)` once already past.
+
+### Two more events: a finished scan, and a locked account
+
+`scan.completed` fires from `PATCH /api/ingest/scan-jobs/:id`, alongside the log line that was previously the only signal - so anything wanting to react to "scan done, fetch the results" no longer has to poll. Deliberately **only** for `completed`: a cancellation is a person deciding to stop, and a failure already has `scan.stale` plus the job's own status. An event covering all three would mean "a scan ended", which is not what anyone wants to trigger a results-fetch on. Its counts are the same ones the log line carries, read from the database rather than the scanner's own tally, so a webhook consumer and the log can't disagree about what a scan produced.
+
+`auth.account_locked` fires when the brute-force guard actually locks an account - **not on the attempts refused afterwards**, which is why `recordFailure` now returns whether it caused the lockout. Alerting on every refused attempt would send one message per guess for the next fifteen minutes, which is how an alert worth reading becomes one people filter away. Repeated lockouts on an admin account were previously visible only to someone reading the audit log.
+
+### The fleet-wide finding pages have a ceiling, not pages
+
+Vulnerabilities, Web Findings, Certificates and SSH Keys each returned their whole result set with no `LIMIT` and no paging, at either end. That is fine until it isn't: Vulnerabilities returns one row per (host, port, CVE), so a fleet with a well-populated CVE cache reaches five figures without anything being wrong, and the page then ships and renders all of them.
+
+Server-side paging was the wrong fix here. Their filtering and sorting are deliberately client-side - the triage filter, the search box, the column sort and bulk-select all operate on the complete set - so a server-side page would be a page of the wrong set, and moving all of that server-side is a far larger change for pages that are read much more often than they are large.
+
+So: `lib/findingLimit.ts` caps each response at 5000 and returns `{ items, total, truncated, limit }`, and the page says so when the cap is reached. **Truncating silently would be worse than not truncating at all**, because a list that quietly omits findings still gets trusted for something it can no longer do. Every route sorts before the cap, so "the first N" means "the N that matter most" - worst-first for CVEs, soonest-expiring for certificates - rather than an arbitrary N. Rendering is paged separately in the browser (`TablePager`, 200 rows), over the already-filtered list; select-all stays on the whole filtered set, since a select-all meaning "this page" would be a trap on a page built for acting on many findings at once.
+
+This changed those four responses from an array to an object. The External API is untouched: `/api/v1` builds its own CVE list rather than calling these routes, so no published contract moved.
+
+### Comparing two of one host's scans
+
+The Digest answers "what changed across the fleet in a window" and the host timeline shows every scan in order; neither answers "what changed on *this* host between these two scans", which is the question after an incident or a change window.
+
+`lib/scanDiff.ts` is a pure derivation over data the host page already has - `GET /api/hosts/:id` returns up to 500 observations, each tagged with its scan job - so no endpoint and no query, and the comparison can never disagree with the timeline beside it. The one server-side change was widening the client's `history` type: `protocol` and the service product/version were always returned and simply weren't declared, so nothing could use them.
+
+Two things it is careful about. Protocol is part of the identity, so UDP/53 opening while TCP/53 stays put is two rows rather than one collapsed one. And **"closed" means the later scan did not report the port as open** - which is a genuine close, or a port that scan's port spec never covered. masscan only ever reports what it finds open, so the two cannot be told apart from here, and the UI says so rather than implying a closure.
+
+### Password policy, and why it is not a character-class rule
+
+`z.string().min(8)` was the only rule, at all three entry points - so "password" was a valid password. `auth/passwordPolicy.ts` raises the floor to 12 and rejects the obvious, deliberately **without** character-class requirements: those are well documented as counterproductive, pushing people toward `Password1!` and a sticky note, and NIST dropped them years ago.
+
+The rule that took two attempts to get right is the word check. A plain `includes` rejected `Admin-Set-Passw0rd` because "admin" appears in it - and a rule that cannot tell that from `admin` trains people to fight the rule instead of picking better passwords. It now asks whether the word *dominates*: after stripping non-alphanumerics (so `p-a-s-s-w-o-r-d-1` is not a way around it), is what remains shorter than the word itself. The same test applies to the account name, so "alice" is refused and "alice-in-wonderland-2026" is not.
+
+Two length-defeating shapes are refused separately: fewer than five distinct characters, and a password that is one short unit repeated (`alice-alice-alice` has six distinct characters, seventeen of length, and is one word to guess).
 
 ### Webhooks fire from inside the ingest path, not a poller
 

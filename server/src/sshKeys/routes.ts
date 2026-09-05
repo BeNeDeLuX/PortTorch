@@ -3,6 +3,7 @@ import { db } from "../db";
 import { requireAuth } from "../auth/middleware";
 import { getAllowedScannerAgentIds } from "../auth/scannerScope";
 import { asyncHandler } from "../lib/asyncHandler";
+import { limitFindings } from "../lib/findingLimit";
 
 export const sshKeysRouter = Router();
 sshKeysRouter.use(requireAuth);
@@ -79,5 +80,5 @@ sshKeysRouter.get("/", asyncHandler(async (req, res) => {
     return ip !== 0 ? ip : a.port - b.port;
   });
 
-  res.json(rows);
+  res.json(limitFindings(rows));
 }));

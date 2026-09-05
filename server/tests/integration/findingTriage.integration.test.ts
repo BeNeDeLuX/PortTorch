@@ -82,7 +82,7 @@ describe("finding triage", () => {
 
   it("reports an untriaged finding with a null state - only exceptions get a row", async () => {
     const res = await client.get("/api/nuclei-findings");
-    const finding = res.body.find((f: { template_id: string }) => f.template_id === "it-triage-template");
+    const finding = res.body.items.find((f: { template_id: string }) => f.template_id === "it-triage-template");
     expect(finding).toBeDefined();
     expect(finding.triage_state).toBeNull();
   });
@@ -95,7 +95,7 @@ describe("finding triage", () => {
     expect(res.body.state).toBe("false_positive");
 
     const list = await client.get("/api/nuclei-findings");
-    const finding = list.body.find((f: { template_id: string }) => f.template_id === "it-triage-template");
+    const finding = list.body.items.find((f: { template_id: string }) => f.template_id === "it-triage-template");
     expect(finding.triage_state).toBe("false_positive");
     expect(finding.triage_note).toBe("internal test endpoint");
   });
@@ -144,7 +144,7 @@ describe("finding triage", () => {
     // The whole reason triage lives in its own table: nuclei_findings gets
     // a brand-new row per observation, so state stored there would vanish.
     const list = await client.get("/api/nuclei-findings");
-    const finding = list.body.find((f: { template_id: string }) => f.template_id === "it-triage-template");
+    const finding = list.body.items.find((f: { template_id: string }) => f.template_id === "it-triage-template");
     expect(finding.triage_state).toBe("fixed");
   });
 
@@ -153,7 +153,7 @@ describe("finding triage", () => {
     expect(res.status).toBe(204);
 
     const list = await client.get("/api/nuclei-findings");
-    const finding = list.body.find((f: { template_id: string }) => f.template_id === "it-triage-template");
+    const finding = list.body.items.find((f: { template_id: string }) => f.template_id === "it-triage-template");
     expect(finding.triage_state).toBeNull();
   });
 

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { db } from "../db";
+import { checkPassword, PASSWORD_MIN_LENGTH } from "../auth/passwordPolicy";
 import { requireAdmin } from "../auth/middleware";
 import { hashPassword } from "../auth/password";
 import { countSessionsByUser, revokeUserSessions } from "../auth/sessions";
@@ -40,7 +41,7 @@ usersRouter.get("/", asyncHandler(async (_req, res) => {
 
 const createUserSchema = z.object({
   username: z.string().trim().min(1).max(64),
-  password: z.string().min(8),
+  password: z.string().min(PASSWORD_MIN_LENGTH),
   role: z.enum(["admin", "operator", "user"]).default("user"),
   // Restricts this user to only see these scanners' results (see
   // auth/scannerScope.ts) - omitted or empty means unrestricted. Ignored
@@ -58,6 +59,12 @@ usersRouter.post("/", asyncHandler(async (req, res) => {
   const parsed = createUserSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const policy = checkPassword(parsed.data.password, parsed.data.username);
+  if (!policy.ok) {
+    res.status(400).json({ error: policy.reason });
     return;
   }
 
@@ -223,7 +230,7 @@ usersRouter.delete("/:id", asyncHandler(async (req, res) => {
 // necessarily self-service (see auth/routes.ts), but recovering from a lost
 // device isn't, so this is the one place an admin can act on another
 // user's 2FA at all: turning it back off, never turning it on for them.
-const setPasswordSchema = z.object({ password: z.string().min(8) });
+const setPasswordSchema = z.object({ password: z.string().min(PASSWORD_MIN_LENGTH) });
 
 // The recovery path for a forgotten password, and the counterpart to
 // /auth/password's self-service change: without it, the only remedy was
@@ -245,13 +252,21 @@ usersRouter.post("/:id/password", asyncHandler(async (req, res) => {
   }
   const parsed = setPasswordSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "a password of at least 8 characters is required" });
+    res.status(400).json({ error: `a password of at least ${PASSWORD_MIN_LENGTH} characters is required` });
     return;
   }
 
   const target = await db.selectFrom("users").select(["username"]).where("id", "=", id).executeTakeFirst();
   if (!target) {
     res.status(404).json({ error: "user not found" });
+    return;
+  }
+
+  // Checked against the *target's* name, not the acting admin's - the
+  // rule is about the account the password will belong to.
+  const policy = checkPassword(parsed.data.password, target.username);
+  if (!policy.ok) {
+    res.status(400).json({ error: policy.reason });
     return;
   }
 

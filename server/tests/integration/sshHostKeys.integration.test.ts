@@ -99,7 +99,7 @@ describe("fleet-wide SSH host keys", () => {
   async function fetchKeys(client: Awaited<ReturnType<typeof loginAs>>): Promise<Map<string, FleetKey>> {
     const res = await client.get("/api/ssh-keys");
     expect(res.status).toBe(200);
-    const ours: FleetKey[] = res.body.filter((k: FleetKey) =>
+    const ours: FleetKey[] = res.body.items.filter((k: FleetKey) =>
       [CLONE_A, CLONE_B, UNIQUE_HOST, WEAK_HOST].includes(k.host_ip)
     );
     return new Map(ours.map((k) => [k.host_ip, k]));
@@ -130,7 +130,7 @@ describe("fleet-wide SSH host keys", () => {
     const res = await client.get("/api/ssh-keys");
     expect(res.status).toBe(200);
 
-    const forUniqueHost: FleetKey[] = res.body.filter((k: FleetKey) => k.host_ip === UNIQUE_HOST);
+    const forUniqueHost: FleetKey[] = res.body.items.filter((k: FleetKey) => k.host_ip === UNIQUE_HOST);
     expect(forUniqueHost).toHaveLength(2); // two hosts rows, one per scanner
     for (const k of forUniqueHost) {
       expect(k.shared_ip_count).toBe(1); // ...but only one address
@@ -141,14 +141,14 @@ describe("fleet-wide SSH host keys", () => {
     // A rescan re-reports the same key: the list must not grow a second
     // row for it, the same "most recent per identity" rule the host detail
     // page and the certificates list already use.
-    const before = (await (await loginAs(admin.username, admin.password)).get("/api/ssh-keys")).body.filter(
+    const before = (await (await loginAs(admin.username, admin.password)).get("/api/ssh-keys")).body.items.filter(
       (k: FleetKey) => k.host_ip === CLONE_A
     );
     expect(before).toHaveLength(1);
 
     await submit(agentA, CLONE_A, { keyType: "ssh-rsa", bits: 3072, fingerprintSha256: SHARED_FP });
 
-    const after = (await (await loginAs(admin.username, admin.password)).get("/api/ssh-keys")).body.filter(
+    const after = (await (await loginAs(admin.username, admin.password)).get("/api/ssh-keys")).body.items.filter(
       (k: FleetKey) => k.host_ip === CLONE_A
     );
     expect(after).toHaveLength(1);

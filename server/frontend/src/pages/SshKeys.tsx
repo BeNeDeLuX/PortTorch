@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { api, FleetSshHostKey, Me } from "../api";
 import { sshKeyRisk, sshKeyRiskLabel } from "../lib/sshKeyRisk";
 import PageHeader from "../components/PageHeader";
+import TruncationNotice from "../components/TruncationNotice";
 import TableExport from "../components/TableExport";
 
 type SortKey = "host" | "port" | "key_type" | "bits" | "shared" | "risk";
@@ -32,6 +33,7 @@ function compareKeys(a: FleetSshHostKey, b: FleetSshHostKey, key: SortKey, direc
 
 export default function SshKeys({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [keys, setKeys] = useState<FleetSshHostKey[]>([]);
+  const [truncation, setTruncation] = useState<{ total: number; limit: number } | null>(null);
   const [loading, setLoading] = useState(true);
   // Default sort mirrors what the endpoint already returns: the shared
   // keys, which are the reason this page exists, first.
@@ -48,7 +50,9 @@ export default function SshKeys({ me, onLogout }: { me: Me; onLogout: () => void
   async function load() {
     setLoading(true);
     try {
-      setKeys(await api.sshHostKeys());
+      const result = await api.sshHostKeys();
+      setKeys(result.items);
+      setTruncation(result.truncated ? { total: result.total, limit: result.limit } : null);
     } finally {
       setLoading(false);
     }
@@ -97,6 +101,8 @@ export default function SshKeys({ me, onLogout }: { me: Me; onLogout: () => void
       <PageHeader me={me} onLogout={onLogout} />
 
       <h2>SSH Host Keys</h2>
+
+      {truncation && <TruncationNotice total={truncation.total} limit={truncation.limit} noun="SSH host keys" />}
       <p className="host-meta">
         Every SSH host key seen across the fleet. A host key identifies one machine, so the same fingerprint on
         several addresses usually means a cloned VM or golden image that shipped its keys - or one genuinely

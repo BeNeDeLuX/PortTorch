@@ -127,6 +127,46 @@ ingestRouter.patch("/scan-jobs/:id", asyncHandler(async (req, res) => {
     source_ip: req.ip,
   });
 
+  // The counterpart to the log line above, for anything outside this
+  // dashboard that wants to react to a finished scan - a SOAR playbook
+  // fetching the results, a ticket closing itself. Until now the only way
+  // to know a scan had finished was to poll the API for it.
+  //
+  // Only for a scan that genuinely completed: "cancelled" is a person
+  // deciding to stop, and "failed" already has its own signal in
+  // scan.stale plus the job's own status. An event that fired for all
+  // three would mean "a scan ended", which is not the thing anyone wants
+  // to trigger on.
+  //
+  // The counts are the same ones the log line carries, read from what is
+  // actually in the database rather than trusted from the scanner's own
+  // tally - so a webhook consumer and the log can never disagree about
+  // what a scan produced.
+  if (parsed.data.status === "completed") {
+    const hosts = Number(hostsAndPorts.hosts_scanned);
+    const ports = Number(hostsAndPorts.open_ports_found);
+    void dispatchWebhook(
+      "scan.completed",
+      `Scan of ${updated.target_spec} (ports ${updated.port_spec}) finished on ${
+        req.scannerAgentName ?? "a scanner"
+      }: ${hosts} host(s), ${ports} open port(s) in ${Math.round(
+        (finishedAt.getTime() - updated.started_at.getTime()) / 1000
+      )}s`,
+      {
+        scanJobId: req.params.id,
+        scannerAgentName: req.scannerAgentName,
+        targetSpec: updated.target_spec,
+        portSpec: updated.port_spec,
+        durationMs: finishedAt.getTime() - updated.started_at.getTime(),
+        hostsScanned: hosts,
+        openPortsFound: ports,
+        screenshots: Number(screenshotCount.count),
+        tlsCertificates: Number(tlsCertCount.count),
+      },
+      { scannerAgentId: req.scannerAgentId ?? undefined }
+    );
+  }
+
   res.status(204).end();
 }));
 

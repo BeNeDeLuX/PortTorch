@@ -59,6 +59,8 @@ export type WebhookEvent =
   | "vulnerability.high_epss"
   | "vulnerability.kev"
   | "digest.daily"
+  | "auth.account_locked"
+  | "scan.completed"
   | "scan.stale"
   | "scanner.update_failed"
   | "scan_queue.backlog"
@@ -82,6 +84,8 @@ const EVENT_SUBJECTS: Record<WebhookEvent, string> = {
   "vulnerability.high_epss": "High EPSS score on a known CVE",
   "vulnerability.kev": "CVE added to CISA's Known Exploited Vulnerabilities catalog",
   "digest.daily": "Daily digest",
+  "auth.account_locked": "Account locked after repeated failed logins",
+  "scan.completed": "Scan finished",
   "scan.stale": "Scan looks stalled",
   "scanner.update_failed": "Scanner self-update failed",
   "scan_queue.backlog": "Scan queue backlog",

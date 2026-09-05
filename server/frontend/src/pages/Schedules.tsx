@@ -557,6 +557,16 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
           {/* Answers "it's past the time I set, why hasn't it run" without
               needing the reader to work the window out themselves. */}
           {s.window_blocked && <div className="host-meta">waiting for its time window</div>}
+          {s.skipped_runs > 0 && (
+            <div className="host-meta">
+              <span className="expiry-label expiry-soon">
+                {s.skipped_runs} run{s.skipped_runs === 1 ? "" : "s"} skipped
+              </span>{" "}
+              - the previous one was still queued when this came due
+              {s.last_skipped_at ? `, last on ${formatDateTime(s.last_skipped_at, me.preferences)}` : ""}. Usually the
+              target scanner has stopped polling; the Scan Queue on Scanner Agents shows what is waiting.
+            </div>
+          )}
         </td>
         <td>{s.last_run_at ? formatDateTime(s.last_run_at, me.preferences) : "never"}</td>
         {isAdmin && (

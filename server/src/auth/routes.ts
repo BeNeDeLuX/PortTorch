@@ -3,6 +3,8 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import qrcode from "qrcode";
 import { db } from "../db";
+import { dispatchWebhook } from "../webhooks/dispatch";
+import { checkPassword, PASSWORD_MIN_LENGTH } from "./passwordPolicy";
 import { hashPassword, verifyPassword } from "./password";
 import { revokeUserSessions } from "./sessions";
 import { requireAuth } from "./middleware";
@@ -149,8 +151,20 @@ authRouter.post("/login", asyncHandler(async (req, res) => {
 
   const valid = user ? await verifyPassword(password, user.password_hash) : false;
   if (!user || !valid) {
-    recordFailure(ipKey);
-    recordFailure(userKey);
+    // Both keys are recorded, but only the transition *into* a lockout
+    // alerts, and only once however many keys tripped on the same
+    // attempt. Alerting on every refused attempt afterwards would send
+    // one message per guess for fifteen minutes, which is how an alert
+    // worth reading becomes one people filter away.
+    const lockedByIp = recordFailure(ipKey);
+    const lockedByUser = recordFailure(userKey);
+    if (lockedByIp || lockedByUser) {
+      void dispatchWebhook(
+        "auth.account_locked",
+        `Login for "${username}" locked for 15 minutes after repeated failed attempts from ${req.ip ?? "an unknown address"}`,
+        { username, sourceIp: req.ip, lockedBy: lockedByUser ? "account" : "source address" }
+      );
+    }
     logger.warn({ event: "auth.login_failed", username, source_ip: req.ip });
     await recordAudit("auth.login_failed", username, req.ip);
     res.status(401).json({ error: "invalid credentials" });
@@ -525,12 +539,14 @@ authRouter.post("/2fa/disable", requireAuth, asyncHandler(async (req, res) => {
   res.status(204).end();
 }));
 
-// Same minimum as createUserSchema's - deliberately not stricter here, so
-// a policy an admin could satisfy when creating the account can't become
-// unsatisfiable when the owner later tries to change it.
+// Same policy as createUserSchema's - deliberately not stricter here, so
+// a password an admin could set when creating the account can't become
+// unsatisfiable when the owner later tries to change it. The length floor
+// stays in the schema; the rest of the policy runs in the handler, where
+// the username is available to check against (see passwordPolicy.ts).
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(1),
-  newPassword: z.string().min(8),
+  newPassword: z.string().min(PASSWORD_MIN_LENGTH),
 });
 
 // Until this existed there was no way to change a password at all, at any
@@ -546,7 +562,9 @@ const changePasswordSchema = z.object({
 authRouter.post("/password", requireAuth, asyncHandler(async (req, res) => {
   const parsed = changePasswordSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "current password and a new password of at least 8 characters are required" });
+    res.status(400).json({
+      error: `current password and a new password of at least ${PASSWORD_MIN_LENGTH} characters are required`,
+    });
     return;
   }
 
@@ -555,6 +573,14 @@ authRouter.post("/password", requireAuth, asyncHandler(async (req, res) => {
     .select(["username", "password_hash"])
     .where("id", "=", req.session.userId!)
     .executeTakeFirstOrThrow();
+
+  // Checked after the user is loaded, because the strongest part of the
+  // policy is "not your own account name" and that needs the name.
+  const policy = checkPassword(parsed.data.newPassword, user.username);
+  if (!policy.ok) {
+    res.status(400).json({ error: policy.reason });
+    return;
+  }
 
   // Its own key prefix rather than sharing the login counter - guessing
   // an already-authenticated session's current password is a different

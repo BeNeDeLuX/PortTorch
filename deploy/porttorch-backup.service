@@ -1,0 +1,26 @@
+# Runs scripts/backup.sh once. Paired with porttorch-backup.timer, which
+# is what actually schedules it - a service plus a timer rather than a
+# cron line so failures land in the journal with the rest of the stack's
+# logs, and so `systemctl list-timers` answers "when did this last run,
+# and when is it due" without anyone reading a crontab.
+#
+# Install (adjust the paths to your checkout):
+#   sudo cp deploy/porttorch-backup.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now porttorch-backup.timer
+#   systemctl list-timers porttorch-backup.timer
+[Unit]
+Description=PortTorch backup (database + /data volumes)
+# The backup reads through the running containers, so it is pointless
+# before Docker is up - and after a reboot the timer would otherwise fire
+# into a failure.
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/porttorch/PortTorch
+# --keep 14 is the part worth setting deliberately: without it every run
+# accumulates forever, and a backup directory that fills the disk takes
+# the thing it was protecting down with it.
+ExecStart=/home/porttorch/PortTorch/scripts/backup.sh --keep 14

@@ -4,6 +4,7 @@ import { db } from "../db";
 import { requireAuth } from "../auth/middleware";
 import { getAllowedScannerAgentIds } from "../auth/scannerScope";
 import { asyncHandler } from "../lib/asyncHandler";
+import { limitFindings } from "../lib/findingLimit";
 
 export const nucleiFindingsRouter = Router();
 nucleiFindingsRouter.use(requireAuth);
@@ -73,5 +74,5 @@ nucleiFindingsRouter.get("/", asyncHandler(async (req, res) => {
   }
 
   const rows = await query.execute();
-  res.json(rows);
+  res.json(limitFindings(rows));
 }));

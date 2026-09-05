@@ -297,14 +297,7 @@ export interface HostDetail {
     observed_at: string;
     vulnerabilities: CveEntry[];
   }>;
-  history: Array<{
-    port: number;
-    state: string;
-    service_name: string | null;
-    observed_at: string;
-    scan_job_id: string;
-    scanner_agent_name: string | null;
-  }>;
+  history: HostPortObservation[];
   screenshots: Array<{
     id: string;
     port: number;
@@ -557,6 +550,18 @@ export type TriageTarget =
   | { kind: "cve"; hostId: string; cveId: string }
   | { kind: "nuclei"; hostId: string; templateId: string; matchedAt: string };
 
+// The fleet-wide finding endpoints return their whole result set with a
+// hard ceiling rather than pages - their filtering and sorting are
+// client-side by design. `truncated` says the ceiling was hit, so the
+// page can tell you it is showing part of the picture instead of looking
+// complete. See server/src/lib/findingLimit.ts.
+export interface LimitedResult<T> {
+  items: T[];
+  total: number;
+  truncated: boolean;
+  limit: number;
+}
+
 export interface FleetVulnerability {
   host_id: string;
   host_ip: string;
@@ -706,6 +711,22 @@ export interface SSHHostKey {
   fingerprint_md5: string | null;
   fingerprint_sha256: string;
   captured_at: string;
+}
+
+// One row of a host's own scan history. The server has always returned
+// protocol and the service product/version here; the client type simply
+// hadn't listed them, so nothing could use them - the scan comparison
+// needs both to tell "the service changed" from "the port moved".
+export interface HostPortObservation {
+  port: number;
+  protocol: string;
+  state: string;
+  service_name: string | null;
+  service_product: string | null;
+  service_version: string | null;
+  observed_at: string;
+  scan_job_id: string;
+  scanner_agent_name: string | null;
 }
 
 export interface CveEntry {
@@ -1032,6 +1053,10 @@ export interface Schedule {
   // window won't let it run yet. The server's answer, not the browser's -
   // the window lives in its own timezone.
   window_blocked: boolean;
+  // How many due runs were skipped because the previous one was still
+  // queued - almost always a scanner that stopped polling.
+  skipped_runs: number;
+  last_skipped_at: string | null;
 }
 
 export interface AdhocScanResult {
@@ -1196,8 +1221,8 @@ export const api = {
     request<void>(`/api/hosts/${id}/comments/${commentId}`, { method: "DELETE" }),
   deleteHost: (id: string) => request<void>(`/api/hosts/${id}`, { method: "DELETE" }),
 
-  expiringCertificates: () => request<ExpiringCertificate[]>("/api/certificates"),
-  sshHostKeys: () => request<FleetSshHostKey[]>("/api/ssh-keys"),
+  expiringCertificates: () => request<LimitedResult<ExpiringCertificate>>("/api/certificates"),
+  sshHostKeys: () => request<LimitedResult<FleetSshHostKey>>("/api/ssh-keys"),
   screenshots: () => request<FleetScreenshot[]>("/api/screenshots"),
   networkCoverage: () => request<NetworkCoverageResult>("/api/networks"),
   createNetwork: (label: string, cidr: string, scannerAgentId: string | null) =>
@@ -1206,7 +1231,7 @@ export const api = {
       body: JSON.stringify({ label, cidr, scannerAgentId }),
     }),
   deleteNetwork: (id: string) => request<void>(`/api/networks/${id}`, { method: "DELETE" }),
-  vulnerabilities: () => request<FleetVulnerability[]>("/api/vulnerabilities"),
+  vulnerabilities: () => request<LimitedResult<FleetVulnerability>>("/api/vulnerabilities"),
   digest: (from: string, to: string) =>
     request<DigestResult>(`/api/digest?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
   scanStats: (scannerAgentIds: string[] = [], hideRetired = false, compareDays: number | null = null) =>
@@ -1381,7 +1406,7 @@ export const api = {
     patch: { name?: string; tags?: string[]; severities?: string[]; excludedTags?: string[] }
   ) => request<NucleiProfile>(`/api/nuclei-profiles/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteNucleiProfile: (id: string) => request<void>(`/api/nuclei-profiles/${id}`, { method: "DELETE" }),
-  nucleiFindings: () => request<FleetNucleiFinding[]>("/api/nuclei-findings"),
+  nucleiFindings: () => request<LimitedResult<FleetNucleiFinding>>("/api/nuclei-findings"),
   setFindingTriage: (target: TriageTarget, state: TriageState, note?: string, reviewAt?: string | null) =>
     request<{ id: string; state: TriageState; note: string | null; review_at: string | null }>("/api/finding-triage", {
       method: "PUT",
