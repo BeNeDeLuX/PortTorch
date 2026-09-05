@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { AdhocScanResult, api, Me, NSEProfileSelection, NucleiProfileSelection, ScanPriority, ScannerAgent } from "../api";
 import { IconPlay } from "../components/icons";
 import PageHeader from "../components/PageHeader";
+import ScanEstimateButton from "../components/ScanEstimate";
 import ScanProfilePicker from "../components/ScanProfilePicker";
 import NucleiProfilePicker from "../components/NucleiProfilePicker";
 import ScanPriorityPicker from "../components/ScanPriorityPicker";
@@ -157,9 +158,17 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
             configured (default 1000). Lower it for fragile or sensitive network segments; only affects this scan.
           </p>
 
-          <button type="submit" className="btn-icon-label" disabled={submitting}>
-            <IconPlay /> {submitting ? "Queuing..." : "Start scan"}
-          </button>
+          <div className="inline-actions">
+            <button type="submit" className="btn-icon-label" disabled={submitting}>
+              <IconPlay /> {submitting ? "Queuing..." : "Start scan"}
+            </button>
+            <ScanEstimateButton
+              targetSpec={targetSpec}
+              portSpec={portSpec}
+              scannerAgentId={scannerAgentId}
+              masscanRate={masscanRate}
+            />
+          </div>
         </form>
       )}
 

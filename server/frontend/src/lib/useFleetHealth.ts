@@ -7,6 +7,7 @@ import {
   ScannerAgent,
   ScannerReleaseInfo,
   TlsCertificateInfo,
+  WebserverReleaseStatus,
 } from "../api";
 import { certExpiryStatus } from "./certExpiry";
 import { isVersionBehind } from "./semver";
@@ -46,6 +47,7 @@ export interface FleetHealthData {
   queueStatus: HealthStatus;
   retryQueueStatus: HealthStatus;
   webserverCertStatus: HealthStatus;
+  webserverVersionStatus: HealthStatus;
   nucleiTemplatesStatus: HealthStatus;
   liveAgents: ScannerAgent[];
   staleJobs: ActiveScanJob[];
@@ -60,6 +62,7 @@ export interface FleetHealthData {
   agentsWithRetryBacklog: ScannerAgent[];
   totalRetryQueuePending: number;
   webserverCert: TlsCertificateInfo | null;
+  webserverRelease: WebserverReleaseStatus | null;
   // Agents whose templates are old enough to warrant attention, and the
   // single oldest age in days (null when no agent reports one at all).
   staleTemplateAgents: ScannerAgent[];
@@ -79,6 +82,7 @@ export function useFleetHealth(me: Me): FleetHealthData {
   const [activeScanJobs, setActiveScanJobs] = useState<ActiveScanJob[]>([]);
   const [scanQueue, setScanQueue] = useState<QueuedScanRequest[]>([]);
   const [webserverCert, setWebserverCert] = useState<TlsCertificateInfo | null>(null);
+  const [webserverRelease, setWebserverRelease] = useState<WebserverReleaseStatus | null>(null);
   // How many pending requests before the queue counts as a "warning" -
   // admin-editable (Settings page), defaults to 1 (today's behavior)
   // until that first fetch resolves.
@@ -92,11 +96,16 @@ export function useFleetHealth(me: Me): FleetHealthData {
       api.latestScannerRelease().catch(() => null),
       me.role === "admin" ? api.tlsCertificate().catch(() => null) : Promise.resolve(null),
       api.scanQueueThreshold().catch(() => null),
+      // Admin-only like the certificate above: both live behind the
+      // settings router, and both are about the webserver itself rather
+      // than the fleet it watches.
+      me.role === "admin" ? api.webserverRelease().catch(() => null) : Promise.resolve(null),
     ])
-      .then(([a, release, ws, threshold]) => {
+      .then(([a, release, ws, threshold, serverRelease]) => {
         setAgents(a);
         setLatestRelease(release);
         setWebserverCert(ws);
+        setWebserverRelease(serverRelease);
         if (threshold) setQueueWarningThreshold(threshold.warningThreshold);
       })
       .catch(() => setError(true))
@@ -166,6 +175,24 @@ export function useFleetHealth(me: Me): FleetHealthData {
   const webserverCertStatus: HealthStatus =
     webserverCertRawStatus === "expired" ? "critical" : webserverCertRawStatus === "soon" ? "warning" : "ok";
 
+  // A newer published image is a "warning", never critical: the running
+  // webserver is working, and an update is a thing to plan rather than an
+  // outage. Deliberately the same call the Scanner Updates card makes for
+  // a behind-version scanner - see its own note on why a newer release
+  // existing is not itself a problem.
+  //
+  // A failed or never-run check is *also* a warning rather than "ok":
+  // "we could not find out" and "you are current" are different answers,
+  // and silently showing the second for the first is how an instance sits
+  // a year behind without anyone noticing.
+  const webserverVersionStatus: HealthStatus = !webserverRelease
+    ? "ok"
+    : webserverRelease.updateAvailable === null || webserverRelease.lastError
+      ? "warning"
+      : webserverRelease.updateAvailable
+        ? "warning"
+        : "ok";
+
   // The scanner's own internal/submitqueue backlog (host submissions
   // still waiting to be retried after a transient failure) - distinct
   // from the "Scan Queue" card above, which tracks scan_requests rows
@@ -209,7 +236,8 @@ export function useFleetHealth(me: Me): FleetHealthData {
     queueStatus,
     retryQueueStatus,
     nucleiTemplatesStatus,
-    webserverCert ? webserverCertStatus : "ok"
+    webserverCert ? webserverCertStatus : "ok",
+    webserverVersionStatus
   );
 
   return {
@@ -221,6 +249,7 @@ export function useFleetHealth(me: Me): FleetHealthData {
     queueStatus,
     retryQueueStatus,
     webserverCertStatus,
+    webserverVersionStatus,
     nucleiTemplatesStatus,
     liveAgents,
     staleJobs,
@@ -235,6 +264,7 @@ export function useFleetHealth(me: Me): FleetHealthData {
     agentsWithRetryBacklog,
     totalRetryQueuePending,
     webserverCert,
+    webserverRelease,
     staleTemplateAgents,
     oldestTemplateAgeDays,
   };

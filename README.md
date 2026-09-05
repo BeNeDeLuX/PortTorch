@@ -120,6 +120,8 @@ Each item below is a one-line summary - click **Details** to expand it.
 
   Scan a target/port spec immediately, once, with no schedule attached - the counterpart to Rescan for anything that isn't already a known host (a newly-provisioned subnet, a system someone just told you about, a one-off check). Pick a scanner, a target, ports, and the same NSE script profile and nuclei profile choices Rescan and Schedule Scans offer; ports are TCP unless prefixed (`80,443,8000-8010` is TCP, `U:53,U:161` is UDP, and the two can be mixed in one spec - but note UDP is far slower, since an unanswered UDP probe can only be timed out, never refused, so name the few UDP ports you care about instead of sweeping a range); the request goes into the same queue and is picked up by the chosen scanner on its very next poll.
 
+  Next to **Start scan** is **Estimate time**: how many addresses and ports the target and port spec actually cover, how many probes that is, and roughly how long masscan's discovery pass will take at that scanner's own configured rate. A `/16` across every port is 4.3 billion probes and about seven weeks - a number worth seeing before queueing rather than after. Only the discovery pass is estimated; what follows depends entirely on how much is found. A hostname target reports as uncountable rather than guessing, since only the scanner's own DNS can resolve it.
+
   Both Ad-hoc Scans and Schedule Scans also take an optional **scan rate** (packets per second for the masscan discovery pass). Left blank it uses whatever the chosen scanner has configured; setting it applies to that one scan only - useful for a fragile or sensitive segment you want probed gently, without editing config on the scanner host and restarting it for every later scan too.
 
   Unlike the other trigger points, the target field also accepts a **DNS hostname**, not just an IP/CIDR/range/IPv6 list. The hostname is resolved by the scanner itself (not the webserver - only the scanner can correctly resolve an internal-only or split-horizon name from inside its own network), and is automatically used as the TLS SNI and screenshot hostname for that scan, the same effect as setting a host's "probe hostname" by hand after the fact. Available to operators and admins, and also from the External API (`POST /api/v1/scans/adhoc`, see below) for SOAR/automation use.
@@ -262,6 +264,8 @@ Each item below is a one-line summary - click **Details** to expand it.
   <summary>Details</summary>
 
   A single page aggregating scanner staleness, version drift, pending/failed self-updates, the scan request queue backlog, the submission retry backlog, and the webserver's own TLS certificate expiry - each card links through to the page with the full detail. The main dashboard also shows a small banner when anything here needs attention.
+
+  It also checks **the webserver's own version** against the newest image published to Docker Hub, hourly, and warns when you are behind - previously only the scanners were checked, so an instance could sit a long way back with the page reporting all clear. "Could not reach the registry" and "never checked" are shown as their own states rather than as "up to date", and an available update is a warning rather than a failure: the running webserver works. Unlike a scanner, it can't update itself (it would have to replace the container it is running in), so the card names the two commands to run on the host.
   </details>
 
 - :zap: **Active scans** - fleet-wide "what's running right now" banner, with live progress and a Stop button.

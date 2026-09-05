@@ -122,12 +122,7 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
           <br />
           <span className="host-meta">
             Warns at {health.queueWarningThreshold}+ pending
-            {me.role === "admin" && (
-              <>
-                {" "}
-                (<Link to="/settings">Settings</Link>)
-              </>
-            )}
+            {me.role === "admin" && " (change this on the Settings page)"}
           </span>
         </HealthCard>
 
@@ -151,6 +146,29 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
             ? `${health.agentsWithRetryBacklog.length} scanner${health.agentsWithRetryBacklog.length === 1 ? "" : "s"} affected`
             : "Nothing queued for retry"}
         </HealthCard>
+
+        {me.role === "admin" && health.webserverRelease && (
+          <HealthCard to="/settings" title="Webserver Version" status={health.webserverVersionStatus}>
+            {health.webserverRelease.lastError ? (
+              <>
+                Running {health.webserverRelease.runningVersion}. Could not reach Docker Hub to check for a newer
+                image: {health.webserverRelease.lastError}
+                {health.webserverRelease.latestVersion &&
+                  ` Last known published version was ${health.webserverRelease.latestVersion}.`}
+              </>
+            ) : health.webserverRelease.updateAvailable === null ? (
+              <>Running {health.webserverRelease.runningVersion}. Not checked against Docker Hub yet.</>
+            ) : health.webserverRelease.updateAvailable ? (
+              <>
+                Running {health.webserverRelease.runningVersion} — {health.webserverRelease.latestVersion} is published.
+                Update with <code>docker compose pull webserver &amp;&amp; docker compose up -d webserver</code> on the
+                host; the webserver cannot replace its own container.
+              </>
+            ) : (
+              <>Running {health.webserverRelease.runningVersion}, the newest published version.</>
+            )}
+          </HealthCard>
+        )}
 
         {me.role === "admin" && health.webserverCert && (
           <HealthCard to="/settings" title="Webserver TLS Certificate" status={health.webserverCertStatus}>

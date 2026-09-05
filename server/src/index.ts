@@ -18,6 +18,7 @@ import { startScheduler } from "./scheduler";
 import { startRetention } from "./retention";
 import { startDailyDigestEmail } from "./digest/emailDigest";
 import { startGithubSync } from "./scannerUpdate/githubSync";
+import { startWebserverReleaseSync } from "./webserverUpdate/dockerHubSync";
 
 // An error on an idle pool client would otherwise arrive as an
 // uncaughtException on the process and take down the entire server.
@@ -50,4 +51,5 @@ startEpssSync();
 startKevSync();
 startDailyDigestEmail();
 startGithubSync();
+startWebserverReleaseSync();
 startWebhookRetryQueue();

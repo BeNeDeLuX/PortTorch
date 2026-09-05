@@ -8,6 +8,7 @@ import { db } from "../db";
 import { requireAuth, requireAdmin } from "../auth/middleware";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
+import { getWebserverReleaseStatus, syncWebserverRelease } from "../webserverUpdate/dockerHubSync";
 import { recordAudit } from "../audit/log";
 import { config } from "../config";
 import { getCurrentCertInfo, saveCertKeyPair, validateCertKeyPair } from "../tls/certUpload";
@@ -612,6 +613,36 @@ settingsRouter.delete("/ca-certificates/:id", asyncHandler(async (req, res) => {
 // Database shape notes) - the point is to make growth visible before it
 // becomes a problem, since deciding what to cap without knowing the
 // numbers would just be guessing.
+// Whether a newer webserver image than the running one is published.
+// Mirrors GET /api/agents/latest-release for the scanner, including its
+// access level: read-only fleet information every viewer of Fleet Health
+// needs, even though acting on it is an operator's job on the host, not a
+// dashboard action. Unlike the scanner, the webserver cannot update
+// itself - it runs in the container it would have to replace - so this
+// reports and links, it never offers a button.
+settingsRouter.get("/webserver-release", asyncHandler(async (_req, res) => {
+  res.json(await getWebserverReleaseStatus());
+}));
+
+// The manual counterpart to the hourly sync, so a just-published image
+// doesn't sit invisible for up to an hour. Admin-only, unlike the GET
+// above: a real outbound request plus a DB write, same split as the
+// scanner's own latest-release/refresh.
+settingsRouter.post("/webserver-release/refresh", asyncHandler(async (req, res) => {
+  try {
+    await syncWebserverRelease();
+  } catch (err) {
+    logger.warn({
+      event: "webserver_release_sync.manual_refresh_failed",
+      err: err instanceof Error ? err.message : String(err),
+    });
+    res.status(502).json({ error: err instanceof Error ? err.message : "failed to reach Docker Hub" });
+    return;
+  }
+  logger.info({ event: "webserver_release_sync.manual_refresh", triggered_by: req.session.username, source_ip: req.ip });
+  res.json(await getWebserverReleaseStatus());
+}));
+
 settingsRouter.get("/storage", asyncHandler(async (_req, res) => {
   const sizes = await sql<{ table_name: string; bytes: string; rows: string }>`
     SELECT t.table_name, pg_total_relation_size(t.table_name)::text AS bytes, t.rows::text AS rows

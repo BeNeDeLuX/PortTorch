@@ -33,6 +33,11 @@ export const config = {
   // (see src/scannerUpdate/githubSync.ts) - overridable for a fork/mirror,
   // defaults to this project's own repo.
   githubRepoSlug: process.env.GITHUB_REPO_SLUG ?? "BeNeDeLuX/PortTorch",
+  // Docker Hub "owner/repo" the webserver image is published to (see
+  // .github/workflows/webserver-docker.yml) - what the update check
+  // compares the running version against. Overridable for a fork or a
+  // mirror, same reasoning as githubRepoSlug above.
+  webserverImageRepo: process.env.WEBSERVER_IMAGE_REPO ?? "benedelux/porttorch-server",
   // A scanner's oldest pending scan_requests row older than this fires a
   // "scan_queue.backlog" webhook (see src/webhooks/operationalAlerts.ts) -
   // a strong signal that scanner has stopped polling entirely, not just

@@ -18,6 +18,7 @@ import { hostsRouter } from "./search/routes";
 import { screenshotsRouter, rdpScreenshotsRouter } from "./screenshots/routes";
 import { schedulesRouter } from "./schedules/routes";
 import { adhocScansRouter } from "./adhocScans/routes";
+import { scanEstimateRouter } from "./scanEstimate/routes";
 import { certificatesRouter } from "./certificates/routes";
 import { sshKeysRouter } from "./sshKeys/routes";
 import { networksRouter } from "./networks/routes";
@@ -84,6 +85,7 @@ export function buildApp() {
   app.use("/api/rdp-screenshots", rdpScreenshotsRouter);
   app.use("/api/schedules", schedulesRouter);
   app.use("/api/adhoc-scans", adhocScansRouter);
+  app.use("/api/scan-estimate", scanEstimateRouter);
   app.use("/api/certificates", certificatesRouter);
   app.use("/api/ssh-keys", sshKeysRouter);
   app.use("/api/networks", networksRouter);

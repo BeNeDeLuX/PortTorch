@@ -353,6 +353,32 @@ The version badge is `position: fixed` in the bottom-right corner, which on a wi
 
 Separately, `frontend/vite.config.ts`'s dev proxy needed `secure: false`: the webserver only ever serves HTTPS with a certificate it generated for itself (`src/tls/generateCert.ts`), and Node rejects that by default, so every proxied request from `npm run dev` failed with "self-signed certificate" and the dev server could not even log in.
 
+### Knowing the webserver itself is behind
+
+Fleet Health tracked whether every *scanner* was current and said nothing at all about the webserver it runs on - an instance could sit a year behind with the page reporting all-clear. `webserver_release_cache` (singleton id-1 row, same idiom as `scanner_release_cache` beside it) and `webserverUpdate/dockerHubSync.ts` close that, hourly.
+
+**Docker Hub rather than GitHub, unlike the scanner's check.** The webserver has no tag-triggered release workflow at all (see the root `CLAUDE.md`'s Versioning section) - its image is built and pushed on every master push touching `server/**`, tagged with `package.json`'s version. The registry is therefore the only place that knows what is actually deployable, and it is also where the operator pulls from, so it is the honest thing to compare against. Only plain `X.Y.Z` tags are considered: the same repository carries `:latest` and a tag per commit SHA, and neither can answer "is something newer available" - `latest` always compares equal to itself and a SHA has no order. The newest is picked **by version, not by publish date**, so a rebuild of an older version cannot present itself as the newest release.
+
+Three states, deliberately distinct, because collapsing them is how an instance stays behind unnoticed:
+
+- **`updateAvailable: null`** - never checked. The card says so rather than implying the running version was confirmed current.
+- **`lastError` set** - the check ran and failed. Recorded in the row, not just logged: a registry unreachable for a week otherwise looks identical to one confirming you are current, which is the more dangerous of the two to get wrong. The last known version is kept alongside it.
+- **running newer than published** - normal on a machine building from source, and *not* an update, hence a strict "newer than running" comparison rather than "different from".
+
+A failed or unchecked state is a **warning**, not "ok" - "we could not find out" and "you are current" are different answers. An available update is also only a warning, never critical, matching the Scanner Updates card's own reasoning: the running webserver works, and an update is something to plan.
+
+Unlike the scanner, **this reports and links, it never offers a button**: the webserver cannot replace the container it is running in, so the card names the two commands to run on the host instead.
+
+### Estimating a scan before queueing it
+
+The scanner's `--dry-run` answers "what will this cost" on the host; `POST /api/scan-estimate` and the "Estimate time" button beside Ad-hoc Scans' own Start button answer it for the person who never touches the host - who is also the one most likely to type a `/16` without picturing what that means. A `/16` across every port and a `/24` across ten look equally reasonable in a form; they are four seconds and seven weeks apart.
+
+**Both counts reuse parsers this codebase already has** - `lib/ipRange.ts`'s `parseTargetSpecRanges` (written for Network Coverage) for the target grammar, and `lib/portSpec.ts`'s `parsePortSpec` (written for the `port.closed` inference) for the port grammar. Neither needed changing, which is the point: a third parser for the same two grammars is how three of them start disagreeing. Ranges are counted rather than enumerated, so `1-65535` never builds a 65k-entry set just to be measured.
+
+**The rate is the chosen scanner's real one**, in precedence order: the per-scan override typed into the form, then that scanner's dashboard config override, then what it reported from its own `config.yaml`, then masscan's default. `rateSource` travels with the number so an operator can tell a real reported rate from the fallback - an estimate against a rate the scan will not run at is worse than none. The scanner lookup is scanner-scoped, so a restricted session cannot learn another scanner's configured rate through it, however small a leak that would be.
+
+**A hostname target reports as uncountable rather than guessing 1** - only the scanner's own DNS resolves it, at scan time. The UI then says which half is unknown and why, and still shows the port count, rather than failing or showing a zero. The estimate covers **masscan's discovery pass only**, stated in the UI: everything after it depends entirely on how much is found.
+
 ### Fleet Health is a client-side aggregation, not a new backend concept
 
 `/health` (`frontend/src/pages/FleetHealth.tsx`) answers "is anything wrong with the fleet itself" in one glance, without an admin having to separately check the Scanner Agents page, the scan queue, and Settings. `frontend/src/lib/useFleetHealth.ts` (shared by the Fleet Health page itself and the Dashboard's own small "needs attention" banner, so the two can never disagree) is a pure client-side aggregation of data other pages already fetch: `GET /api/agents`, the latest cached scanner release, `GET /api/scan-jobs/active`, `GET /api/scan-jobs/queue`, `GET /api/scan-jobs/queue-threshold`, and (admin-only) the webserver's own TLS certificate info. Each of five cards gets an independent `HealthStatus` (`"ok" | "warning" | "critical"`, `worstOf(...)` picks the worst across all of them for the page's overall banner):

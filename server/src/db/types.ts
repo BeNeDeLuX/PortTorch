@@ -107,6 +107,20 @@ export interface ScannerReleaseCacheTable {
   synced_at: Date | null;
 }
 
+// Singleton (id always 1) cache of the newest published webserver image
+// tag - see src/webserverUpdate/dockerHubSync.ts. Docker Hub rather than
+// GitHub, unlike the scanner's: the webserver has no tag-triggered
+// release workflow, so the registry is the only place that knows what is
+// deployable, and it is also where the operator pulls from.
+export interface WebserverReleaseCacheTable {
+  id: Generated<number>;
+  latest_version: string | null;
+  image_tag: string | null;
+  published_at: Date | null;
+  synced_at: Date | null;
+  last_error: string | null;
+}
+
 // Singleton (id always 1) alert-dedup state for the webserver's own TLS
 // listener certificate - see src/settings/certExpiryAlert.ts. Keyed by
 // fingerprint rather than a plain "already alerted" boolean so an
@@ -841,6 +855,7 @@ export interface Database {
   nuclei_findings: NucleiFindingsTable;
   finding_triage: FindingTriageTable;
   scanner_release_cache: ScannerReleaseCacheTable;
+  webserver_release_cache: WebserverReleaseCacheTable;
   webserver_tls_alert_state: WebserverTlsAlertStateTable;
   app_settings: AppSettingsTable;
 }

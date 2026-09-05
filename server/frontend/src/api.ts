@@ -803,6 +803,33 @@ export interface ScannerTunable {
   defaultValue: number;
 }
 
+// Whether a newer webserver image than the running one is published
+// (GET /api/settings/webserver-release). updateAvailable is null when
+// the check has never succeeded - deliberately distinct from false, so
+// "we don't know" is never shown as "you're current".
+// What a scan would cost before starting it (POST /api/scan-estimate) -
+// the dashboard's counterpart to the scanner's own `--dry-run`. A null
+// count means "not countable", not zero: a hostname target is only
+// resolvable by the scanner's own DNS at scan time.
+export interface ScanEstimate {
+  addresses: number | null;
+  ports: number | null;
+  probes: number | null;
+  rate: number;
+  rateSource: "override" | "scanner" | "default";
+  masscanSeconds: number | null;
+}
+
+export interface WebserverReleaseStatus {
+  runningVersion: string;
+  latestVersion: string | null;
+  imageTag: string | null;
+  publishedAt: string | null;
+  syncedAt: string | null;
+  lastError: string | null;
+  updateAvailable: boolean | null;
+}
+
 export interface ScannerReleaseInfo {
   latestVersion: string | null;
   latestTag: string | null;
@@ -1401,6 +1428,14 @@ export const api = {
     request<void>(`/api/settings/ca-certificates/${id}`, { method: "DELETE" }),
 
   tlsCertificate: () => request<TlsCertificateInfo>("/api/settings/tls-certificate"),
+
+  estimateScan: (body: { targetSpec: string; portSpec: string; scannerAgentId?: string; masscanRate?: number }) =>
+    request<ScanEstimate>("/api/scan-estimate", { method: "POST", body: JSON.stringify(body) }),
+
+  webserverRelease: () => request<WebserverReleaseStatus>("/api/settings/webserver-release"),
+
+  refreshWebserverRelease: () =>
+    request<WebserverReleaseStatus>("/api/settings/webserver-release/refresh", { method: "POST" }),
   // Bypasses request()'s JSON-only helper - a multipart body needs the
   // browser to set its own Content-Type with a boundary, which it only
   // does when Content-Type is left unset entirely.
