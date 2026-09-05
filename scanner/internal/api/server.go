@@ -711,40 +711,15 @@ func (s *Server) pollOnce(ctx context.Context) bool {
 // older webserver that doesn't send a profile at all) maps to nil, which
 // RunNmap's own fallback already treats as "use DefaultNSEScripts" - so
 // this never needs its own copy of that list.
+// Both delegate to internal/pipeline, which is where the canonical
+// script and tag lists live and where the one-shot CLI resolves the same
+// names - see pipeline/profiles.go on why the mapping exists once.
 func resolveNSEScripts(profile string, custom []string) []string {
-	switch profile {
-	case "all_safe":
-		return pipeline.AllSafeNSEScripts
-	case "custom":
-		return custom
-	default:
-		return nil
-	}
+	return pipeline.ResolveNSEScripts(profile, custom)
 }
 
-// resolveNucleiProfile is resolveNSEScripts' nuclei equivalent: turns a
-// webserver-provided profile kind + optional custom tag list into the
-// *pipeline.NucleiProfile RunScan needs. "off" (or any unrecognized/empty
-// value - a pre-nuclei scan_requests row, or an older webserver that
-// doesn't send this at all) resolves to nil, which RunScan's own doc
-// comment already documents as "nuclei doesn't run at all" - so an
-// un-upgraded caller reproduces exactly today's (pre-nuclei) behavior.
-// "safe" excludes nuclei's own dos/fuzz/intrusive tag conventions rather
-// than naming an allowlist - unlike NSE's "All Safe Modules", nuclei has
-// no single stable "safe" category to point at (its tag taxonomy has
-// thousands of entries and grows with every template release), so this is
-// the same "safe means excluding the risky, not enumerating everything
-// else" approach the frontend's Scan Profiles warning already applies to
-// custom NSE profiles containing Active Modules scripts.
 func resolveNucleiProfile(profile string, tags []string) *pipeline.NucleiProfile {
-	switch profile {
-	case "safe":
-		return &pipeline.NucleiProfile{ExcludeTags: []string{"dos", "fuzz", "intrusive"}}
-	case "custom":
-		return &pipeline.NucleiProfile{Tags: tags}
-	default:
-		return nil
-	}
+	return pipeline.ResolveNucleiProfile(profile, tags)
 }
 
 // runScan runs a cancellable scan: scanCtx is registered in s.cancels

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -51,6 +52,8 @@ func main() {
 	root.AddCommand(newMenuCmd(&configPath))
 	root.AddCommand(newServeCmd(&configPath))
 	root.AddCommand(newDoctorCmd(&configPath))
+	root.AddCommand(newQueueCmd(&configPath))
+	root.AddCommand(newHistoryCmd(&configPath))
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
@@ -58,9 +61,74 @@ func main() {
 	}
 }
 
+// scanOptions are the per-scan choices the dashboard has always offered
+// and the CLI never did. Until these flags existed, a scan run directly
+// on a scanner host silently differed from the same scan queued from the
+// dashboard: always the 31 default NSE scripts, never nuclei, always the
+// configured masscan rate. That difference was invisible - the scan
+// simply found less.
+type scanOptions struct {
+	nseProfile  string
+	nseScripts  string
+	nuclei      string
+	nucleiTags  string
+	masscanRate int
+}
+
+// resolve turns the typed flags into what RunScan takes, rejecting an
+// unknown profile name rather than silently falling back to the default -
+// a typo'd --nse-profile that quietly ran the default set would be the
+// same class of silent difference these flags exist to remove.
+func (o scanOptions) resolve() (nse []string, nuclei *pipeline.NucleiProfile, rate *int, err error) {
+	switch o.nseProfile {
+	case "", "default":
+		nse = nil
+	case "all-safe":
+		nse = pipeline.ResolveNSEScripts("all_safe", nil)
+	case "custom":
+		if strings.TrimSpace(o.nseScripts) == "" {
+			return nil, nil, nil, fmt.Errorf("--nse-profile custom needs --nse-scripts with a comma-separated script list")
+		}
+		nse = pipeline.ResolveNSEScripts("custom", splitCommaList(o.nseScripts))
+	default:
+		return nil, nil, nil, fmt.Errorf("unknown --nse-profile %q (default, all-safe, custom)", o.nseProfile)
+	}
+
+	switch o.nuclei {
+	case "", "off":
+		nuclei = nil
+	case "safe":
+		nuclei = pipeline.ResolveNucleiProfile("safe", nil)
+	case "custom":
+		if strings.TrimSpace(o.nucleiTags) == "" {
+			return nil, nil, nil, fmt.Errorf("--nuclei custom needs --nuclei-tags with a comma-separated tag list")
+		}
+		nuclei = pipeline.ResolveNucleiProfile("custom", splitCommaList(o.nucleiTags))
+	default:
+		return nil, nil, nil, fmt.Errorf("unknown --nuclei %q (off, safe, custom)", o.nuclei)
+	}
+
+	if o.masscanRate > 0 {
+		r := o.masscanRate
+		rate = &r
+	}
+	return nse, nuclei, rate, nil
+}
+
+func splitCommaList(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
 func newScanCmd(configPath *string) *cobra.Command {
 	var target, ports, targetsFile string
 	var dryRun bool
+	var opts scanOptions
 
 	cmd := &cobra.Command{
 		Use:   "scan",
@@ -87,16 +155,25 @@ func newScanCmd(configPath *string) *cobra.Command {
 			if ports == "" {
 				return fmt.Errorf("--ports is required (e.g. 1-1000 or 22,80,443)")
 			}
-			if dryRun {
-				return runDryRun(*configPath, target, ports)
+			nse, nuclei, rate, err := opts.resolve()
+			if err != nil {
+				return err
 			}
-			return runScan(*configPath, target, ports)
+			if dryRun {
+				return runDryRun(*configPath, target, ports, opts, nse, nuclei, rate)
+			}
+			return runScan(*configPath, target, ports, nse, nuclei, rate)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", "", "Target: IPv4 single IP/CIDR/range (e.g. 192.168.1.0/24) or a single IPv6 address / comma-separated list (e.g. 2001:db8::1)")
 	cmd.Flags().StringVar(&ports, "ports", "", "Port spec, e.g. 1-1000 or 22,80,443")
 	cmd.Flags().StringVar(&targetsFile, "targets-file", "", "Path to a file with one target spec per line (IPv4 IP/CIDR/range, or a single IPv6 address - never mixed) - combined into one scan, exactly as if joined with commas and passed to --target. Blank lines and lines starting with # are ignored. Mutually exclusive with --target.")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would actually be scanned (effective targets/ports after excludes) without running masscan/nmap or creating a scan job")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would actually be scanned - address and port counts, an estimated masscan runtime, the NSE/nuclei selection and every exclude that applies - without running masscan/nmap or creating a scan job")
+	cmd.Flags().StringVar(&opts.nseProfile, "nse-profile", "default", "Which NSE scripts nmap runs: default (31 curated scripts), all-safe (nmap's own safe-and-not-intrusive category, unioned with default), or custom (needs --nse-scripts)")
+	cmd.Flags().StringVar(&opts.nseScripts, "nse-scripts", "", "Comma-separated NSE script names, for --nse-profile custom")
+	cmd.Flags().StringVar(&opts.nuclei, "nuclei", "off", "Whether nuclei runs against discovered HTTP(S) ports: off, safe (excludes nuclei's dos/fuzz/intrusive tags), or custom (needs --nuclei-tags)")
+	cmd.Flags().StringVar(&opts.nucleiTags, "nuclei-tags", "", "Comma-separated nuclei template tags, for --nuclei custom. Unlike NSE scripts these are not validated - an unknown tag matches no templates, which is a harmless no-op")
+	cmd.Flags().IntVar(&opts.masscanRate, "rate", 0, "Override masscan's packets-per-second for this scan only. 0 uses masscanRate from config.yaml. Lower it for a fragile segment")
 	return cmd
 }
 
@@ -256,7 +333,7 @@ func newServeCmd(configPath *string) *cobra.Command {
 	return cmd
 }
 
-func runScan(configPath, target, ports string) error {
+func runScan(configPath, target, ports string, nseScripts []string, nucleiProfile *pipeline.NucleiProfile, masscanRate *int) error {
 	log := logging.New()
 
 	cfg, err := config.Load(configPath)
@@ -336,10 +413,16 @@ func runScan(configPath, target, ports string) error {
 	var tallyMu sync.Mutex
 	var hostsSubmitted, openPorts, screenshots, rdpScreenshots, tlsCertificates int
 
-	// nil nseScripts/nucleiProfile: the one-shot scan CLI has no scan-
-	// profile concept - always runs DefaultNSEScripts and never runs
-	// nuclei, same as before nuclei existed.
-	result, scanErr := pipeline.RunScan(ctx, cfg.Pipeline(), target, ports, excludes, probeHostnames, nil, nil,
+	// nseScripts/nucleiProfile come from the flags (nil for the defaults,
+	// which is what every invocation without them produces - byte
+	// identical to before the flags existed). masscanRate overrides the
+	// config on a copy, never on cfg itself, so a deliberately slow
+	// one-off cannot leak into anything else.
+	pcfg := cfg.Pipeline()
+	if masscanRate != nil {
+		pcfg.MasscanRate = *masscanRate
+	}
+	result, scanErr := pipeline.RunScan(ctx, pcfg, target, ports, excludes, probeHostnames, nseScripts, nucleiProfile,
 		func(stage, message string) {
 			log.Info(message, "event", "scan.progress", "scan_job_id", jobID, "stage", stage)
 			tracker.Progress(stage, message)
@@ -426,7 +509,7 @@ func runScan(configPath, target, ports string) error {
 // uses, since this is meant to be read directly by whoever typed the
 // command, not shipped to a log aggregator. Never creates a scan job or
 // touches masscan/nmap.
-func runDryRun(configPath, target, ports string) error {
+func runDryRun(configPath, target, ports string, opts scanOptions, nseScripts []string, nucleiProfile *pipeline.NucleiProfile, masscanRate *int) error {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return err
@@ -448,8 +531,94 @@ func runDryRun(configPath, target, ports string) error {
 	if err != nil {
 		return err
 	}
+	rate := cfg.MasscanRate
+	if masscanRate != nil {
+		rate = *masscanRate
+	}
 	printPreview(preview)
+	printScanPlan(preview, opts, nseScripts, nucleiProfile, rate, masscanRate != nil)
 	return nil
+}
+
+// printScanPlan is the half of a dry run that answers "should I actually
+// start this?" - the excludes above answer "what gets left out", which is
+// a different question and was previously the only one --dry-run could
+// answer at all. The size and the runtime estimate are the point: a /16
+// across every port is a decision worth making deliberately, and the
+// number that makes it obvious was not on screen anywhere.
+func printScanPlan(p *pipeline.PreviewResult, opts scanOptions, nseScripts []string, nuclei *pipeline.NucleiProfile, rate int, rateOverridden bool) {
+	fmt.Println("\nScan plan:")
+
+	addresses := p.AddressCount
+	portCount := pipeline.CountPorts(p.EffectivePortSpec)
+	if addresses > 0 {
+		fmt.Printf("  Addresses:  %s\n", formatCount(addresses))
+	} else {
+		fmt.Println("  Addresses:  unknown (target form can't be counted without resolving it)")
+	}
+	fmt.Printf("  Ports:      %s per address\n", formatCount(int64(portCount)))
+
+	if addresses > 0 && portCount > 0 {
+		probes := addresses * int64(portCount)
+		fmt.Printf("  Probes:     %s at %s packets/second\n", formatCount(probes), formatCount(int64(rate)))
+		// masscan's own pass only - the nmap/screenshot/nuclei stages
+		// that follow depend entirely on how much is actually found, so
+		// estimating them would be a guess dressed up as a number.
+		fmt.Printf("  masscan:    about %s (its pass only - nmap and the rest depend on what is found)\n",
+			formatDuration(float64(probes)/float64(rate)))
+	}
+
+	if rateOverridden {
+		fmt.Printf("  Rate:       %d packets/second (--rate, overriding config.yaml)\n", rate)
+	}
+
+	switch {
+	case nseScripts == nil:
+		fmt.Printf("  NSE:        default (%d curated scripts)\n", len(pipeline.DefaultNSEScripts))
+	case opts.nseProfile == "all-safe":
+		fmt.Printf("  NSE:        all-safe (%d scripts)\n", len(nseScripts))
+	default:
+		fmt.Printf("  NSE:        custom (%d scripts: %s)\n", len(nseScripts), strings.Join(nseScripts, ", "))
+	}
+
+	switch {
+	case nuclei == nil:
+		fmt.Println("  nuclei:     off")
+	case len(nuclei.ExcludeTags) > 0:
+		fmt.Printf("  nuclei:     safe (excluding tags: %s)\n", strings.Join(nuclei.ExcludeTags, ", "))
+	default:
+		fmt.Printf("  nuclei:     custom (tags: %s)\n", strings.Join(nuclei.Tags, ", "))
+	}
+}
+
+// Thousands separators, because the numbers this prints are the whole
+// reason for printing them and 4294967296 is not a number anyone reads.
+func formatCount(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	if len(s) <= 3 {
+		return s
+	}
+	var out []byte
+	for i, c := range []byte(s) {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, c)
+	}
+	return string(out)
+}
+
+func formatDuration(seconds float64) string {
+	switch {
+	case seconds < 90:
+		return fmt.Sprintf("%.0f seconds", seconds)
+	case seconds < 5400:
+		return fmt.Sprintf("%.0f minutes", seconds/60)
+	case seconds < 172800:
+		return fmt.Sprintf("%.1f hours", seconds/3600)
+	default:
+		return fmt.Sprintf("%.1f days", seconds/86400)
+	}
 }
 
 func printPreview(p *pipeline.PreviewResult) {

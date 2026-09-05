@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"porttorch/scanner/internal/client"
@@ -165,6 +166,86 @@ type DrainResult struct {
 
 func (r DrainResult) Empty() bool {
 	return r.Succeeded == 0 && r.GaveUp == 0 && r.Pending == 0 && r.Dropped == 0 && r.Rejected == 0
+}
+
+// PendingEntry is one queued host result, for showing an operator what
+// is stuck rather than only how many things are. CountPending answers
+// "how many" for the header the scanner reports to the dashboard; this
+// answers "which ones, since when, and how often has it been tried" -
+// the questions you actually have while sitting on the scanner host with
+// the webserver unreachable.
+type PendingEntry struct {
+	ID       string
+	JobID    string
+	IP       string
+	Ports    int
+	QueuedAt time.Time
+	Attempts int
+}
+
+// ListPending reads the queue without touching it. Same "a missing or
+// unreadable directory is an empty queue, not a failure" treatment as
+// Drain and CountPending, since most scanners never queue anything at
+// all; an entry that fails to parse is skipped rather than aborting the
+// listing, so one corrupt file cannot hide the rest.
+func ListPending(queueDir string) []PendingEntry {
+	dirEntries, err := os.ReadDir(queueDir)
+	if err != nil {
+		return nil
+	}
+	var out []PendingEntry
+	for _, dirEntry := range dirEntries {
+		if !dirEntry.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(queueDir, dirEntry.Name(), "item.json"))
+		if err != nil {
+			continue
+		}
+		var item queuedItem
+		if err := json.Unmarshal(data, &item); err != nil {
+			continue
+		}
+		open := 0
+		for _, port := range item.Host.Ports {
+			if port.State == "open" {
+				open++
+			}
+		}
+		out = append(out, PendingEntry{
+			ID:       dirEntry.Name(),
+			JobID:    item.JobID,
+			IP:       item.Host.IP,
+			Ports:    open,
+			QueuedAt: item.QueuedAt,
+			Attempts: item.Attempts,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].QueuedAt.Before(out[j].QueuedAt) })
+	return out
+}
+
+// DiscardPending deletes every queued entry without attempting to submit
+// it. The escape hatch for a queue that can never drain - results for a
+// scan job the webserver no longer has, or a backlog an operator has
+// decided to abandon - which is otherwise only reachable by deleting the
+// directory by hand. Returns how many entries were removed.
+func DiscardPending(queueDir string) (int, error) {
+	dirEntries, err := os.ReadDir(queueDir)
+	if err != nil {
+		return 0, nil
+	}
+	removed := 0
+	for _, dirEntry := range dirEntries {
+		if !dirEntry.IsDir() {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(queueDir, dirEntry.Name())); err != nil {
+			return removed, err
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 // Drain attempts to resubmit every currently-queued host result via c,

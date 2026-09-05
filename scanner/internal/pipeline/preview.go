@@ -30,6 +30,12 @@ type PreviewResult struct {
 	// all (mirrors RunScan's own "nothing to scan" short-circuit).
 	EffectivePortSpec string
 
+	// AddressCount is how many addresses the target spec covers, which is
+	// the number that decides whether a scan is a minute or a weekend.
+	// 0 means "not countable" - a hostname, which only DNS at scan time
+	// can resolve.
+	AddressCount int64
+
 	IsIPv6 bool
 	// IPv6Targets is one entry per address in the comma-separated target
 	// list, in order - populated only when IsIPv6 is true, since that
@@ -89,14 +95,89 @@ func PreviewScan(targetSpec, portSpec string, excludes Excludes) (*PreviewResult
 		for _, ip := range ips {
 			excluded, reason := isTargetExcluded(ip, excludes.IPs)
 			result.IPv6Targets = append(result.IPv6Targets, TargetPreview{IP: ip, Excluded: excluded, Reason: reason})
+			// An IPv6 target is always an explicit address list (see
+			// parseIPv6TargetList), so excluded ones can be subtracted
+			// exactly rather than estimated - unlike a v4 CIDR, where
+			// masscan applies the excludes itself at scan time.
+			if !excluded {
+				result.AddressCount++
+			}
 		}
 		return result, nil
 	}
 
 	result.AppliedIPExcludes = excludes.IPs
+	result.AddressCount = CountAddresses(targetSpec)
 	if parsed := net.ParseIP(strings.TrimSpace(targetSpec)); parsed != nil {
 		excluded, reason := isTargetExcluded(targetSpec, excludes.IPs)
 		result.SingleIPv4Target = &TargetPreview{IP: targetSpec, Excluded: excluded, Reason: reason}
 	}
 	return result, nil
+}
+
+// CountAddresses is how many addresses an IPv4 target spec covers, across
+// every form masscan's own grammar accepts here: a comma-separated list
+// of single addresses, CIDRs and start-end ranges. Returns 0 for anything
+// it cannot count exactly - a hostname, which only the scanner's own DNS
+// can resolve at scan time, so guessing 1 would be a claim rather than a
+// count.
+//
+// Deliberately does not subtract IP excludes: masscan applies those
+// itself via --excludefile, and how many addresses a /8 exclude removes
+// from a /16 target is not something this can answer without enumerating
+// both. The excludes are listed separately right above this in the dry
+// run, which is the honest presentation.
+func CountAddresses(targetSpec string) int64 {
+	var total int64
+	for _, part := range strings.Split(targetSpec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		switch {
+		case strings.Contains(part, "/"):
+			_, ipnet, err := net.ParseCIDR(part)
+			if err != nil {
+				return 0
+			}
+			ones, bits := ipnet.Mask.Size()
+			if bits != 32 {
+				return 0
+			}
+			total += int64(1) << uint(bits-ones)
+		case strings.Contains(part, "-"):
+			bounds := strings.SplitN(part, "-", 2)
+			start, end := net.ParseIP(strings.TrimSpace(bounds[0])), net.ParseIP(strings.TrimSpace(bounds[1]))
+			if start == nil || end == nil || start.To4() == nil || end.To4() == nil {
+				return 0
+			}
+			s, e := ipToUint32(start.To4()), ipToUint32(end.To4())
+			if e < s {
+				return 0
+			}
+			total += int64(e-s) + 1
+		default:
+			if ip := net.ParseIP(part); ip == nil || ip.To4() == nil {
+				return 0
+			}
+			total++
+		}
+	}
+	return total
+}
+
+func ipToUint32(ip net.IP) uint32 {
+	return uint32(ip[0])<<24 | uint32(ip[1])<<16 | uint32(ip[2])<<8 | uint32(ip[3])
+}
+
+// CountPorts is how many ports a spec covers, counting each protocol
+// separately - "T:80,U:80" is two probes, not one, which is what the
+// runtime estimate needs. Returns 0 for an unparseable spec rather than
+// a guess.
+func CountPorts(portSpec string) int {
+	set, err := parseProtoPortSet(portSpec)
+	if err != nil {
+		return 0
+	}
+	return len(set)
 }

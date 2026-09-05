@@ -356,6 +356,16 @@ export interface ScanExclude {
   created_at: string;
 }
 
+// What a saved search currently matches, from the checker's own record
+// rather than a fresh query - so a host listed here is one the next
+// saved_search.match alert will NOT fire for, which is the useful thing
+// to know. See the /matches route.
+export interface SavedSearchMatches {
+  savedSearchId: string;
+  matchCount: number;
+  hosts: Array<{ id: string; ip: string; hostname: string | null; lastSeenAt: string }>;
+}
+
 export interface SavedSearch {
   id: string;
   name: string;
@@ -1490,6 +1500,8 @@ export const api = {
   createExclude: (kind: "ip" | "port" | "ip_port", value: string, scannerAgentId: string | null) =>
     request<ScanExclude>("/api/excludes", { method: "POST", body: JSON.stringify({ kind, value, scannerAgentId }) }),
   deleteExclude: (id: string) => request<void>(`/api/excludes/${id}`, { method: "DELETE" }),
+
+  savedSearchMatches: () => request<SavedSearchMatches[]>("/api/saved-searches/matches"),
 
   savedSearches: () => request<SavedSearch[]>("/api/saved-searches"),
   createSavedSearch: (name: string, filters: Record<string, string>) =>

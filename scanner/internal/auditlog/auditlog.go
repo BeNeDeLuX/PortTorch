@@ -16,6 +16,7 @@
 package auditlog
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -125,4 +126,51 @@ func (a *AuditLog) Close() error {
 		return nil
 	}
 	return a.file.Close()
+}
+
+// ReadSince returns entries written at or after `since`, oldest first,
+// optionally only those whose submission failed. Reading is deliberately
+// separate from the append-only writer above: the file is the one durable
+// local record of what this scanner touched, and until this existed it
+// could only be read with jq on the host, as root, because it lives
+// beside a 0600 config in the service account's home.
+//
+// A line that doesn't parse is skipped rather than aborting the read.
+// This file is appended to by a live process, so the last line can
+// legitimately be a partial write caught mid-flush - refusing to show any
+// history because of that would be exactly backwards.
+func ReadSince(path string, since time.Time, onlyUnsubmitted bool) ([]Entry, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// No scan has ever run on this host, which is an answer, not
+			// an error.
+			return nil, nil
+		}
+		return nil, fmt.Errorf("opening audit log: %w", err)
+	}
+	defer f.Close()
+
+	var entries []Entry
+	scanner := bufio.NewScanner(f)
+	// A host with many ports produces a long line; the default 64KB token
+	// limit would silently truncate the read at that point.
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		var entry Entry
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			continue
+		}
+		if !since.IsZero() && entry.Time.Before(since) {
+			continue
+		}
+		if onlyUnsubmitted && entry.Submitted {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	if err := scanner.Err(); err != nil {
+		return entries, fmt.Errorf("reading audit log: %w", err)
+	}
+	return entries, nil
 }

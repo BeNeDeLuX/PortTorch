@@ -16,6 +16,7 @@ import {
 } from "../api";
 import ExportModal from "../components/ExportModal";
 import {
+  IconArchive,
   IconBookmark,
   IconDownload,
   IconInfo,
@@ -480,6 +481,30 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
           ? `Rescan requested for ${selected.size} host(s).`
           : `Rescan requested for ${selected.size - failed} host(s), ${failed} failed (e.g. no known ports yet).`
       );
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  // Retiring in bulk is what a decommissioning actually looks like -
+  // twenty machines go at once, and the alternative was twenty trips to
+  // twenty host pages or deleting them, which throws the history away.
+  // Operator-level like the single-host action it loops, unlike delete.
+  async function handleBulkRetire(retired: boolean) {
+    if (selected.size === 0) return;
+    setBulkBusy(true);
+    setBulkStatus(null);
+    try {
+      const results = await Promise.allSettled([...selected].map((id) => api.setHostRetired(id, retired)));
+      const failed = results.filter((r) => r.status === "rejected").length;
+      const verb = retired ? "Retired" : "Un-retired";
+      setBulkStatus(
+        failed === 0
+          ? `${verb} ${selected.size} host(s).`
+          : `${verb} ${selected.size - failed} host(s), ${failed} failed.`
+      );
+      setSelected(new Set());
+      await load(filters, page);
     } finally {
       setBulkBusy(false);
     }
@@ -957,6 +982,17 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
           </form>
           <button className="btn-icon-label" onClick={() => setShowRescanModal(true)} disabled={bulkBusy}>
             <IconRefresh /> Rescan selected
+          </button>
+          <button
+            className="btn-icon-label"
+            onClick={() => handleBulkRetire(true)}
+            disabled={bulkBusy}
+            title="Stop host.disappeared alerts for these hosts. Nothing else changes - they stay in the list with all their history, and a port opening on one is still reported."
+          >
+            <IconArchive /> Retire selected
+          </button>
+          <button className="btn-icon-label" onClick={() => handleBulkRetire(false)} disabled={bulkBusy}>
+            <IconArchive /> Un-retire
           </button>
           {isAdmin && (
             <button className="btn-icon-label" onClick={handleBulkDelete} disabled={bulkBusy}>

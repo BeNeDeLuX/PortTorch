@@ -130,6 +130,28 @@ Supports two distro families, detected from `/etc/os-release`'s `ID`/`ID_LIKE` (
 
 
 
+### The CLI can ask for what the dashboard can, and says what a scan will cost
+
+`porttorch scan` always ran the 31 default NSE scripts, never ran nuclei, and always used the configured masscan rate - while the same scan queued from the dashboard could pick any of the three. Nothing said so. A scan run on the host simply found less than the same scan queued, and the difference was invisible.
+
+`--nse-profile` (default/all-safe/custom + `--nse-scripts`), `--nuclei` (off/safe/custom + `--nuclei-tags`) and `--rate` close that. **An unknown value is refused rather than falling back to the default** - a typo'd `--nse-profile` that quietly ran the default set would be exactly the silent difference these flags exist to remove. `--rate` overrides `MasscanRate` on a *copy* of the pipeline config, never on `cfg` itself, the same discipline the queue path already uses so a deliberately slow one-off can't leak into anything else.
+
+The mapping from a profile name to a script/tag list moved to `pipeline.ResolveNSEScripts`/`ResolveNucleiProfile`, with `internal/api` delegating to it. It has to exist exactly once: the whole reason the webserver sends a symbolic name instead of a 349-entry list is that the canonical lists live in one place, and a second copy of the mapping in the CLI would reintroduce the drift that avoids.
+
+**`--dry-run` now answers "should I start this?", not only "what gets left out".** It printed the target, the port spec and the excludes; what it never printed was the size. It now adds an address count, a port count, the resulting probe count and an estimated masscan runtime - so `--target 172.16.0.0/16 --ports 1-65535` reports *4,294,901,760 probes at 1,000 packets/second, about 49.7 days* instead of four lines that look entirely reasonable. It also states which NSE profile, which nuclei setting and which rate would apply, since those are now choices rather than constants.
+
+`pipeline.CountAddresses` counts every IPv4 target form masscan accepts (single/CIDR/range, comma-separated) and returns **0 for anything it cannot count exactly** - a hostname, which only the scanner's own DNS resolves at scan time, where guessing 1 would be a claim rather than a count. It deliberately does *not* subtract IP excludes: masscan applies those itself via `--excludefile`, and how many addresses a `/8` exclude removes from a `/16` target isn't answerable without enumerating both. The excludes are listed separately right above, which is the honest presentation. The IPv6 path is the exception and *does* subtract, because that target form is always an explicit address list. The estimate covers **masscan's pass only**, stated on the line itself - nmap and the stages after it depend entirely on how much is found, so estimating them would be a guess dressed up as a number.
+
+### `queue` and `history`: diagnosing a scanner without the dashboard
+
+The dashboard shows a scanner's submit-queue depth as one number, which is enough to notice a problem and not enough to do anything about it - and the case where it matters most is the one where the webserver is itself unreachable. `porttorch queue list/flush/discard` and `porttorch history` are for that case.
+
+`submitqueue.ListPending` reads the queue without touching it, and `DiscardPending` is the escape hatch for a backlog that can never drain (results for a scan job the webserver no longer has), which was otherwise only reachable by deleting the directory by hand. `discard` prompts for a typed confirmation unless `--yes`, matching the dashboard's own treatment of destructive actions. `flush` runs the exact `Drain` the scanner already performs at the start of every scan - same attempt counting, same give-up rules - rather than a second implementation of retrying.
+
+`auditlog.ReadSince` is the reader for the append-only scan audit log, which until now could only be read with `jq`, as root, because it sits beside a 0600 config in the service account's home. **A line that doesn't parse is skipped rather than failing the read**: the file is appended to by a live process, so a truncated final line is a normal thing to encounter, and refusing to show any history because of it would be exactly backwards. `--unsubmitted` is the durable record of what never reached the webserver - including entries the retry queue has since given up on and deleted, which is precisely what the queue itself can no longer tell you.
+
+`--since` accepts `24h`, `7d` and `2026-09-01`. The `d` suffix is handled explicitly because `time.ParseDuration` rejects it, and days are the unit anyone asking this question actually uses.
+
 ### nmap's root-only features go through a validating sudo wrapper
 
 Two nmap features this pipeline wants are refused for anyone but uid 0:

@@ -527,6 +527,15 @@ The transporter is still built lazily and cached, but the cache can now go stale
 
 ### Saved searches alert on new matches, not on every check
 
+**`GET /api/saved-searches/matches` and the `/saved-searches` page** exist because a saved search was only ever a chip in the dashboard sidebar - enough to re-run one, and nothing else - while it also drives the `saved_search.match` webhook. "Which of these is actually firing, and at what" had no answer anywhere in the UI.
+
+The counts come from `saved_search_matches` - the checker's own record of what matched at its last pass - rather than by re-running each search. That is deliberately the *less* fresh number, and it is the right one: it is exactly the set the next alert will be diffed against, so a host listed there will **not** alert again and one that is missing will. Re-running the queries would give a fresher figure that answers a different question. It is a separate route from `GET /` for the same reason: that one feeds the sidebar on every page load, where only the name is needed, and counting matches means touching every saved search's hosts. The response carries a five-host preview rather than every match, since one search matching four hundred hosts should not push the next one off the screen.
+
+The scanner restriction applies to the join, so a restricted session's *count* shrinks with the host list rather than only the visible names - pinned by a test where both hosts match but only one belongs to an assigned scanner.
+
+**Bulk retire** joins tag/rescan/delete in the Dashboard's selection toolbar, looping the same single-host endpoint (`Promise.allSettled`, no bulk API surface) like the others, and operator-level like the action it loops rather than admin-only like delete. Decommissioning is the case retire exists for and it happens twenty machines at a time; the alternatives were twenty trips to twenty host pages, or deleting them and losing the history.
+
+
 A saved search (`saved_searches`, operator-level like tags/comments) stores a dashboard filter set exactly as `URLSearchParams` sends it (same flat, comma-joined-string shape `parseHostFilterParams` already parses from `req.query`) - `server/src/savedSearches/checker.ts` reuses `parseHostFilterParams`/`applyHostFilters` (both exported from `search/routes.ts` for exactly this reason) unchanged, so a saved search can never silently drift from what the dashboard itself would show for the same filters. A 5-minute ticker re-runs each saved search's query and diffs the resulting host-id set against `saved_search_matches` (last known matches) - only genuinely *new* matches fire a `saved_search.match` webhook; hosts that already matched last time stay quiet, and hosts that no longer match are removed from `saved_search_matches` so they'd alert again if they started matching in the future. This event is scoped like `host.new`/`port.opened`: any webhook subscribed to it fires for *every* saved search's matches, not just one - there's no per-search webhook targeting.
 
 ### The Digest is a fleet-wide diff over an arbitrary time range, not just "since now"

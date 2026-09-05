@@ -86,7 +86,7 @@ Each item below is a one-line summary - click **Details** to expand it.
   On top of that, every scan automatically tags a host by the services it was actually found running: `WebServer`, `FTP-Server`, `SSH-Server`, `Telnet`, `DNS-Server`, `RDP`, `SMB`, `Mail-Server`, `LDAP`, `VNC`, `MySQL`, `PostgreSQL`, `MSSQL`, `MongoDB`, `Redis`, `Docker-API`, `SNMP`, and `IPMI` - so "show me every host still exposing Telnet" is a one-click filter without anyone having to tag them by hand. Auto-tags are shown with a dashed outline on the host detail page to distinguish them from your own, and are never removed automatically (a host that once ran FTP keeps the record of it); you can delete one by hand, but it comes back if a later scan still finds that service open.
   </details>
 
-- :floppy_disk: **Saved searches** - save a filter combination by name, get a webhook the first time a new host matches it.
+- :floppy_disk: **Saved searches** - save a filter combination by name, get a webhook the first time a new host matches it, and see on their own page which searches are currently matching what.
   <details>
   <summary>Details</summary>
 
@@ -681,6 +681,55 @@ found (warnings only - both features are best-effort), and that the
 webserver is reachable and the configured API key is valid - all without
 running an actual scan. Exits non-zero if masscan, nmap, or the
 webserver connection fail.
+
+
+#### Choosing what a manual scan does
+
+`porttorch scan` takes the same choices the dashboard offers, rather than
+always running the default set:
+
+```bash
+porttorch scan --target 10.0.0.0/24 --ports 1-1000 \
+  --nse-profile all-safe --nuclei safe --rate 500
+```
+
+`--nse-profile` is `default` (31 curated scripts), `all-safe` (nmap's own
+safe-and-not-intrusive category) or `custom` with `--nse-scripts`.
+`--nuclei` is `off` (the default), `safe` or `custom` with `--nuclei-tags`.
+`--rate` overrides `masscanRate` for this one scan.
+
+**`--dry-run` tells you what the scan will cost before you start it** -
+how many addresses and ports that actually is, how many probes, and an
+estimated masscan runtime, plus every exclude that applies:
+
+```
+Scan plan:
+  Addresses:  65,536
+  Ports:      65,535 per address
+  Probes:     4,294,901,760 at 1,000 packets/second
+  masscan:    about 49.7 days (its pass only - nmap and the rest depend on what is found)
+  NSE:        default (31 curated scripts)
+  nuclei:     off
+```
+
+#### Inspecting a scanner without the dashboard
+
+Three subcommands answer the questions you have while sitting on the
+scanner host - including when the reason you are there is that the
+webserver is unreachable:
+
+```bash
+porttorch queue list       # scan results waiting to reach the webserver
+porttorch queue flush      # retry them now
+porttorch queue discard    # give up on them (asks first)
+porttorch history --since 7d --unsubmitted
+```
+
+`history` reads the scanner's own append-only scan audit log - a
+permanent local record of every host it has touched, written whether or
+not the webserver was reachable. `--unsubmitted` is the durable record of
+results that never arrived, including ones the retry queue has since
+given up on.
 
 ### What each scan does
 
