@@ -262,6 +262,14 @@ export interface HostFilters {
   excludePorts?: number[];
   excludeServices?: string[];
   excludeTags?: string[];
+  // service_product ("Unbound"), not service_name ("domain") - see the
+  // server-side HostFilterParams for why this is its own dimension.
+  products?: string[];
+  excludeProducts?: string[];
+  // hosts.mac_vendor. Only populated for hosts on a scanner's own L2
+  // segment, since nmap resolves a MAC via ARP.
+  macVendors?: string[];
+  excludeMacVendors?: string[];
   osFamily?: string;
   deviceType?: string;
   hideEmpty?: boolean;
@@ -289,6 +297,8 @@ export interface Facets {
   tags: Array<{ tag: string; count: number }>;
   osFamilies: Array<{ osFamily: string; count: number }>;
   deviceTypes: Array<{ deviceType: string; count: number }>;
+  products: Array<{ product: string; count: number }>;
+  macVendors: Array<{ macVendor: string; count: number }>;
 }
 
 export interface HostDetail {
@@ -507,6 +517,9 @@ export interface ScanStatsResult {
   osFamilies: StatSlice[];
   deviceTypes: StatSlice[];
   tags: StatSlice[];
+  software: StatSlice[];
+  softwareVersions: StatSlice[];
+  macVendors: StatSlice[];
   performanceWindowDays: number;
   scanPerformance: Array<{
     id: string | null;
@@ -1134,9 +1147,13 @@ function hostsQueryString(filters: HostFilters, page?: number, pageSize?: number
   const portParam = withNegated(filters.ports, filters.excludePorts);
   const serviceParam = withNegated(filters.services, filters.excludeServices);
   const tagParam = withNegated(filters.tags, filters.excludeTags);
+  const productParam = withNegated(filters.products, filters.excludeProducts);
+  const macVendorParam = withNegated(filters.macVendors, filters.excludeMacVendors);
   if (portParam) params.set("port", portParam);
   if (serviceParam) params.set("service", serviceParam);
   if (tagParam) params.set("tag", tagParam);
+  if (productParam) params.set("product", productParam);
+  if (macVendorParam) params.set("macVendor", macVendorParam);
   if (filters.osFamily) params.set("osFamily", filters.osFamily);
   if (filters.deviceType) params.set("deviceType", filters.deviceType);
   if (filters.hideEmpty) params.set("hideEmpty", "true");

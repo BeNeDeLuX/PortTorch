@@ -255,6 +255,8 @@ restored older schema. Compose restarts it (`restart: unless-stopped`);
 the UI polls `/healthz` - which needs no session, and that matters,
 because the session table was replaced too.
 
+**One account's password does not come back with the backup: the admin named by `ADMIN_USERNAME`.** `docker-entrypoint.sh` runs `seed-admin` on every boot, and the restore's own restart is a boot - so that account's password is re-applied from `.env` afterwards, overwriting whatever the backup held for it. Found by restoring a real production backup into a disposable stack and being unable to log in with the production password. Not a bug to fix: it is also the way back in when the backup's own admin password is the thing that was lost. But it makes the otherwise-true statement "the accounts from the backup apply" wrong for exactly one account, so the UI says so.
+
 **The TLS certificate is deliberately not restored**, though the archive
 carries it. A certificate identifies *this* deployment; restoring one from
 another instance installs a certificate issued for a different hostname
@@ -288,6 +290,60 @@ when an archive also holds entries it had to sanitise.
 Disk is checked before staging an archive and before accepting an upload
 (against `Content-Length`), returning `507` rather than filling the disk
 and failing partway.
+
+### Two inventory dimensions: software product, and hardware manufacturer
+
+"What are we running, and on what" was answerable only by exporting and
+pivoting. Both signals were already being collected and neither was a
+filter, a facet or a chart.
+
+**`current_host_ports.service_product` is not `service_name`.** The
+service name is the protocol that answered (`domain`, `netbios-ssn`); the
+product is the software behind it (`Unbound`, `Samba smbd`). Free-text
+`q` had matched the product all along, which is exactly why the gap was
+easy to miss - you could find it, you just could not narrow by it, and a
+search box does not scope the facet counts the way a filter does.
+Filtering is an `EXISTS` on an **open** port, mirroring the service
+filter: without that condition `-Unbound` would also exclude a host where
+the product was only ever seen on a port since found closed.
+
+**`hosts.mac_vendor` is real hardware inventory, and structurally
+partial.** nmap derives it from the MAC's OUI and only ever resolves a
+MAC by ARP, so it covers hosts sharing an L2 segment with a scanner and
+nothing else - measured on a real fleet: 4 of 512 hosts, every one of
+them in the scanner's own /24. That is why the Scan Stats slice for the
+rest is labelled rather than dropped ("Not resolved"), the same reasoning
+as `os_family`'s "Not classified": on a fleet scanned entirely across
+routers that slice is the whole circle, which is a true answer, where an
+empty chart just looks broken. The Dashboard facet says the same thing in
+its empty state instead of "No data".
+
+**Negating a manufacturer needs the null case spelled out.** `NOT
+(mac_vendor IN (...))` evaluates to NULL, not true, for a host with no
+MAC - so a plain `NOT IN` silently drops every host reached across a
+router, which is nearly the whole fleet. The filter is
+`mac_vendor IS NULL OR NOT (mac_vendor IN (...))`, pinned by
+`inventoryFilters.integration.test.ts` and confirmed on real data: 3
+hosts match Proxmox and 509 match its negation, adding to 512.
+
+Both dimensions had to be added to `hasActiveHostFilters`, or the facet
+routes' "skip the join when nothing is filtered" fast path would keep
+reporting fleet-wide counts while a filter was active - the trap this
+file already documents for the per-user scanner restriction. Both also
+went into the CSV and JSON exports, where `os_family`/`device_type` were
+already present but the manufacturer was not; the integration test
+asserts the new column's *position*, since a header added without its
+value shifts every field after it.
+
+Scan Stats gained three slices. Software is counted **per distinct host,
+not per open port** - the same product on three ports of one host is one
+thing to patch, and counting ports lets a handful of multi-homed services
+dominate. Unlike `os_family` it does not partition the fleet: a host
+running two products appears under both, same as tags. "Software
+versions" is the same rows keyed on product+version, because the version
+spread is the half that drives patching; a product nmap identified
+without a version keeps its own "(version unknown)" slice rather than
+being merged into a neighbouring one.
 
 ### Outbound HTTP proxy
 

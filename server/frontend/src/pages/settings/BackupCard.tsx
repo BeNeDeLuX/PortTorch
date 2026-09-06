@@ -102,7 +102,7 @@ export default function BackupCard() {
         )}
         <p className="host-meta">
           {backOnline
-            ? "The webserver has restarted and is back up. Accounts and sign-ins came from the backup too, so if your own session was not in it you will be asked to sign in again - with the password that account had when the backup was taken."
+            ? "The webserver has restarted and is back up. Accounts and sign-ins came from the backup too, so if your own session was not in it you will be asked to sign in again - with the password that account had when the backup was taken. The one exception is the admin account named by ADMIN_USERNAME, whose password the restart re-applies from .env."
             : "The webserver is restarting so it picks up the restored database cleanly. This usually takes a few seconds."}
         </p>
         <div className="inline-actions">
@@ -149,7 +149,9 @@ export default function BackupCard() {
         <IconWarning /> This replaces the entire database and every screenshot with the archive's contents. Anything
         recorded since that backup was taken is lost, and it cannot be undone. Accounts go with it: the users,
         passwords and signed-in sessions that apply afterwards are the ones the backup holds, so you may be signed out
-        and need the password that account had back then.
+        and need the password that account had back then. The exception is the admin account named by{" "}
+        <code>ADMIN_USERNAME</code> - the restart re-seeds it from <code>ADMIN_PASSWORD</code> in <code>.env</code>,
+        which is also how you get back in if the backup's own admin password is lost.
       </div>
       <p className="host-meta">
         The TLS certificate in the archive is deliberately <strong>not</strong> restored: it identifies this deployment,

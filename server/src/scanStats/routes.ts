@@ -110,7 +110,7 @@ scanStatsRouter.get("/", asyncHandler(async (req, res) => {
     ${hideRetired ? sql`AND h.retired_at IS NULL` : sql``}
   `;
 
-  const [agents, hostRows, portRows, certRows, osRows, deviceRows, tagRows, scanRows, subnetRows, staleRows, sshRows, shotRows, topHostRows] =
+  const [agents, hostRows, portRows, certRows, osRows, deviceRows, tagRows, scanRows, subnetRows, staleRows, sshRows, shotRows, topHostRows, softwareRows, macVendorRows] =
     await Promise.all([
     db.selectFrom("scanner_agents").select(["id", "name"]).where("revoked_at", "is", null).execute(),
 
@@ -276,6 +276,38 @@ scanStatsRouter.get("/", asyncHandler(async (req, res) => {
       ORDER BY count(*) DESC, h.ip
       LIMIT ${TOP_ROWS}
     `.execute(db),
+
+    // What software is actually running, not what protocol answers:
+    // service_name is "domain", service_product is "Unbound". Counted per
+    // distinct host rather than per open port - the same product on three
+    // ports of one host is one thing to inventory and one thing to patch,
+    // and counting ports would let a handful of multi-homed services
+    // dominate the chart. Unlike os_family this does not partition the
+    // fleet: a host running two products appears under both, same as tags.
+    sql<{ product: string | null; version: string | null; count: string | number }>`
+      SELECT chp.service_product AS product, chp.service_version AS version,
+             count(DISTINCT chp.host_id) AS count
+      FROM current_host_ports chp
+      JOIN hosts h ON h.id = chp.host_id
+      WHERE chp.state = 'open'
+        AND chp.service_product IS NOT NULL
+        AND chp.service_product <> '' ${hostWhere}
+      GROUP BY 1, 2
+    `.execute(db),
+
+    // nmap derives the manufacturer from the MAC's OUI, and only ever
+    // resolves a MAC via ARP - which stops at the first router. So this
+    // is a chart of the hosts sharing an L2 segment with a scanner, and
+    // nothing else. Hosts without one get their own slice for the same
+    // reason os_family does: on a fleet scanned entirely across routers
+    // that slice is the whole circle, which is the true answer and tells
+    // you immediately why, where an empty chart would just look broken.
+    sql<{ value: string | null; count: string | number }>`
+      SELECT h.mac_vendor AS value, count(*) AS count
+      FROM hosts h
+      WHERE true ${hostWhere}
+      GROUP BY 1
+    `.execute(db),
   ]);
 
   const agentNames = new Map(agents.map((a) => [a.id, a.name]));
@@ -365,6 +397,33 @@ scanStatsRouter.get("/", asyncHandler(async (req, res) => {
   const osCounts = labelledCounts(osRows.rows);
   const deviceCounts = labelledCounts(deviceRows.rows);
   const tagCounts = new Map<string, number>(tagRows.rows.map((r) => [r.value, Number(r.count)]));
+
+  // Two views of the same rows, because they answer different questions:
+  // "what do we run" (the product alone) and "which versions are out
+  // there" (the thing that actually drives patching). A product nmap
+  // identified without a version keeps its own slice rather than being
+  // dropped or merged into a neighbouring version - "we do not know which
+  // version this is" is itself worth seeing.
+  const softwareCounts = new Map<string, number>();
+  const softwareVersionCounts = new Map<string, number>();
+  for (const row of softwareRows.rows) {
+    const product = row.product?.trim();
+    if (!product) continue;
+    const count = Number(row.count);
+    softwareCounts.set(product, (softwareCounts.get(product) ?? 0) + count);
+    const version = row.version?.trim();
+    const label = version ? `${product} ${version}` : `${product} (version unknown)`;
+    softwareVersionCounts.set(label, (softwareVersionCounts.get(label) ?? 0) + count);
+  }
+
+  const macVendorCounts = new Map<string, number>();
+  for (const row of macVendorRows.rows) {
+    // Just "Not resolved" - the card's own hint and the section intro
+    // already say why, and the longer label was wide enough to be
+    // ellipsized in the legend, which loses the explanation anyway.
+    const label = row.value && row.value.trim() ? row.value.trim() : "Not resolved";
+    macVendorCounts.set(label, (macVendorCounts.get(label) ?? 0) + Number(row.count));
+  }
 
   const hostsByScanner = new Map<string | null, number>(
     hostRows.rows.map((r) => [r.scanner_agent_id, Number(r.count)])
@@ -603,6 +662,9 @@ scanStatsRouter.get("/", asyncHandler(async (req, res) => {
     osFamilies: topSlices(osCounts),
     deviceTypes: topSlices(deviceCounts),
     tags: topSlices(tagCounts),
+    software: topSlices(softwareCounts),
+    softwareVersions: topSlices(softwareVersionCounts),
+    macVendors: topSlices(macVendorCounts),
     scanPerformance,
     performanceWindowDays: PERFORMANCE_WINDOW_DAYS,
     topHostsByPorts,

@@ -74,6 +74,8 @@ function filtersFromSearchParams(searchParams: URLSearchParams): HostFilters {
   const port = splitNegated(parseCommaList(searchParams.get("port")));
   const service = splitNegated(parseCommaList(searchParams.get("service")));
   const tag = splitNegated(parseCommaList(searchParams.get("tag")));
+  const product = splitNegated(parseCommaList(searchParams.get("product")));
+  const macVendor = splitNegated(parseCommaList(searchParams.get("macVendor")));
   const ports = toPorts(port.include);
   const excludePorts = toPorts(port.exclude);
   const services = service.include;
@@ -87,6 +89,10 @@ function filtersFromSearchParams(searchParams: URLSearchParams): HostFilters {
     excludePorts: excludePorts.length ? excludePorts : undefined,
     excludeServices: service.exclude.length ? service.exclude : undefined,
     excludeTags: tag.exclude.length ? tag.exclude : undefined,
+    products: product.include.length ? product.include : undefined,
+    excludeProducts: product.exclude.length ? product.exclude : undefined,
+    macVendors: macVendor.include.length ? macVendor.include : undefined,
+    excludeMacVendors: macVendor.exclude.length ? macVendor.exclude : undefined,
     osFamily: searchParams.get("osFamily") ?? undefined,
     deviceType: searchParams.get("deviceType") ?? undefined,
     hideEmpty: searchParams.get("hideEmpty") === "true" || undefined,
@@ -548,9 +554,13 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
     const portParam = withNegated(merged.ports, merged.excludePorts);
     const serviceParam = withNegated(merged.services, merged.excludeServices);
     const tagParam = withNegated(merged.tags, merged.excludeTags);
+    const productParam = withNegated(merged.products, merged.excludeProducts);
+    const macVendorParam = withNegated(merged.macVendors, merged.excludeMacVendors);
     if (portParam) next.set("port", portParam);
     if (serviceParam) next.set("service", serviceParam);
     if (tagParam) next.set("tag", tagParam);
+    if (productParam) next.set("product", productParam);
+    if (macVendorParam) next.set("macVendor", macVendorParam);
     if (merged.osFamily) next.set("osFamily", merged.osFamily);
     if (merged.deviceType) next.set("deviceType", merged.deviceType);
     if (merged.hideEmpty) next.set("hideEmpty", "true");
@@ -644,6 +654,26 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
     setShowAllPorts(true);
   }
 
+  function clearProductFacet(product: string) {
+    updateFilters({
+      products: orUndefined((filters.products ?? []).filter((v) => v !== product)),
+      excludeProducts: orUndefined((filters.excludeProducts ?? []).filter((v) => v !== product)),
+    });
+  }
+  function clearMacVendorFacet(vendor: string) {
+    updateFilters({
+      macVendors: orUndefined((filters.macVendors ?? []).filter((v) => v !== vendor)),
+      excludeMacVendors: orUndefined((filters.excludeMacVendors ?? []).filter((v) => v !== vendor)),
+    });
+  }
+  function toggleProductFacet(product: string) {
+    const next = cycleFacet(filters.products, filters.excludeProducts, product);
+    updateFilters({ products: next.include, excludeProducts: next.exclude });
+  }
+  function toggleMacVendorFacet(vendor: string) {
+    const next = cycleFacet(filters.macVendors, filters.excludeMacVendors, vendor);
+    updateFilters({ macVendors: next.include, excludeMacVendors: next.exclude });
+  }
   function toggleServiceFacet(service: string) {
     const next = cycleFacet(filters.services, filters.excludeServices, service);
     updateFilters({ services: next.include, excludeServices: next.exclude });
@@ -707,6 +737,20 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
       onRemove: () => clearTagFacet(tag),
     });
   }
+  for (const product of filters.products ?? []) {
+    activeChips.push({
+      key: `product-${product}`,
+      label: `Software: ${product}`,
+      onRemove: () => clearProductFacet(product),
+    });
+  }
+  for (const vendor of filters.macVendors ?? []) {
+    activeChips.push({
+      key: `macvendor-${vendor}`,
+      label: `Manufacturer: ${vendor}`,
+      onRemove: () => clearMacVendorFacet(vendor),
+    });
+  }
   // Exclusions get their own chips, labelled so the direction is
   // unmistakable - an unlabelled "Port: 53" chip that meant the opposite
   // of the one above it would be worse than no chip at all.
@@ -722,6 +766,20 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
       key: `exclude-service-${service}`,
       label: `Not service: ${service}`,
       onRemove: () => clearServiceFacet(service),
+    });
+  }
+  for (const product of filters.excludeProducts ?? []) {
+    activeChips.push({
+      key: `exclude-product-${product}`,
+      label: `Not software: ${product}`,
+      onRemove: () => clearProductFacet(product),
+    });
+  }
+  for (const vendor of filters.excludeMacVendors ?? []) {
+    activeChips.push({
+      key: `exclude-macvendor-${vendor}`,
+      label: `Not manufacturer: ${vendor}`,
+      onRemove: () => clearMacVendorFacet(vendor),
     });
   }
   for (const tag of filters.excludeTags ?? []) {
@@ -1054,6 +1112,50 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
             </ul>
           ) : (
             <p className="empty">No data</p>
+          )}
+
+          <h2>Software</h2>
+          {facets && facets.products.length > 0 ? (
+            <ul className="facet-list">
+              {facets.products.map((p) => (
+                <li key={p.product}>
+                  <button
+                    className={facetClass(filters.products?.includes(p.product) ?? false, filters.excludeProducts?.includes(p.product) ?? false)}
+                    title={facetTitle(filters.products?.includes(p.product) ?? false, filters.excludeProducts?.includes(p.product) ?? false)}
+                    onClick={() => toggleProductFacet(p.product)}
+                  >
+                    <span>{p.product}</span>
+                    <span className="facet-count">{p.count}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="empty">No data</p>
+          )}
+
+          <h2>Manufacturer</h2>
+          {facets && facets.macVendors.length > 0 ? (
+            <ul className="facet-list">
+              {facets.macVendors.map((m) => (
+                <li key={m.macVendor}>
+                  <button
+                    className={facetClass(filters.macVendors?.includes(m.macVendor) ?? false, filters.excludeMacVendors?.includes(m.macVendor) ?? false)}
+                    title={facetTitle(filters.macVendors?.includes(m.macVendor) ?? false, filters.excludeMacVendors?.includes(m.macVendor) ?? false)}
+                    onClick={() => toggleMacVendorFacet(m.macVendor)}
+                  >
+                    <span>{m.macVendor}</span>
+                    <span className="facet-count">{m.count}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            // Not "no data" but why: nmap reads the manufacturer from the
+            // MAC's OUI and only ever resolves a MAC by ARP, so this is
+            // empty for a fleet scanned entirely across routers - which
+            // looks like a broken facet unless it says so.
+            <p className="empty">No MAC addresses resolved - only hosts on a scanner's own network segment have one.</p>
           )}
 
           <h2>Tags</h2>

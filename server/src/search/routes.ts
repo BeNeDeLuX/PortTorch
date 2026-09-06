@@ -81,6 +81,20 @@ export interface HostFilterParams {
   excludePorts: number[];
   excludeServices: string[];
   excludeTags: string[];
+  // The software a port is actually running (current_host_ports.service_product,
+  // e.g. "Unbound", "Samba smbd"), as opposed to the protocol-level
+  // service_name above ("domain", "netbios-ssn"). Free-text q has always
+  // matched it; this makes it a first-class filter, because "which hosts
+  // run this product" is the inventory question and typing it into a
+  // search box does not narrow the facet counts the way a filter does.
+  products: string[];
+  excludeProducts: string[];
+  // hosts.mac_vendor - the hardware manufacturer nmap derives from the
+  // MAC's OUI. Only ever populated for hosts on a scanner's own L2
+  // segment (nmap resolves it via ARP), so this narrows to a subset by
+  // construction; see the "Not resolved" slice in the Scan Stats chart.
+  macVendors: string[];
+  excludeMacVendors: string[];
   osFamily: string;
   deviceType: string;
   hideEmpty: boolean;
@@ -143,6 +157,8 @@ export function parseHostFilterParams(query: Record<string, unknown>): HostFilte
   const port = splitNegated(parseCommaList(query.port));
   const service = splitNegated(parseCommaList(query.service));
   const tag = splitNegated(parseCommaList(query.tag));
+  const product = splitNegated(parseCommaList(query.product));
+  const macVendor = splitNegated(parseCommaList(query.macVendor));
   const toPorts = (values: string[]) =>
     values.map((p) => parseInt(p, 10)).filter((p) => !Number.isNaN(p));
 
@@ -154,6 +170,10 @@ export function parseHostFilterParams(query: Record<string, unknown>): HostFilte
     excludePorts: toPorts(port.exclude),
     excludeServices: service.exclude,
     excludeTags: tag.exclude,
+    products: product.include,
+    excludeProducts: product.exclude,
+    macVendors: macVendor.include,
+    excludeMacVendors: macVendor.exclude,
     osFamily: typeof query.osFamily === "string" ? query.osFamily.trim() : "",
     deviceType: typeof query.deviceType === "string" ? query.deviceType.trim() : "",
     hideEmpty: query.hideEmpty === "true" || query.hideEmpty === "1",
@@ -186,6 +206,10 @@ export function applyHostFilters(
     excludePorts,
     excludeServices,
     excludeTags,
+    products,
+    excludeProducts,
+    macVendors,
+    excludeMacVendors,
     osFamily,
     deviceType,
     hideEmpty,
@@ -217,6 +241,8 @@ export function applyHostFilters(
         ...(isIp ? [eb("hosts.ip", "=", q)] : []),
         ...(isCidr ? [sql<boolean>`hosts.ip <<= ${q}::cidr`] : []),
         eb("hosts.hostname", "ilike", `%${q}%`),
+        eb("hosts.mac_vendor", "ilike", `%${q}%`),
+        eb("hosts.mac_address", "ilike", `%${q}%`),
         eb.exists(
           eb
             .selectFrom("current_host_ports as chp")
@@ -371,6 +397,50 @@ export function applyHostFilters(
           eb.selectFrom("host_tags as ht").select("ht.id").whereRef("ht.host_id", "=", "hosts.id").where("ht.tag", "=", tag)
         )
       )
+    );
+  }
+
+  // Same EXISTS-on-an-open-port shape as the service filter above. The
+  // state = 'open' condition matters most on the negated side: without
+  // it, -Unbound would also exclude hosts where the product was only ever
+  // seen on a port since found closed.
+  for (const product of products) {
+    query = query.where((eb: any) =>
+      eb.exists(
+        eb
+          .selectFrom("current_host_ports as chp")
+          .select("chp.id")
+          .whereRef("chp.host_id", "=", "hosts.id")
+          .where("chp.service_product", "=", product)
+          .where("chp.state", "=", "open")
+      )
+    );
+  }
+
+  for (const product of excludeProducts) {
+    query = query.where((eb: any) =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom("current_host_ports as chp")
+            .select("chp.id")
+            .whereRef("chp.host_id", "=", "hosts.id")
+            .where("chp.service_product", "=", product)
+            .where("chp.state", "=", "open")
+        )
+      )
+    );
+  }
+
+  // A column on hosts rather than a subquery, so a plain IN is enough -
+  // and a list rather than a single value, matching how port/service/tag
+  // already accept several.
+  if (macVendors.length > 0) {
+    query = query.where("hosts.mac_vendor", "in", macVendors);
+  }
+  if (excludeMacVendors.length > 0) {
+    query = query.where((eb: any) =>
+      eb.or([eb("hosts.mac_vendor", "is", null), eb.not(eb("hosts.mac_vendor", "in", excludeMacVendors))])
     );
   }
 
@@ -658,6 +728,8 @@ hostsRouter.get("/export.csv", asyncHandler(async (req, res) => {
         "scanner_agents.name as scanner_agent_name",
         "hosts.os_family as os_family",
         "hosts.device_type as device_type",
+        "hosts.mac_address as mac_address",
+        "hosts.mac_vendor as mac_vendor",
         "current_host_ports.port as port",
         "current_host_ports.protocol as protocol",
         "current_host_ports.service_name as service_name",
@@ -676,7 +748,7 @@ hostsRouter.get("/export.csv", asyncHandler(async (req, res) => {
     const rows = await query.limit(20_000).execute();
 
     const lines = [
-      "ip,hostname,scanner_agent,os_family,device_type,port,protocol,service_name,service_product,service_version,last_seen_at",
+      "ip,hostname,scanner_agent,os_family,device_type,mac_address,mac_vendor,port,protocol,service_name,service_product,service_version,last_seen_at",
       ...rows.map((r) =>
         [
           r.ip,
@@ -684,6 +756,8 @@ hostsRouter.get("/export.csv", asyncHandler(async (req, res) => {
           r.scanner_agent_name ?? "",
           r.os_family ?? "",
           r.device_type ?? "",
+          r.mac_address ?? "",
+          r.mac_vendor ?? "",
           r.port,
           r.protocol,
           r.service_name ?? "",
@@ -712,6 +786,8 @@ hostsRouter.get("/export.csv", asyncHandler(async (req, res) => {
       "hosts.last_seen_at as last_seen_at",
       "hosts.os_family as os_family",
       "hosts.device_type as device_type",
+      "hosts.mac_address as mac_address",
+      "hosts.mac_vendor as mac_vendor",
       // Same reasoning as the host list above - two different scanners can
       // each have a real device at the same ip, so this needs to be in the
       // export to tell those rows apart.
@@ -727,6 +803,8 @@ hostsRouter.get("/export.csv", asyncHandler(async (req, res) => {
       "hosts.last_seen_at",
       "hosts.os_family",
       "hosts.device_type",
+      "hosts.mac_address",
+      "hosts.mac_vendor",
       "scanner_agents.name",
     ])
     .orderBy("hosts.last_seen_at", "desc");
@@ -738,7 +816,7 @@ hostsRouter.get("/export.csv", asyncHandler(async (req, res) => {
   const hosts = await query.limit(2000).execute();
 
   const lines = [
-    "ip,hostname,scanner_agent,os_family,device_type,open_port_count,last_seen_at",
+    "ip,hostname,scanner_agent,os_family,device_type,mac_address,mac_vendor,open_port_count,last_seen_at",
     ...hosts.map((h) =>
       [
         h.ip,
@@ -746,6 +824,8 @@ hostsRouter.get("/export.csv", asyncHandler(async (req, res) => {
         h.scanner_agent_name ?? "",
         h.os_family ?? "",
         h.device_type ?? "",
+        h.mac_address ?? "",
+        h.mac_vendor ?? "",
         h.open_port_count,
         new Date(h.last_seen_at).toISOString(),
       ]
@@ -781,6 +861,8 @@ hostsRouter.get("/export.json", asyncHandler(async (req, res) => {
       "hosts.os_family as os_family",
       "hosts.os_name as os_name",
       "hosts.device_type as device_type",
+      "hosts.mac_address as mac_address",
+      "hosts.mac_vendor as mac_vendor",
       "scanner_agents.name as scanner_agent_name",
     ])
     .orderBy("hosts.last_seen_at", "desc");
@@ -814,6 +896,8 @@ hostsRouter.get("/export.json", asyncHandler(async (req, res) => {
     osFamily: h.os_family,
     osName: h.os_name,
     deviceType: h.device_type,
+    macAddress: h.mac_address,
+    macVendor: h.mac_vendor,
     lastSeenAt: h.last_seen_at,
     openPorts: (portsByHostId.get(h.id) ?? []).map((p) => ({
       port: p.port,
@@ -838,6 +922,8 @@ function hasActiveHostFilters(f: HostFilterParams): boolean {
       f.ports.length ||
       f.services.length ||
       f.tags.length ||
+      f.products.length ||
+      f.macVendors.length ||
       f.osFamily ||
       f.deviceType ||
       f.hideEmpty ||
@@ -929,12 +1015,54 @@ hostsRouter.get("/facets", asyncHandler(async (req, res) => {
   }
   const deviceTypes = await deviceQuery.groupBy("device_type").orderBy("count", "desc").orderBy("device_type").limit(20).execute();
 
+  let productsQuery = db
+    .selectFrom("current_host_ports")
+    .select([
+      "current_host_ports.service_product as service_product",
+      sql<number>`count(distinct current_host_ports.host_id)`.as("count"),
+    ])
+    .where("current_host_ports.state", "=", "open")
+    .where("current_host_ports.service_product", "is not", null)
+    .where("current_host_ports.service_product", "!=", "");
+  const productsFilters = { ...filters, products: [] };
+  if (hasActiveHostFilters(productsFilters) || allowed) {
+    productsQuery = applyHostFilters(
+      productsQuery.innerJoin("hosts", "hosts.id", "current_host_ports.host_id"),
+      productsFilters,
+      allowed
+    );
+  }
+  const products = await productsQuery
+    .groupBy("current_host_ports.service_product")
+    .orderBy("count", "desc")
+    .orderBy("current_host_ports.service_product")
+    .limit(10)
+    .execute();
+
+  let macVendorQuery = db
+    .selectFrom("hosts")
+    .select(["mac_vendor", sql<number>`count(*)`.as("count")])
+    .where("mac_vendor", "is not", null)
+    .where("mac_vendor", "!=", "");
+  const macVendorFilters = { ...filters, macVendors: [] };
+  if (hasActiveHostFilters(macVendorFilters) || allowed) {
+    macVendorQuery = applyHostFilters(macVendorQuery, macVendorFilters, allowed);
+  }
+  const macVendors = await macVendorQuery
+    .groupBy("mac_vendor")
+    .orderBy("count", "desc")
+    .orderBy("mac_vendor")
+    .limit(20)
+    .execute();
+
   res.json({
     ports,
     services: services.map((s) => ({ service: s.service_name as string, count: Number(s.count) })),
     tags: tags.map((t) => ({ tag: t.tag, count: Number(t.count) })),
     osFamilies: osFamilies.map((o) => ({ osFamily: o.os_family as string, count: Number(o.count) })),
     deviceTypes: deviceTypes.map((d) => ({ deviceType: d.device_type as string, count: Number(d.count) })),
+    products: products.map((p) => ({ product: p.service_product as string, count: Number(p.count) })),
+    macVendors: macVendors.map((m) => ({ macVendor: m.mac_vendor as string, count: Number(m.count) })),
   });
 }));
 

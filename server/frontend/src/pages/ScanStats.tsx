@@ -270,6 +270,27 @@ export default function ScanStats({ me, onLogout }: { me: Me; onLogout: () => vo
           </section>
 
           <section>
+            <h2>Software and hardware</h2>
+            <p className="empty">
+              What is actually running, and on what. Software comes from nmap's service fingerprinting, so it covers
+              any host with an identified service, wherever it sits. The manufacturer comes from the MAC address, which
+              nmap can only resolve by ARP - so it only ever covers hosts sharing a network segment with a scanner, and
+              everything reached across a router falls into "Not resolved".
+            </p>
+            <div className="chart-grid">
+              <ChartCard title="Software" hint="Counted per host, not per port - the same product on three ports of one host is one thing to patch">
+                <SliceView slices={stats.software} showTable={showTable} unit="hosts" />
+              </ChartCard>
+              <ChartCard title="Software versions" hint="The version spread behind each product; 'version unknown' means nmap identified the product but not the version">
+                <SliceView slices={stats.softwareVersions} showTable={showTable} unit="hosts" />
+              </ChartCard>
+              <ChartCard title="Manufacturer" hint="From the MAC address OUI - only available for hosts on a scanner's own network segment">
+                <SliceView slices={stats.macVendors} showTable={showTable} unit="hosts" />
+              </ChartCard>
+            </div>
+          </section>
+
+          <section>
             <h2>Scanning</h2>
             <p className="empty">
               Completed scans over the last {stats.performanceWindowDays} days. Durations come from completed scans
@@ -487,6 +508,9 @@ function exportRows(stats: ScanStatsResult, security: SecurityStatsResult | null
   add("Operating system", stats.osFamilies);
   add("Device type", stats.deviceTypes);
   add("Tags", stats.tags);
+  add("Software", stats.software);
+  add("Software versions", stats.softwareVersions);
+  add("Manufacturer", stats.macVendors);
   add("Certificate issuance", stats.certIssuance);
   add("Certificate issuer", stats.certIssuers);
   add("SSH host key types", stats.sshKeyTypes);

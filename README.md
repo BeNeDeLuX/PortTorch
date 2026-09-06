@@ -61,13 +61,15 @@ Each item below is a one-line summary - click **Details** to expand it.
   Free text across IP, hostname, service name/product, banners, known CVE ids (matched against the CVE correlation cache - see below), and text OCR'd from HTTP(S)/RDP screenshots (e.g. a login page's wording that never appears in any banner or header); also accepts a single IPv4 or IPv6 address, or a CIDR range of either (e.g. `10.0.0.0/24` or `2001:db8::/32`), to match all hosts in that subnet.
   </details>
 
-- :toolbox: **Facets & filters** - port, service, host tag, OS family, device type, scanner agent, and last-seen date range, all combinable - and negatable.
+- :toolbox: **Facets & filters** - port, service, software product, manufacturer, host tag, OS family, device type, scanner agent, and last-seen date range, all combinable - and negatable.
   <details>
   <summary>Details</summary>
 
   Filter by port, service, or host tag (multi-select, AND semantics: picking port 21 and 3389 means hosts with both open, not either), OS family, device type, or scanner agent (also multi-select, via a compact dropdown - useful once you're running more than one scanner, e.g. to look at a couple of network segments in isolation), and a last-seen date range; toggle "hide hosts without open ports" and "only hosts with a screenshot"; paginated (50/page) so large networks stay usable. Every filter combines with the free-text search box and with each other.
   
-  Clicking a port, service or tag facet cycles through three states: first click shows only hosts that have it, second click hides them instead (struck through, with a "Not port: 53" chip), third click clears it. Exclusions combine with everything else, so "has 443 open but not 53" is two clicks. The same reads in the URL and in the External API as a leading minus (`?port=443,-53`), so a saved search or a scripted query expresses it identically.
+  "Software" is what a port is actually running (`Unbound`, `Samba smbd` - nmap's service *product*, as opposed to the protocol-level service name `domain`/`netbios-ssn`), and "Manufacturer" is the hardware vendor behind a host's MAC address. The manufacturer is only ever known for hosts sharing a network segment with a scanner, since nmap resolves a MAC by ARP and that stops at the first router - so on a fleet scanned across routers that facet is legitimately empty, and says so rather than showing nothing.
+
+  Clicking a port, service, software, manufacturer or tag facet cycles through three states: first click shows only hosts that have it, second click hides them instead (struck through, with a "Not port: 53" chip), third click clears it. Exclusions combine with everything else, so "has 443 open but not 53" is two clicks. The same reads in the URL and in the External API as a leading minus (`?port=443,-53`), so a saved search or a scripted query expresses it identically.
   </details>
 
 - :card_index_dividers: **Grid or table view** - sortable/show-hide-able table columns, remembered per browser, with bulk-select actions.
@@ -229,6 +231,8 @@ Each item below is a one-line summary - click **Details** to expand it.
   The composition counterpart to Trends: Trends plots activity per day, this shows the current state - counted from the most recent observation of every host and port, so a port since found closed is not counted. The two therefore answer different questions and their "open ports" numbers are not expected to match.
 
   Donut charts (or tables, same toggle) for open ports by port number, port type (Web / Remote access / Databases / File sharing / Mail / Directory / Network infrastructure / Industrial-OT), TCP vs UDP, nmap-detected services, operating system, device type, tags, and four for TLS certificates (self-signed vs CA-issued, expiry, TLS version, key algorithm). Plus a **Security findings** section - CVE severity, EPSS exploit probability, web-finding severity, counts for KEV-listed and ransomware-associated CVEs, and a "most exposed hosts" shortlist ordered the way the Vulnerabilities page orders findings (confirmed-exploited first, then highest CVSS). A finding counts once per host and CVE, never once per port; findings marked a false positive or fixed are left out, while an accepted risk still counts, since the host is still exposed.
+
+  A **Software and hardware** section answers "what are we running, and on what": the software products nmap fingerprinted, the version spread behind each of them (the half that actually drives patching - a product identified without a version keeps its own "version unknown" slice rather than being merged away), and the hardware manufacturer from each host's MAC address. Software is counted per host rather than per open port, so the same product on three ports of one host is one thing to patch. The manufacturer chart is honest about its own limits: nmap only resolves a MAC by ARP, so everything reached across a router falls into a "Not resolved" slice - on a fleet scanned entirely across routers that slice is the whole circle, which is the true answer rather than an empty chart.
 
   Also per-scanner breakdowns (hosts, open ports, certificates), scan performance over the last 30 days (median/average/longest duration, failures, cancellations - durations from completed scans only), the hosts and /24 subnets with the most open ports, an opt-in comparison against 7/30/90 days ago, and CSV/JSON export. Plus a **Coverage and keys** section: SSH host key types with weak (`ssh-dss`, RSA under 2048) and shared-across-addresses counts, how many open web ports actually have a screenshot (a large gap usually means gowitness or its Chrome isn't working on that scanner), how much of your declared networks is covered, and how many open ports are **unconfirmed** - last seen before their own host's newest scan, which is the honest measure of how stale the inventory is. Everything on the page respects the scanner filter and an optional "hide retired hosts" toggle.
 
@@ -1360,7 +1364,11 @@ from the script in three deliberate ways:
   would be nothing left to recover with.
 - **The webserver restarts itself** when the restore finishes, so it comes
   back with migrations re-run and no caches describing the old database.
-  Compose brings it straight back (`restart: unless-stopped`).
+  Compose brings it straight back (`restart: unless-stopped`). That
+  restart also re-seeds the admin account named by `ADMIN_USERNAME` from
+  `ADMIN_PASSWORD`, so that one account's password comes from `.env`
+  rather than from the backup - which is also how you get back in if the
+  backup's own admin password is the thing you lost.
 
 If the database restore fails partway, the previous contents are put back
 automatically from a dump taken immediately beforehand, and the
