@@ -44,3 +44,26 @@ export function cveNotTriaged(hostIdExpr: string, cveIdExpr: string, states: rea
       AND (ft.review_at IS NULL OR ft.review_at > now())
   )`;
 }
+
+/**
+ * The fleet-wide counterpart: a `NOT EXISTS (...)` predicate excluding
+ * CVEs dismissed by a `finding_triage_rules` row, which applies to every
+ * host rather than one.
+ *
+ * Separate from cveNotTriaged rather than folded into it because the two
+ * are genuinely different statements ("we accepted this on this host" vs.
+ * "this never applies to us") and a caller occasionally wants only the
+ * per-host half. Callers that quantify exposure want both, and every one
+ * of them says so by using the pair.
+ *
+ * Rules carry no review date - only per-host decisions can expire - so
+ * there is no review_at condition here.
+ */
+export function cveRuleNotTriaged(cveIdExpr: string, states: readonly string[]) {
+  return sql`NOT EXISTS (
+    SELECT 1 FROM finding_triage_rules ftr
+    WHERE ftr.kind = 'cve'
+      AND ftr.cve_id = ${sql.raw(cveIdExpr)}
+      AND ftr.state = ANY(${[...states]})
+  )`;
+}

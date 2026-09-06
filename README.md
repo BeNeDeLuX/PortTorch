@@ -224,6 +224,19 @@ Each item below is a one-line summary - click **Details** to expand it.
   Fleet-wide time series (cumulative total hosts, and daily new hosts/scans/open-ports-seen/CVE-matches-seen) over a selectable range (7/30/90/365 days), filterable to one or more scanner agents. A separate **Security findings seen per day** chart splits that CVE count by how bad it is - all matches, CVSS 7.0+, and CISA KEV-listed - which is what makes "are we getting better or worse" answerable. Triage is deliberately not applied there (unlike Scan Stats): a decision carries no date for when it started applying, so honouring it would silently rewrite every past day. Chart or table view, same toggle style as the main dashboard's Grid/Table switch.
   </details>
 
+- :package: **Software** - every application version found on an open port, fleet-wide.
+  <details>
+  <summary>Details</summary>
+
+  One row per product *and* version, because that is the unit you patch - "we run Samba" is not actionable, "Samba 4.17.2 on 40 hosts" is.
+
+  **Web applications are included, which nmap alone cannot see**: it identifies the web *server* (nginx, a Go http server), while Grafana, Portainer and Forgejo run behind one. So rows come from three sources and the Source column says which - nmap's service probe, gowitness's technology fingerprint of the page, and the page's own HTML title. The title is not an identifier and the page says so, but it is the only place many self-hosted applications appear at all. A product seen by more than one source is merged into a single row rather than listed twice, and there is a filter per source. Each row shows how many hosts and how many ports run it, which scanners see it, when it was last seen, and how many known CVEs apply to that exact version (worst CVSS score, plus a KEV badge when at least one is confirmed exploited). Sorted worst-first by default: confirmed-exploited outranks a higher CVSS, same order the Vulnerabilities page uses.
+
+  A product whose version nmap could not determine keeps its own row rather than being folded into a neighbouring one - "we do not know which version these are" is separately actionable, and there is a filter for exactly those. Clicking a product opens the host list filtered to it, which is what turns the page into a work list. Search, sort, a "only versions with known CVEs" filter, and CSV/JSON/PDF export.
+
+  Only software behind a port that answered nmap's service probe appears here, so this is an inventory of what is *reachable*, not of what is installed.
+  </details>
+
 - :bar_chart: **Statistics -> Scan Stats** - what the fleet currently consists of, and how bad its open findings are.
   <details>
   <summary>Details</summary>

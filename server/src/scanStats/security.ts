@@ -1,6 +1,6 @@
 import { sql } from "kysely";
 import { db } from "../db";
-import { NOT_A_LIVE_RISK_STATES } from "../findingTriage/sqlFilters";
+import { NOT_A_LIVE_RISK_STATES, cveNotTriaged, cveRuleNotTriaged } from "../findingTriage/sqlFilters";
 import type { Slice } from "./types";
 
 // Severity order, worst first - fixed rather than by-size, for the same
@@ -111,17 +111,8 @@ export async function computeSecurityStats(
         -- shared state list: a false positive or a fixed finding is not
         -- current exposure, while an accepted risk still is. Fleet rules
         -- count too - a CVE dismissed fleet-wide is dismissed here.
-        AND NOT EXISTS (
-          SELECT 1 FROM finding_triage ft
-          WHERE ft.kind = 'cve' AND ft.host_id = h.id AND ft.cve_id = cve_elem->>'id'
-            AND ft.state = ANY(${[...NOT_A_LIVE_RISK_STATES]})
-            AND (ft.review_at IS NULL OR ft.review_at > now())
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM finding_triage_rules ftr
-          WHERE ftr.kind = 'cve' AND ftr.cve_id = cve_elem->>'id'
-            AND ftr.state = ANY(${[...NOT_A_LIVE_RISK_STATES]})
-        )
+        AND ${cveNotTriaged("h.id", "cve_elem->>'id'", NOT_A_LIVE_RISK_STATES)}
+        AND ${cveRuleNotTriaged("cve_elem->>'id'", NOT_A_LIVE_RISK_STATES)}
     `.execute(db),
 
     // Same (host, template, matched_at) identity the Web Findings page

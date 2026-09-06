@@ -13,6 +13,7 @@ import Schedules from "./pages/Schedules";
 import AdhocScans from "./pages/AdhocScans";
 import Certificates from "./pages/Certificates";
 import SshKeys from "./pages/SshKeys";
+import Software from "./pages/Software";
 import Networks from "./pages/Networks";
 import ImportScan from "./pages/ImportScan";
 import SavedSearches from "./pages/SavedSearches";
@@ -139,6 +140,10 @@ export default function App() {
       <Route
         path="/ssh-keys"
         element={routeElement(false, (m) => <SshKeys me={m} onLogout={() => setMe(null)} />)}
+      />
+      <Route
+        path="/software"
+        element={routeElement(false, (m) => <Software me={m} onLogout={() => setMe(null)} />)}
       />
       <Route
         path="/networks"

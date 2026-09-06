@@ -21,6 +21,7 @@ import { adhocScansRouter } from "./adhocScans/routes";
 import { scanEstimateRouter } from "./scanEstimate/routes";
 import { certificatesRouter } from "./certificates/routes";
 import { sshKeysRouter } from "./sshKeys/routes";
+import { softwareRouter } from "./software/routes";
 import { networksRouter } from "./networks/routes";
 import { importsRouter } from "./imports/routes";
 import { vulnerabilitiesRouter } from "./vulnerabilities/routes";
@@ -88,6 +89,7 @@ export function buildApp() {
   app.use("/api/scan-estimate", scanEstimateRouter);
   app.use("/api/certificates", certificatesRouter);
   app.use("/api/ssh-keys", sshKeysRouter);
+  app.use("/api/software", softwareRouter);
   app.use("/api/networks", networksRouter);
   app.use("/api/imports", importsRouter);
   app.use("/api/vulnerabilities", vulnerabilitiesRouter);

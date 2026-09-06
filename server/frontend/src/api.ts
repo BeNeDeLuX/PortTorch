@@ -291,6 +291,29 @@ export interface HostListResult {
   pageSize: number;
 }
 
+// One row per (product, version) - the unit you actually patch. See
+// src/software/routes.ts for why the version is part of the identity.
+// Where a row was seen. "service" is nmap's service probe (the only one
+// carrying a CPE, and so the only one with CVEs); "web" is gowitness's
+// technology fingerprint; "title" is the page's own <title>, which is not
+// an identifier but is the only place many self-hosted apps appear.
+export type SoftwareSource = "service" | "web" | "title";
+
+export interface SoftwareRow {
+  product: string;
+  /** Null when the version could not be determined. */
+  version: string | null;
+  sources: SoftwareSource[];
+  hosts: number;
+  ports: number;
+  scanners: string[];
+  firstSeen: string;
+  lastSeen: string;
+  cveCount: number;
+  maxCvssScore: number | null;
+  hasKev: boolean;
+}
+
 export interface Facets {
   ports: Array<{ port: number; count: number }>;
   services: Array<{ service: string; count: number }>;
@@ -1274,6 +1297,7 @@ export const api = {
 
   expiringCertificates: () => request<LimitedResult<ExpiringCertificate>>("/api/certificates"),
   sshHostKeys: () => request<LimitedResult<FleetSshHostKey>>("/api/ssh-keys"),
+  software: () => request<LimitedResult<SoftwareRow>>("/api/software"),
   screenshots: () => request<FleetScreenshot[]>("/api/screenshots"),
   networkCoverage: () => request<NetworkCoverageResult>("/api/networks"),
   createNetwork: (label: string, cidr: string, scannerAgentId: string | null) =>

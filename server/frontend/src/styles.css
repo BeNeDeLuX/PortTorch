@@ -1519,6 +1519,14 @@ th {
   margin-top: 0.5rem;
 }
 
+/* Same pill as .tech-badge, but laid out for a table cell - .tech-badges
+   carries a top margin meant for the card body it was written for. */
+.source-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
 .tech-badge {
   font-size: 0.75rem;
   padding: 0.15rem 0.5rem;

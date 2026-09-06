@@ -291,6 +291,91 @@ Disk is checked before staging an archive and before accepting an upload
 (against `Content-Length`), returning `507` rather than filling the disk
 and failing partway.
 
+### The Software page is the inventory those charts cannot be
+
+Scan Stats charts products and versions, but a donut cannot answer "which
+versions are out there, on how many hosts each, which have known CVEs" -
+and cannot be clicked through to the hosts concerned, which is what turns
+a distribution into a work list. `GET /api/software` (`software/routes.ts`)
+is that list, alongside the other fleet-wide finding pages and capped the
+same way (`limitFindings`, sorted worst-first *before* the cap so a
+truncated response keeps the rows that matter).
+
+**Identity is product + version, not product.** "We run Samba" is not
+actionable; "Samba 4.17.2 on 40 hosts and 4.22.10 on 3" is. `''` and
+`NULL` both mean "nmap identified the product but not the version" and
+are collapsed with `nullif(btrim(coalesce(...)))` into one row - two rows
+for the same software would be a straightforward lie. That row is kept
+rather than dropped or merged into a neighbour: "we do not know which
+version these are" is separately actionable, and on a real fleet it is
+17 of 32 rows.
+
+**Two queries, merged in JS on (product, version).** The CVE half joins
+`cve_cache` and unnests a jsonb array per port, fanning one port row out
+into one row per CVE - folding it into the counting query would inflate
+the port count and force every aggregate through a DISTINCT to
+compensate. Same "separate rather than joined" reasoning Scan History
+documents for its screenshot counts. Hosts and ports are counted
+separately and differently (`count(DISTINCT host_id)` vs.
+`count(DISTINCT (host_id, port, protocol))`) because one host running the
+same product on two ports is one machine to patch and two ports to check;
+an integration test pins exactly that case.
+
+**Triage follows the host list's risk-indicator policy**, not the
+alerting one: a false positive or a fixed finding is not current
+exposure, an accepted risk still is. That needed the fleet-rule half of
+the policy, which `sqlFilters.ts` did not expose - `scanStats/security.ts`
+had hand-rolled it inline, so adding a third copy here would have been
+exactly the drift that module exists to prevent. `cveRuleNotTriaged` is
+now beside `cveNotTriaged` and both call sites use the pair.
+
+Verified against a restored copy of real production data rather than
+fixtures alone: the endpoint's product/version rows match a plain SQL
+`GROUP BY` of the same data row for row, and the page surfaced two
+genuinely actionable rows immediately (Samba smbd 4 with 20 CVEs, one
+KEV-listed; OpenSSH 10.0p2 with 16).
+
+**Three sources, because nmap sees the web *server*, not the web
+*application*.** It reports `nginx` and `Golang net/http server`; Grafana,
+Portainer and Forgejo run behind those and are invisible to it. Two other
+signals were already being collected and read by nothing:
+`screenshots.technologies` (gowitness's fingerprint of the page, often
+carrying a version) and `screenshots.page_title`. On a real fleet that is
+the difference between 33 rows and 89 - and Grafana and Portainer appear
+*only* in page titles.
+
+Each row records which sources saw it, and the page says what each means,
+because they are not equally reliable: a title is a label the page gave
+itself, not a fingerprint. Including it costs some noise ("Welcome to
+nginx!", "Index of /") and is worth it for finding the software people
+actually ask about; a source filter handles the rest.
+
+**Rows are merged case-insensitively across sources, never concatenated.**
+nmap's `nginx` and gowitness's `Nginx` are the same software, and two rows
+would overstate the inventory while splitting its host count. Counts merge
+as the **maximum** across sources rather than the sum - they are two
+observations of one thing. The service capitalisation wins the display
+name, being the stronger identification. Measured on real data: five rows
+merge that way (nginx, nginx 1.30.3, nginx 1.30.4, Node.js, openresty).
+
+`splitTechnology` turns gowitness's `Name:Version` into the same shape
+nmap reports, splitting on the **last** colon and only when what follows
+looks like a version - otherwise a name containing a colon loses half of
+itself, and the wrong half is displayed as a version. Page titles are
+never split at all: "Welcome to the Apache Tika 2.9.1 Server" is a
+sentence, not a product and a version.
+
+**CVEs attach to service rows only**, because a CPE lives on a port and
+neither a technology fingerprint nor a title carries one. A web-only row
+therefore reports no CVEs, which is a statement about what is known rather
+than a claim that none exist - the page says so rather than letting an
+empty cell imply safety.
+
+The honest limitation, not worth papering over with fuzzy matching: nmap
+calls one service `Grafana http` while its page title is `Grafana`, so
+those stay two rows. Guessing that they are the same would be exactly the
+kind of heuristic that ends up reading as data.
+
 ### Two inventory dimensions: software product, and hardware manufacturer
 
 "What are we running, and on what" was answerable only by exporting and
