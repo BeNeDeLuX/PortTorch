@@ -128,9 +128,29 @@ export default function ApiTokens({ me, onLogout }: { me: Me; onLogout: () => vo
       <h2>API Tokens</h2>
       <p className="host-meta">
         For external tools (SOAR, enrichment, ticketing) to query host data, trigger rescans, or queue an ad-hoc
-        scan against a brand-new target via the REST API - see <code>GET/POST /api/v1/hosts/...</code> and{" "}
-        <code>POST /api/v1/scans/adhoc</code> in the README. Separate from Scanner Agent keys, which are only for
+        scan against a brand-new target via the REST API. Separate from Scanner Agent keys, which are only for
         scanners submitting scan results.
+      </p>
+      <p className="host-meta">
+        {/* Linked rather than left to the README: the spec is generated from
+            the same zod schemas the routes validate against, so it cannot
+            drift from what the API actually accepts, while a hand-written
+            note can. Both routes are deliberately unauthenticated - a
+            browser loading Swagger UI cannot attach a bearer token to its
+            own page load, and codegen expects an uncredentialed spec
+            fetch - and they expose only the shape of these endpoints, no
+            fleet data. */}
+        Every endpoint is documented and callable at{" "}
+        <a href="/api/v1/docs/" target="_blank" rel="noopener noreferrer">
+          /api/v1/docs
+        </a>{" "}
+        (Swagger UI), with the machine-readable spec at{" "}
+        <a href="/api/v1/openapi.json" target="_blank" rel="noopener noreferrer">
+          /api/v1/openapi.json
+        </a>{" "}
+        for generating a client. Use <strong>Authorize</strong> there and paste a token created below to call the
+        API from the browser - bearing in mind that <code>rescan</code> and <code>scans/adhoc</code> start real
+        scans against your network, not a sandbox.
       </p>
 
       {newToken && (
