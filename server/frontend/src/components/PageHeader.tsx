@@ -70,6 +70,7 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
             label="Admin"
             items={[
               { to: "/webhooks", label: "Webhooks" },
+              { to: "/triage-rules", label: "Triage Rules" },
               { to: "/users", label: "Users" },
               { to: "/audit", label: "Audit" },
               { to: "/api-tokens", label: "API Tokens" },

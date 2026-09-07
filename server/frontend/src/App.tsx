@@ -26,6 +26,7 @@ import ScanStats from "./pages/ScanStats";
 import Webhooks from "./pages/Webhooks";
 import Audit from "./pages/Audit";
 import Excludes from "./pages/Excludes";
+import TriageRules from "./pages/TriageRules";
 import ApiTokens from "./pages/ApiTokens";
 import ScanProfiles from "./pages/ScanProfiles";
 import NucleiProfiles from "./pages/NucleiProfiles";
@@ -174,6 +175,10 @@ export default function App() {
       <Route
         path="/excludes"
         element={routeElement(true, (m) => <Excludes me={m} onLogout={() => setMe(null)} />)}
+      />
+      <Route
+        path="/triage-rules"
+        element={routeElement(true, (m) => <TriageRules me={m} onLogout={() => setMe(null)} />)}
       />
       <Route
         path="/api-tokens"

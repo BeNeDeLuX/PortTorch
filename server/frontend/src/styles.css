@@ -1828,6 +1828,21 @@ th {
   flex: none;
 }
 
+/* The fleet triage rule form reuses .tag-form's row layout but not its
+   140px input width - a template id like "http-missing-security-headers"
+   and the note explaining why it was dismissed both need real room. */
+/* min(..., 100%), not a bare width: a fixed rem width does not shrink and
+   pushes the page sideways on a phone - the same trap the settings grid's
+   minmax(min(400px, 100%), 1fr) floor exists to avoid. */
+.rule-form input.rule-identifier {
+  width: min(22rem, 100%);
+}
+
+.rule-form input.rule-note {
+  width: min(24rem, 100%);
+  flex: 1 1 min(16rem, 100%);
+}
+
 .notes-textarea {
   width: 100%;
   font-family: inherit;

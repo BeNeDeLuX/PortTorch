@@ -237,6 +237,17 @@ Each item below is a one-line summary - click **Details** to expand it.
   Only software behind a port that answered nmap's service probe appears here, so this is an inventory of what is *reachable*, not of what is installed.
   </details>
 
+- :mute: **Admin -> Triage Rules** - dismiss a finding across the whole fleet, and take it back.
+  <details>
+  <summary>Details</summary>
+
+  A per-host triage decision covers one host. A fleet rule covers a CVE or a nuclei template everywhere - hosts that have it now, hosts nobody has looked at, and hosts discovered later - which is what you want for a template that matches every page and tells you nothing. A decision made on an individual host still overrides the rule, since somebody looked at that host and decided.
+
+  Rules can be created here from just the identifier (no need to find the finding on some host first), or from the "apply fleet-wide" button beside an already-triaged finding on Vulnerabilities and Web Findings. Either way they are listed here with who set them and why, and can be removed - after which the finding comes back everywhere the rule was hiding it. Setting and removing is admin-only; every role can see the list, because "why did this finding disappear?" should be answerable.
+
+  The state matters: *false positive* and *fixed* drop the finding out of the host list's risk indicator and the Scan Stats security charts, while *accepted risk* deliberately still counts there - deciding to live with an exposure does not make the host less exposed. All three silence EPSS and KEV alerting. Rules carry no review date; only per-host decisions can expire.
+  </details>
+
 - :bar_chart: **Statistics -> Scan Stats** - what the fleet currently consists of, and how bad its open findings are.
   <details>
   <summary>Details</summary>

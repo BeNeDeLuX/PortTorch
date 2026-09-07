@@ -31,6 +31,43 @@ describe("fleet-wide triage rules", () => {
     expect(res.status).toBe(403);
   });
 
+  it("is admin-only to delete, too, not just to create", async () => {
+    // The create path was covered; the destructive one was not. An
+    // operator clearing a rule would silently un-suppress a finding
+    // across the whole fleet.
+    const adminClient = await loginAs(admin.username, admin.password);
+    const created = await adminClient.put("/api/finding-triage/rules").send({
+      kind: "nuclei",
+      templateId: "it-template-delete-guard",
+      state: "false_positive",
+    });
+    expect(created.status).toBe(200);
+
+    const operatorClient = await loginAs(operator.username, operator.password);
+    expect((await operatorClient.delete(`/api/finding-triage/rules/${created.body.id}`)).status).toBe(403);
+    // Still there afterwards, which is the part that actually matters.
+    expect((await adminClient.delete(`/api/finding-triage/rules/${created.body.id}`)).status).toBe(204);
+  });
+
+  it("lists rules for a non-admin, which is what makes a suppressed finding explainable", async () => {
+    const adminClient = await loginAs(admin.username, admin.password);
+    const created = await adminClient.put("/api/finding-triage/rules").send({
+      kind: "cve",
+      cveId: "CVE-2099-0009",
+      state: "accepted_risk",
+      note: "visible to operators",
+    });
+    expect(created.status).toBe(200);
+    try {
+      const operatorClient = await loginAs(operator.username, operator.password);
+      const res = await operatorClient.get("/api/finding-triage/rules");
+      expect(res.status).toBe(200);
+      expect(res.body.some((r: { cve_id: string | null }) => r.cve_id === "CVE-2099-0009")).toBe(true);
+    } finally {
+      await adminClient.delete(`/api/finding-triage/rules/${created.body.id}`);
+    }
+  });
+
   it("creates a rule and revises it in place rather than duplicating", async () => {
     const client = await loginAs(admin.username, admin.password);
     const created = await client.put("/api/finding-triage/rules").send({

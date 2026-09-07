@@ -608,6 +608,21 @@ export interface SecurityStatsResult {
 // exceptions are stored server-side.
 export type TriageState = "false_positive" | "accepted_risk" | "fixed";
 
+// A fleet-wide triage decision: it applies to a finding on every host,
+// including hosts nobody has looked at and hosts discovered later. A
+// per-host decision still overrides it.
+export interface FindingTriageRule {
+  id: string;
+  kind: "cve" | "nuclei";
+  cve_id: string | null;
+  template_id: string | null;
+  state: TriageState;
+  note: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export const TRIAGE_LABEL: Record<TriageState, string> = {
   false_positive: "False positive",
   accepted_risk: "Accepted risk",
@@ -1487,6 +1502,23 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ ...target, state, note, reviewAt }),
     }),
+  findingTriageRules: () => request<FindingTriageRule[]>("/api/finding-triage/rules"),
+  // Creating a rule directly, without triaging a host first. The
+  // TriageControl's own "apply fleet-wide" button goes through
+  // setFindingTriageRule below, which needs an existing finding to point
+  // at; this one only needs the identifier, which is what makes
+  // suppressing a noisy template a single step.
+  createFindingTriageRule: (
+    identity: { kind: "cve"; cveId: string } | { kind: "nuclei"; templateId: string },
+    state: TriageState,
+    note?: string
+  ) =>
+    request<FindingTriageRule>("/api/finding-triage/rules", {
+      method: "PUT",
+      body: JSON.stringify({ ...identity, state, note }),
+    }),
+  deleteFindingTriageRule: (id: string) =>
+    request<void>(`/api/finding-triage/rules/${id}`, { method: "DELETE" }),
   setFindingTriageRule: (target: TriageTarget, state: TriageState, note?: string) =>
     request<unknown>("/api/finding-triage/rules", {
       method: "PUT",
