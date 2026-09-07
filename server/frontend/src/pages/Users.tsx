@@ -108,7 +108,7 @@ export default function Users({ me, onLogout }: { me: Me; onLogout: () => void }
 
   async function handleResetPassword(u: DashboardUser) {
     const next = window.prompt(
-      `Set a new password for "${u.username}" (at least 8 characters).\n\nTheir 2FA, if enabled, stays on - reset that separately if the device was lost too. Tell them to change it from their Account page after signing in.`
+      `Set a new password for "${u.username}" (at least 12 characters).\n\nTheir 2FA, if enabled, stays on - reset that separately if the device was lost too. Tell them to change it from their Account page after signing in.`
     );
     if (next === null) return;
     setError(null);
@@ -148,7 +148,7 @@ export default function Users({ me, onLogout }: { me: Me; onLogout: () => void }
         <input placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
         <input
           type="password"
-          placeholder="Password (min. 8 characters)"
+          placeholder="Password (at least 12 characters)"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
