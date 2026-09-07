@@ -3295,6 +3295,14 @@ th {
   grid-column: 1 / -1;
 }
 
+/* Inside a wide card, .settings-form becomes a multi-column grid - right
+   for seven short fields, wrong for the 2FA setup step, which is a QR
+   code and prose that have to read top to bottom in one column. */
+.settings-grid-wide .settings-form.totp-setup {
+  grid-template-columns: 1fr;
+  max-width: 32rem;
+}
+
 .settings-num-row {
   display: flex;
   align-items: center;

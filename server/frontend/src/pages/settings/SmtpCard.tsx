@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, AppSettings } from "../../api";
 import { IconSave, IconSend } from "../../components/icons";
-import SettingsCard from "./SettingsCard";
+import SettingsCard from "../../components/SettingsCard";
 
 export default function SmtpCard({
   settings,

@@ -430,6 +430,40 @@ spread is the half that drives patching; a product nmap identified
 without a version keeps its own "(version unknown)" slice rather than
 being merged into a neighbouring one.
 
+### The Account page follows the Settings page's shape
+
+Account had grown the same way Settings had before it was split up: four
+sections and two dozen `useState` calls in one 425-line component, in a
+flat column - and seven unrelated preferences sharing a single Save
+button. It is now the same layout shell over `pages/account/*`, one card
+per setting, grouped **Preferences** (Appearance, Dashboard, Date and
+time) and **Security** (Password, Sessions, Two-Factor).
+
+**Splitting the preferences form was not only cosmetic.** `PATCH
+/auth/preferences` decides per field on `"field" in req.body`, so a card
+can send its own two fields and leave the rest untouched - changing a
+timezone no longer re-submits an accent colour as a side effect. That
+property is what makes per-card Saves correct here, where the Settings
+page had to merge two cards into one for the opposite reason (a single
+form cannot span two cards).
+
+`SettingsCard`/`SaveState` moved from `pages/settings/` to `components/`,
+being shared UI for two page families now rather than one page's helper.
+
+**The per-card dirty markers exposed a documented quirk that had been
+harmless while there was one Save button**: `App.tsx` holds `me` from
+sign-in and never refreshed it after a preferences save, so navigating
+away and back re-seeded the cards from the stale copy - and a value that
+*was* saved came back marked "unsaved". The shell now calls the
+`onMeRefresh` it already had for the 2FA flow after every preference
+save, which closes that quirk rather than displaying it. A browser test
+asserts there are no stale "unsaved" markers after a round trip, and that
+saving one card leaves its neighbours' stored values alone.
+
+Also corrected while there: the new-password field advertised "min. 8
+characters" long after `auth/passwordPolicy.ts` raised the floor to 12,
+so the only feedback was a rejected save.
+
 ### Outbound HTTP proxy
 
 Every outbound call this webserver makes was direct-only, which in a network that requires a proxy meant the NVD/EPSS/KEV syncs and the scanner release check simply timed out - with nothing in the logs pointing at the proxy, since a blocked connection and an unreachable host look identical from here.

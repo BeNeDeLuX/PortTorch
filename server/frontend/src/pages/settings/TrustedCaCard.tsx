@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { api, Me, TrustedCaCertificate } from "../../api";
 import { IconTrash, IconUpload } from "../../components/icons";
 import { formatDateTime } from "../../lib/formatDate";
-import SettingsCard from "./SettingsCard";
+import SettingsCard from "../../components/SettingsCard";
 
 export default function TrustedCaCard({ me }: { me: Me }) {
   const [certs, setCerts] = useState<TrustedCaCertificate[]>([]);

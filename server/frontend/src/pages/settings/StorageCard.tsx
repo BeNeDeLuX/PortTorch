@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api, StorageUsage } from "../../api";
 import { IconRefresh } from "../../components/icons";
 import { formatBytes } from "../../lib/formatBytes";
-import SettingsCard from "./SettingsCard";
+import SettingsCard from "../../components/SettingsCard";
 
 export default function StorageCard() {
   const [storage, setStorage] = useState<StorageUsage | null>(null);

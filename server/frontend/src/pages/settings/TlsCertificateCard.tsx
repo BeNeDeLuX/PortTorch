@@ -3,7 +3,7 @@ import { api, Me, TlsCertificateInfo } from "../../api";
 import { IconUpload } from "../../components/icons";
 import { certExpiryDaysLeft, certExpiryLabel, certExpiryStatus } from "../../lib/certExpiry";
 import { formatDateTime } from "../../lib/formatDate";
-import SettingsCard from "./SettingsCard";
+import SettingsCard from "../../components/SettingsCard";
 
 // Not to be confused with the fleet-wide Certificates page, which shows
 // certificates captured *from scanned hosts* - this is the one

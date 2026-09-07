@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, BackupEstimate, RestoreResult } from "../../api";
 import { IconDownload, IconUpload, IconWarning } from "../../components/icons";
 import { formatBytes } from "../../lib/formatBytes";
-import SettingsCard from "./SettingsCard";
+import SettingsCard from "../../components/SettingsCard";
 
 // The word the operator has to type to confirm a restore. The same one
 // scripts/restore.sh asks for, so the two paths ask the same question.

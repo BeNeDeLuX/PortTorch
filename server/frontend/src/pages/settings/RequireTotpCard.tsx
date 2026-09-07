@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, AppSettings } from "../../api";
 import { IconSave } from "../../components/icons";
-import SettingsCard from "./SettingsCard";
+import SettingsCard from "../../components/SettingsCard";
 
 export default function RequireTotpCard({
   settings,

@@ -1,5 +1,5 @@
 import { ReactNode } from "react";
-import { IconCheck } from "../../components/icons";
+import { IconCheck } from "./icons";
 
 // One setting, in a card. Every section on the Settings page is one of
 // these, so the eleven hand-rolled <h3> + <p className="host-meta">

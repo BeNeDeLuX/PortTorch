@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { api, AppSettings, HecStatus, Me } from "../../api";
 import { IconRefresh, IconSave, IconSend } from "../../components/icons";
 import { formatDateTime } from "../../lib/formatDate";
-import SettingsCard from "./SettingsCard";
+import SettingsCard from "../../components/SettingsCard";
 
 export default function HecCard({
   me,

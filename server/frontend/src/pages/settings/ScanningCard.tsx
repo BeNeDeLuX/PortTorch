@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, AppSettings } from "../../api";
 import { IconSave } from "../../components/icons";
-import SettingsCard, { SaveState } from "./SettingsCard";
+import SettingsCard, { SaveState } from "../../components/SettingsCard";
 
 // The two scan-warning thresholds share one card and one Save. They were
 // two sections with two forms and two Save buttons, both writing the same

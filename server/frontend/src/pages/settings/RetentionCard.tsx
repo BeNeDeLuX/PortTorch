@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, AppSettings } from "../../api";
 import { IconSave, IconTrash } from "../../components/icons";
-import SettingsCard, { SaveState } from "./SettingsCard";
+import SettingsCard, { SaveState } from "../../components/SettingsCard";
 
 export default function RetentionCard({
   settings,

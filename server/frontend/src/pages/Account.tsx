@@ -1,9 +1,13 @@
-import { FormEvent, useEffect, useState } from "react";
-import { api, Me, ScannerAgent, TwoFactorSetup } from "../api";
-import { IconCheck, IconLogOut, IconRefresh, IconSave, IconWarning, IconX } from "../components/icons";
+import { useEffect, useState } from "react";
+import { Me, ScannerAgent, UserPreferences, api } from "../api";
+import { IconWarning } from "../components/icons";
 import PageHeader from "../components/PageHeader";
-import { applyTheme } from "../lib/theme";
-import { applyAccent } from "../lib/accent";
+import AppearanceCard from "./account/AppearanceCard";
+import DashboardCard from "./account/DashboardCard";
+import DateTimeCard from "./account/DateTimeCard";
+import PasswordCard from "./account/PasswordCard";
+import SessionsCard from "./account/SessionsCard";
+import TwoFactorCard from "./account/TwoFactorCard";
 
 // Node/browser both ship the same Intl engine, so this is the same list
 // PATCH /auth/preferences validates server-side (auth/routes.ts's
@@ -21,6 +25,16 @@ const TIMEZONES: string[] = (() => {
   }
 })();
 
+// The layout shell, and nothing else - each setting lives in its own card
+// under pages/account/, next to the state it owns. This page had grown
+// the same shape the Settings page did before it was split up: four
+// sections and two dozen useState calls in one component, in a flat
+// column where seven unrelated preferences shared a single Save button.
+//
+// Splitting them is not only cosmetic here. PATCH /auth/preferences
+// decides per field on `"field" in body`, so a card can send its own two
+// fields and leave the rest untouched - which means changing your
+// timezone no longer re-submits your accent colour as a side effect.
 export default function Account({
   me,
   onLogout,
@@ -28,185 +42,43 @@ export default function Account({
 }: {
   me: Me;
   onLogout: () => void;
-  // Re-fetches /auth/me into App.tsx's own `me` state - needed here
-  // specifically because completing 2FA setup can flip
-  // me.totpSetupRequired from true to false, which App.tsx's route
-  // gating (routeElement) reads on every navigation; without this, the
-  // in-memory `me` object would stay stale until the next full page
-  // load/login (the existing behavior for every other preference on this
-  // page), leaving someone who just complied stuck being redirected back
-  // to this same page.
   onMeRefresh: () => void;
 }) {
-  const [enabled, setEnabled] = useState<boolean | null>(null);
-  const [setup, setSetup] = useState<TwoFactorSetup | null>(null);
-  const [setupCode, setSetupCode] = useState("");
-  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
-  const [disablePassword, setDisablePassword] = useState("");
-  const [regenerateCode, setRegenerateCode] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [repeatPassword, setRepeatPassword] = useState("");
-  const [pwError, setPwError] = useState<string | null>(null);
-  const [pwDone, setPwDone] = useState(false);
-  const [pwBusy, setPwBusy] = useState(false);
-  const [revokeBusy, setRevokeBusy] = useState(false);
-  const [revokeResult, setRevokeResult] = useState<string | null>(null);
-
   const [agents, setAgents] = useState<ScannerAgent[]>([]);
-  // "" stands in for "no override" throughout this form (theme, page size,
-  // default scanner) - translated to/from null at the API boundary, since
-  // a plain <select>/<input> can't represent null directly.
-  const [themePref, setThemePref] = useState(me.preferences.theme ?? "");
-  const [pageSizePref, setPageSizePref] = useState(
-    me.preferences.hostsPageSize ? String(me.preferences.hostsPageSize) : ""
-  );
-  const [showBannerPref, setShowBannerPref] = useState(me.preferences.showActiveScansBanner);
-  const [defaultScannerPref, setDefaultScannerPref] = useState(me.preferences.defaultScannerAgentId ?? "");
-  const [timezonePref, setTimezonePref] = useState(me.preferences.timezone ?? "");
-  const [timeFormatPref, setTimeFormatPref] = useState(me.preferences.timeFormat ?? "");
-  const [accentColorPref, setAccentColorPref] = useState(me.preferences.accentColor ?? "");
-  const [prefsSaved, setPrefsSaved] = useState(false);
-  const [prefsError, setPrefsError] = useState<string | null>(null);
+  // The one genuinely shared piece of state: every preference card gets
+  // the whole updated object back from its PATCH, and handing it down
+  // keeps the others consistent rather than each holding a drifting copy.
+  const [preferences, setPreferences] = useState<UserPreferences>(me.preferences);
 
   useEffect(() => {
-    api.twoFactorStatus().then((s) => setEnabled(s.enabled));
-    api.agents().then(setAgents).catch(() => setAgents([]));
+    setPreferences(me.preferences);
+  }, [me.preferences]);
+
+  useEffect(() => {
+    api
+      .agents()
+      .then(setAgents)
+      .catch(() => setAgents([]));
   }, []);
 
-  async function handleSavePreferences(e: FormEvent) {
-    e.preventDefault();
-    setPrefsError(null);
-    setPrefsSaved(false);
-    const theme = themePref ? (themePref as "dark" | "light") : null;
-    const accentColor = accentColorPref ? (accentColorPref as "green" | "orange" | "blue") : null;
-    try {
-      await api.updatePreferences({
-        theme,
-        hostsPageSize: pageSizePref ? Number(pageSizePref) : null,
-        showActiveScansBanner: showBannerPref,
-        defaultScannerAgentId: defaultScannerPref || null,
-        timezone: timezonePref || null,
-        timeFormat: timeFormatPref ? (timeFormatPref as "h12" | "h24") : null,
-        accentColor,
-      });
-      // Applies immediately to this browser too, same as the quick
-      // toggle - only when a concrete theme was actually chosen here;
-      // picking "Browser default" doesn't change whatever's active right
-      // now, it only stops seeding a default for a future new browser.
-      if (theme) {
-        applyTheme(theme);
-      }
-      // Unlike theme, accent color has no "browser default" concept -
-      // "" just means the explicit default (orange), so it always applies
-      // immediately rather than being a no-op sentinel.
-      applyAccent(accentColor ?? "orange");
-      setPrefsSaved(true);
-    } catch (err) {
-      setPrefsError(err instanceof Error ? err.message : "Failed to save preferences");
-    }
+  // Also refreshes App.tsx's own copy of `me`, which it otherwise holds
+  // from sign-in onwards. Without this, navigating away and back
+  // re-seeds these cards from the stale copy, so a value that *is* saved
+  // comes back marked "unsaved" - a documented pre-existing quirk that
+  // the per-card dirty markers would have turned into a visible one.
+  function handleSaved(next: UserPreferences) {
+    setPreferences(next);
+    onMeRefresh();
   }
 
-  // The repeat field is checked here and nowhere else on purpose: it's a
-  // typo guard for the person typing, not a security property, so the
-  // server has no reason to know about it.
-  async function handleChangePassword(e: FormEvent) {
-    e.preventDefault();
-    setPwError(null);
-    setPwDone(false);
-    if (newPassword !== repeatPassword) {
-      setPwError("The two new passwords don't match.");
-      return;
-    }
-    setPwBusy(true);
-    try {
-      await api.changePassword(currentPassword, newPassword);
-      setCurrentPassword("");
-      setNewPassword("");
-      setRepeatPassword("");
-      setPwDone(true);
-    } catch (err) {
-      setPwError(err instanceof Error ? err.message : "Failed to change password");
-    } finally {
-      setPwBusy(false);
-    }
-  }
-
-  // Wanted separately from the password change that already does this as
-  // a side effect: the usual trigger (a laptop left signed in, a shared
-  // browser) isn't a reason to change a password, and forcing one to get
-  // the effect is how people end up with worse passwords.
-  async function handleRevokeOthers() {
-    setRevokeResult(null);
-    setRevokeBusy(true);
-    try {
-      const { revoked } = await api.revokeOtherSessions();
-      setRevokeResult(
-        revoked === 0 ? "No other sessions were signed in." : `Signed out ${revoked} other session(s).`
-      );
-    } catch (err) {
-      setRevokeResult(err instanceof Error ? err.message : "Failed to sign out other sessions");
-    } finally {
-      setRevokeBusy(false);
-    }
-  }
-
-  async function handleStartSetup() {
-    setError(null);
-    try {
-      setSetup(await api.twoFactorSetup());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start 2FA setup");
-    }
-  }
-
-  async function handleConfirmSetup(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-    try {
-      const result = await api.twoFactorConfirm(setupCode.trim());
-      setRecoveryCodes(result.recoveryCodes);
-      setSetup(null);
-      setSetupCode("");
-      setEnabled(true);
-      onMeRefresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid code");
-    }
-  }
-
-  async function handleDisable(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-    try {
-      await api.twoFactorDisable(disablePassword);
-      setDisablePassword("");
-      setEnabled(false);
-      setRecoveryCodes(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to disable 2FA");
-    }
-  }
-
-  async function handleRegenerate(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-    try {
-      const result = await api.regenerateRecoveryCodes(regenerateCode.trim());
-      setRecoveryCodes(result.recoveryCodes);
-      setRegenerateCode("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid code");
-    }
-  }
+  const withPrefs: Me = { ...me, preferences };
 
   return (
     <div className="dashboard">
       <PageHeader me={me} onLogout={onLogout} />
 
       <h2>Account</h2>
-      <p className="empty">
+      <p className="host-meta">
         Signed in as <strong>{me.username}</strong> ({me.role}).
       </p>
 
@@ -217,209 +89,31 @@ export default function Account({
         </div>
       )}
 
-      <h3>Preferences</h3>
-      <p className="empty">
-        Saved to your account, so they follow you across browsers/devices - unlike the
-        quick theme toggle or table column choices in the header, which stay per-browser.
-      </p>
-      {prefsError && <p className="error">{prefsError}</p>}
-      {prefsSaved && <p className="empty">Preferences saved.</p>}
-      <form className="login-card" onSubmit={handleSavePreferences} style={{ maxWidth: 420 }}>
-        <label>
-          Theme
-          <select value={themePref} onChange={(e) => setThemePref(e.target.value)}>
-            <option value="">Browser default</option>
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
-          </select>
-        </label>
-        <label>
-          Accent color
-          <select value={accentColorPref} onChange={(e) => setAccentColorPref(e.target.value)}>
-            <option value="">Orange (default)</option>
-            <option value="green">Green</option>
-            <option value="blue">Blue</option>
-          </select>
-        </label>
-        <label>
-          Hosts per page (main dashboard)
-          <select value={pageSizePref} onChange={(e) => setPageSizePref(e.target.value)}>
-            <option value="">Default (50)</option>
-            <option value="25">25</option>
-            <option value="50">50</option>
-            <option value="100">100</option>
-            <option value="200">200</option>
-          </select>
-        </label>
-        <label>
-          Default scanner (main dashboard)
-          <select value={defaultScannerPref} onChange={(e) => setDefaultScannerPref(e.target.value)}>
-            <option value="">All Scanner</option>
-            {agents.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={showBannerPref}
-            onChange={(e) => setShowBannerPref(e.target.checked)}
-          />
-          {" "}Show the "Active scans" banner on the main dashboard
-        </label>
-        <label>
-          Timezone (all dates/times throughout the dashboard)
-          <select value={timezonePref} onChange={(e) => setTimezonePref(e.target.value)}>
-            <option value="">Browser default</option>
-            {TIMEZONES.map((tz) => (
-              <option key={tz} value={tz}>
-                {tz}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Time format
-          <select value={timeFormatPref} onChange={(e) => setTimeFormatPref(e.target.value)}>
-            <option value="">Browser/locale default</option>
-            <option value="h12">12-hour (1:30 PM)</option>
-            <option value="h24">24-hour (13:30)</option>
-          </select>
-        </label>
-        <button type="submit" className="btn-icon-label">
-          <IconSave /> Save preferences
-        </button>
-      </form>
-
-      <h3>Password</h3>
-      <p className="host-meta">
-        Changing your password requires your current one - being signed in isn't on its own proof of who's at the
-        keyboard. Any other session signed in as you, anywhere, is ended; this one stays.
-      </p>
-      {pwError && <p className="error">{pwError}</p>}
-      {pwDone && <p className="callout-success">Password changed.</p>}
-      <form className="inline-form" onSubmit={handleChangePassword}>
-        <input
-          type="password"
-          autoComplete="current-password"
-          placeholder="Current password"
-          value={currentPassword}
-          onChange={(e) => setCurrentPassword(e.target.value)}
-        />
-        <input
-          type="password"
-          autoComplete="new-password"
-          placeholder="New password (min. 8 characters)"
-          value={newPassword}
-          onChange={(e) => setNewPassword(e.target.value)}
-        />
-        <input
-          type="password"
-          autoComplete="new-password"
-          placeholder="Repeat new password"
-          value={repeatPassword}
-          onChange={(e) => setRepeatPassword(e.target.value)}
-        />
-        <button type="submit" className="btn-icon-label" disabled={pwBusy}>
-          <IconSave /> Change password
-        </button>
-      </form>
-
-      <h3>Sessions</h3>
-      <p className="host-meta">
-        Signs out every other browser or device currently signed in as you, keeping this one. Your password and 2FA
-        are unchanged - use this when you've left a session open somewhere, rather than changing your password to get
-        the same effect.
-      </p>
-      <button className="btn-icon-label" onClick={handleRevokeOthers} disabled={revokeBusy}>
-        <IconLogOut /> Sign out other sessions
-      </button>
-      {revokeResult && <p className="host-meta">{revokeResult}</p>}
-
-      <h3>Two-Factor Authentication</h3>
-      {error && <p className="error">{error}</p>}
-
-      {recoveryCodes && (
-        <div className="callout">
-          <strong>Save these recovery codes</strong> - each works once, and this is the only
-          time they're shown. Use one to log in if you lose access to your authenticator app.
-          <pre className="key-reveal">{recoveryCodes.join("\n")}</pre>
-          <button className="btn-icon-label" onClick={() => setRecoveryCodes(null)}>
-            <IconCheck /> Got it
-          </button>
+      <section>
+        <h3 className="settings-group-title">Preferences</h3>
+        <p className="host-meta">
+          Saved to your account, so they follow you across browsers and devices - unlike the quick theme toggle or
+          the table column choices in the header, which stay per-browser.
+        </p>
+        <div className="settings-grid">
+          <AppearanceCard me={withPrefs} onSaved={handleSaved} />
+          <DashboardCard me={withPrefs} agents={agents} onSaved={handleSaved} />
+          <DateTimeCard me={withPrefs} timezones={TIMEZONES} onSaved={handleSaved} />
         </div>
-      )}
+      </section>
 
-      {enabled === null ? (
-        <p>Loading...</p>
-      ) : enabled ? (
-        <>
-          <p className="empty">2FA is enabled on your account.</p>
-
-          <h4>Regenerate recovery codes</h4>
-          <p className="empty">Invalidates your existing recovery codes and issues a new set.</p>
-          <form className="inline-form" onSubmit={handleRegenerate}>
-            <input
-              placeholder="6-digit code"
-              value={regenerateCode}
-              onChange={(e) => setRegenerateCode(e.target.value)}
-              inputMode="numeric"
-            />
-            <button type="submit" className="btn-icon-label">
-              <IconRefresh /> Regenerate
-            </button>
-          </form>
-
-          <h4>Disable 2FA</h4>
-          <form className="inline-form" onSubmit={handleDisable}>
-            <input
-              type="password"
-              placeholder="Current password"
-              value={disablePassword}
-              onChange={(e) => setDisablePassword(e.target.value)}
-            />
-            <button type="submit" className="btn-icon-label">
-              <IconX /> Disable
-            </button>
-          </form>
-        </>
-      ) : setup ? (
-        <form className="login-card" onSubmit={handleConfirmSetup} style={{ maxWidth: 360 }}>
-          <p>Scan this with your authenticator app (Google Authenticator, 1Password, etc.):</p>
-          <img src={setup.qrCodeDataUrl} alt="2FA setup QR code" width={200} height={200} />
-          <p className="empty">
-            Can't scan it? Enter this secret manually: <code>{setup.secret}</code>
-          </p>
-          <label>
-            Enter the 6-digit code to confirm
-            <input
-              value={setupCode}
-              onChange={(e) => setSetupCode(e.target.value)}
-              autoFocus
-              inputMode="numeric"
-            />
-          </label>
-          <button type="submit" className="btn-icon-label">
-            <IconCheck /> Confirm
-          </button>
-          <button type="button" className="link-button btn-icon-label" onClick={() => setSetup(null)}>
-            <IconX /> cancel
-          </button>
-        </form>
-      ) : (
-        <>
-          <p className="empty">
-            2FA is not enabled. Enabling it requires an authenticator app (Google Authenticator,
-            1Password, Authy, etc.) on your phone.
-          </p>
-          <button className="btn-icon-label" onClick={handleStartSetup}>
-            <IconCheck /> Enable 2FA
-          </button>
-        </>
-      )}
+      <section>
+        <h3 className="settings-group-title">Security</h3>
+        <div className="settings-grid">
+          <PasswordCard />
+          <SessionsCard />
+          {/* Wide: the setup step pairs a QR code with its instructions,
+              and the enabled state holds two separate forms. */}
+          <div className="settings-grid-wide">
+            <TwoFactorCard onMeRefresh={onMeRefresh} />
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
