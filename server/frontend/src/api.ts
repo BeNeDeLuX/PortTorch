@@ -86,6 +86,12 @@ export interface RestoreResult {
   restarting: boolean;
 }
 
+export interface ProxySettings {
+  httpUrl: string | null;
+  httpsUrl: string | null;
+  noProxy: string | null;
+}
+
 export interface AppSettings {
   requireAdminTotp: boolean;
   hostRetentionDays: number;
@@ -100,6 +106,7 @@ export interface AppSettings {
   networkCoverageStaleDays: number;
   smtp: SmtpSettingsView;
   hec: HecSettingsView;
+  proxy: ProxySettings;
 }
 
 // Same shape of promise as SmtpSettingsView: the token itself is never
@@ -1597,6 +1604,11 @@ export const api = {
     patch: Partial<Omit<AppSettings, "smtp" | "hec">> & { smtp?: SmtpSettingsInput; hec?: HecSettingsInput }
   ) =>
     request<AppSettings>("/api/settings/app", { method: "PATCH", body: JSON.stringify(patch) }),
+  testProxy: () =>
+    request<{ ok: boolean; status?: number; error?: string; viaProxy: string | null; durationMs: number }>(
+      "/api/settings/proxy/test",
+      { method: "POST" }
+    ),
   testSmtp: (to: string) =>
     request<{ ok: boolean; error?: string }>("/api/settings/smtp/test", {
       method: "POST",

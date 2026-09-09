@@ -84,3 +84,43 @@ describe("matchesNoProxy", () => {
     expect(matchesNoProxy("Logs.Internal", "443")).toBe(true);
   });
 });
+
+describe("configured proxy settings take precedence over the environment", () => {
+  const saved = { ...process.env };
+  afterEach(() => {
+    process.env = { ...saved };
+  });
+
+  it("uses the configured value when one is set", () => {
+    process.env.HTTPS_PROXY = "http://from-env:3128";
+    const proxy = proxyForUrl("https://example.com/", {
+      httpUrl: null,
+      httpsUrl: "http://from-settings:8080",
+      noProxy: null,
+    });
+    expect(proxy?.host).toBe("from-settings:8080");
+  });
+
+  it("falls back to the environment when the setting is empty", () => {
+    // The ordering that lets a deployment configured through .env keep
+    // working untouched after this became a setting.
+    process.env.HTTPS_PROXY = "http://from-env:3128";
+    const proxy = proxyForUrl("https://example.com/", { httpUrl: null, httpsUrl: "", noProxy: null });
+    expect(proxy?.host).toBe("from-env:3128");
+  });
+
+  it("keeps http and https separate, as the environment variables do", () => {
+    const config = { httpUrl: "http://plain:1111", httpsUrl: "http://secure:2222", noProxy: null };
+    expect(proxyForUrl("http://example.com/", config)?.host).toBe("plain:1111");
+    expect(proxyForUrl("https://example.com/", config)?.host).toBe("secure:2222");
+  });
+
+  it("honours a configured no-proxy list ahead of the environment's", () => {
+    process.env.NO_PROXY = "somewhere.else";
+    const config = { httpUrl: null, httpsUrl: "http://p:3128", noProxy: "example.com" };
+    expect(proxyForUrl("https://example.com/", config)).toBeNull();
+    // And the configured list replaces rather than extends the env one -
+    // one source at a time, so "why is this still proxied" has one answer.
+    expect(proxyForUrl("https://somewhere.else/", config)?.host).toBe("p:3128");
+  });
+});

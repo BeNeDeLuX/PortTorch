@@ -3,6 +3,8 @@ import { db } from "../db";
 import { logger } from "../logger";
 import { dispatchWebhook } from "../webhooks/dispatch";
 import { ANY_TRIAGE_STATE, cveNotTriaged } from "../findingTriage/sqlFilters";
+import { outboundGet } from "../lib/outbound";
+import { caBundle } from "../settings/caCertificates";
 
 // CISA publishes this as a single bulk JSON file, not a per-CVE lookup API
 // like EPSS's - there's no rate limit or API key to worry about, and no
@@ -35,11 +37,11 @@ export function startKevSync(): void {
 }
 
 async function tick(): Promise<void> {
-  const res = await fetch(CATALOG_URL);
+  const res = await outboundGet(CATALOG_URL, { ca: await caBundle() });
   if (!res.ok) {
-    throw new Error(`CISA KEV catalog fetch returned ${res.status}`);
+    throw new Error(`CISA KEV catalog fetch failed: ${res.error ?? `status ${res.status}`}`);
   }
-  const catalog = (await res.json()) as KevCatalog;
+  const catalog = JSON.parse(res.body ?? "{}") as KevCatalog;
   const entries = catalog.vulnerabilities ?? [];
 
   if (entries.length > 0) {

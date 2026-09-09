@@ -1,6 +1,6 @@
 import { URL } from "url";
 import type { HecSettings } from "../settings/appSettings";
-import { outboundPost } from "../lib/outboundPost";
+import { outboundPost } from "../lib/outbound";
 import { serializeBatch, type HecEvent } from "./format";
 
 // Splunk's own path, and the one every HEC-compatible collector accepts.

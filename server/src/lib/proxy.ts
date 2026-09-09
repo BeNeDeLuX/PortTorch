@@ -1,22 +1,36 @@
 import { URL } from "url";
 
+/** The subset of app_settings.proxy this module needs. */
+export interface ProxyConfig {
+  httpUrl: string | null;
+  httpsUrl: string | null;
+  noProxy: string | null;
+}
+
 /**
  * Which proxy, if any, an outbound request to `targetUrl` should go
- * through, read from the conventional environment variables.
+ * through - taken from the Settings page when configured there, and from
+ * the conventional environment variables otherwise.
  *
- * This exists only for lib/outboundPost.ts, which talks to alert
- * channels and SIEM collectors over Node's http/https modules rather
- * than fetch (it needs a CA bundle and rejectUnauthorized, neither of
- * which fetch can take). Everything that does use fetch - the NVD, EPSS,
- * KEV and GitHub syncs - is covered by Node's own NODE_USE_ENV_PROXY,
- * set in the Dockerfile; the http/https modules have no equivalent, so
- * this is the missing half rather than a second mechanism.
+ * This backs every outbound request the webserver makes - alert
+ * channels, the SIEM collector, and (since the syncs moved onto
+ * lib/outboundGet) the NVD, EPSS, KEV, GitHub and Docker Hub calls.
  *
- * Deliberately reads the environment on every call rather than caching:
- * these are process-lifetime values in practice, and a cache would only
- * add a way for a restart-free config change to be silently ignored.
+ * It used to cover only the http/https-module half, with fetch relying on
+ * Node's own NODE_USE_ENV_PROXY instead. That split is exactly why the
+ * proxy could not become a dashboard setting: undici captures the
+ * environment at process start and never re-reads it (measured, not
+ * assumed - a variable set at runtime has no effect at all), so a
+ * database-backed value would have applied to the alert channels
+ * immediately and to the syncs only after a restart. One transport for
+ * everything is what makes a single setting honest.
+ *
+ * Takes the configured values as a parameter rather than reading them
+ * itself, the same shape lib/staleness.ts uses for its threshold: the
+ * caller fetches getAppSettings() once and passes it down, so there is no
+ * hidden cache to go stale in its own right.
  */
-export function proxyForUrl(targetUrl: string): URL | null {
+export function proxyForUrl(targetUrl: string, config?: ProxyConfig | null): URL | null {
   let target: URL;
   try {
     target = new URL(targetUrl);
@@ -24,17 +38,25 @@ export function proxyForUrl(targetUrl: string): URL | null {
     return null;
   }
 
-  if (matchesNoProxy(target.hostname, target.port || defaultPort(target.protocol))) return null;
+  if (matchesNoProxy(target.hostname, target.port || defaultPort(target.protocol), config?.noProxy)) return null;
 
   // Lowercase wins over uppercase where both are set, matching curl and
   // most language runtimes. HTTPS_PROXY is only consulted for https
   // targets, HTTP_PROXY only for http ones - a single proxy that serves
   // both is simply named in both variables, which is what the tooling
   // that sets them already does.
+  //
+  // A value configured on the Settings page wins; the environment is the
+  // fallback, not a second source that also applies. That ordering is
+  // what lets a deployment configured through .env keep working with
+  // nothing to do, while an admin who fills the field in takes over from
+  // that moment - without the two ever being blended.
+  const configured = target.protocol === "https:" ? config?.httpsUrl : config?.httpUrl;
   const raw =
-    target.protocol === "https:"
+    (configured ?? "").trim() ||
+    (target.protocol === "https:"
       ? process.env.https_proxy || process.env.HTTPS_PROXY
-      : process.env.http_proxy || process.env.HTTP_PROXY;
+      : process.env.http_proxy || process.env.HTTP_PROXY);
   if (!raw) return null;
 
   try {
@@ -64,8 +86,8 @@ function defaultPort(protocol: string): string {
  * "logs.internal" but must NOT match "notinternal", so the comparison is
  * on label boundaries, not a plain suffix.
  */
-export function matchesNoProxy(hostname: string, port: string): boolean {
-  const raw = process.env.no_proxy || process.env.NO_PROXY;
+export function matchesNoProxy(hostname: string, port: string, configured?: string | null): boolean {
+  const raw = (configured ?? "").trim() || process.env.no_proxy || process.env.NO_PROXY;
   if (!raw) return false;
 
   const host = hostname.toLowerCase();

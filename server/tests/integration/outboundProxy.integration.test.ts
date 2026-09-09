@@ -4,7 +4,7 @@ import https from "https";
 import net from "net";
 import { AddressInfo } from "net";
 import forge from "node-forge";
-import { outboundPost } from "../../src/lib/outboundPost";
+import { outboundGet, outboundPost } from "../../src/lib/outbound";
 
 // Real servers on loopback rather than a mocked http module: what is
 // under test is whether a request actually reaches a proxy in the shape
@@ -153,6 +153,31 @@ describe("outbound POST through a proxy", () => {
     const unverified = await outboundPost(`https://localhost:${tlsOriginPort}/hec`, "{}", { verifyTls: false });
     expect(unverified.ok).toBe(true);
     expect(originHits).toContain("TLS POST /hec");
+  });
+
+  it("sends a GET through the proxy too, and returns the body", async () => {
+    // The syncs moved onto this transport specifically so the proxy
+    // applies to them; a GET that quietly went direct would defeat that
+    // without failing anything.
+    const res = await outboundGet(`http://127.0.0.1:${originPort}/feed`, {
+      proxy: { httpUrl: `http://127.0.0.1:${proxyPort}`, httpsUrl: null, noProxy: null },
+    });
+    expect(res.ok).toBe(true);
+    expect(res.body).toBeDefined();
+    expect(proxyHttpRequests).toEqual([`http://127.0.0.1:${originPort}/feed`]);
+    expect(originHits).toEqual(["GET /feed"]);
+  });
+
+  it("prefers a passed-in proxy config over the environment", async () => {
+    // The precedence the Settings page depends on: a configured value
+    // wins, and it is read per call rather than captured once - which is
+    // exactly what fetch could not do.
+    process.env.HTTP_PROXY = "http://127.0.0.1:9";
+    const res = await outboundGet(`http://127.0.0.1:${originPort}/feed`, {
+      proxy: { httpUrl: `http://127.0.0.1:${proxyPort}`, httpsUrl: null, noProxy: null },
+    });
+    expect(res.ok).toBe(true);
+    expect(proxyHttpRequests).toEqual([`http://127.0.0.1:${originPort}/feed`]);
   });
 
   it("skips the proxy for a NO_PROXY match", async () => {

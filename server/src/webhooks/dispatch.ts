@@ -3,7 +3,7 @@ import { logger } from "../logger";
 import { sendEmailAlert } from "./email";
 import { shouldDeliver, type AlertContext } from "./filter";
 import { caBundle } from "../settings/caCertificates";
-import { outboundPost } from "../lib/outboundPost";
+import { outboundPost } from "../lib/outbound";
 import { enqueueRetry } from "./retryQueue";
 
 // Most recent deliveries kept per webhook (webhook_deliveries table) -

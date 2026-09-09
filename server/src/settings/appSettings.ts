@@ -14,6 +14,16 @@ export interface AppSettings {
   networkCoverageStaleDays: number;
   smtp: SmtpSettings;
   hec: HecSettings;
+  proxy: ProxySettings;
+}
+
+// The outbound proxy. Empty fields mean "use the environment" rather than
+// "no proxy", so a deployment configured through .env before this became
+// a setting keeps working with nothing to do - see lib/proxy.ts.
+export interface ProxySettings {
+  httpUrl: string | null;
+  httpsUrl: string | null;
+  noProxy: string | null;
 }
 
 // HTTP Event Collector (Splunk HEC and the collectors that speak its
@@ -101,6 +111,9 @@ export async function getAppSettings(): Promise<AppSettings> {
       "smtp_user",
       "smtp_password",
       "smtp_from",
+      "proxy_http_url",
+      "proxy_https_url",
+      "proxy_no_proxy",
     ])
     .where("id", "=", 1)
     .executeTakeFirstOrThrow();
@@ -124,6 +137,11 @@ export async function getAppSettings(): Promise<AppSettings> {
       index: row.hec_index,
       sourcetype: row.hec_sourcetype,
       verifyTls: row.hec_verify_tls,
+    },
+    proxy: {
+      httpUrl: row.proxy_http_url,
+      httpsUrl: row.proxy_https_url,
+      noProxy: row.proxy_no_proxy,
     },
     smtp: {
       host: row.smtp_host,
@@ -218,4 +236,26 @@ export async function setStaleScanThresholdMinutes(value: number): Promise<void>
 
 export async function setScanQueueWarningThreshold(value: number): Promise<void> {
   await db.updateTable("app_settings").set({ scan_queue_warning_threshold: value }).where("id", "=", 1).execute();
+}
+
+/**
+ * Blank strings are normalised to null on the way in, so "cleared" is one
+ * state in the database rather than two that behave the same but read
+ * differently - and so the fall-back-to-environment rule in lib/proxy.ts
+ * has a single condition to test.
+ */
+export async function setProxySettings(input: ProxySettings): Promise<void> {
+  const clean = (v: string | null) => {
+    const trimmed = (v ?? "").trim();
+    return trimmed === "" ? null : trimmed;
+  };
+  await db
+    .updateTable("app_settings")
+    .set({
+      proxy_http_url: clean(input.httpUrl),
+      proxy_https_url: clean(input.httpsUrl),
+      proxy_no_proxy: clean(input.noProxy),
+    })
+    .where("id", "=", 1)
+    .execute();
 }

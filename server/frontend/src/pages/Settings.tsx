@@ -4,6 +4,7 @@ import PageHeader from "../components/PageHeader";
 import AlertingCard from "./settings/AlertingCard";
 import BackupCard from "./settings/BackupCard";
 import HecCard from "./settings/HecCard";
+import ProxyCard from "./settings/ProxyCard";
 import RequireTotpCard from "./settings/RequireTotpCard";
 import RetentionCard from "./settings/RetentionCard";
 import ScanLogRetentionCard from "./settings/ScanLogRetentionCard";
@@ -100,6 +101,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
       <section>
         <h3 className="settings-group-title">Integrations</h3>
         <div className="settings-grid">
+          <div className="settings-grid-wide">{settings && <ProxyCard settings={settings} onUpdated={setSettings} />}</div>
           <div className="settings-grid-wide">{settings && <HecCard me={me} settings={settings} onUpdated={setSettings} />}</div>
         </div>
       </section>

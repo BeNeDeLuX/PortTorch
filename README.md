@@ -993,6 +993,24 @@ scrape_configs:
 
 ### Using an HTTP proxy
 
+**Configure it under Admin -> Settings -> Outbound Proxy.** It covers every
+call PortTorch makes out: the CVE/EPSS/KEV feeds, the scanner release and
+Docker Hub version checks, and delivery to alert channels and a SIEM
+collector. Changes take effect on the next request - no restart. The
+"Test connection" button fetches the real CVE feed over the real
+transport and tells you *whether it went through the proxy*, which matters
+because on a network that only permits proxied egress a direct success
+means the setting is being ignored.
+
+If a proxy terminates TLS with its own certificate, upload that CA under
+Trusted CA Certificates on the same page; every outbound call honours it.
+
+Leaving the fields empty falls back to `HTTP_PROXY`/`HTTPS_PROXY`/
+`NO_PROXY` from `.env`, so an existing deployment configured that way
+keeps working unchanged - a value in Settings takes over from those.
+
+
+
 Set `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` in `.env` (see
 `.env.example`); Compose passes them into the webserver container, and
 the image already sets `NODE_USE_ENV_PROXY=1`, which is what makes Node's

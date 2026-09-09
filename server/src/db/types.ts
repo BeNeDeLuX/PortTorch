@@ -764,6 +764,14 @@ export interface WebhookRetryQueueTable {
 // don't belong to any one user's account - see settings/appSettings.ts.
 export interface AppSettingsTable {
   id: Generated<number>;
+  // Outbound proxy, moved out of HTTP_PROXY/HTTPS_PROXY/NO_PROXY so it no
+  // longer needs a redeploy - see migration 1745600000000 and
+  // lib/proxy.ts. Null/empty means "fall back to the environment", which
+  // is what keeps an existing .env-configured deployment working
+  // untouched.
+  proxy_http_url: ColumnType<string | null, string | null | undefined, string | null>;
+  proxy_https_url: ColumnType<string | null, string | null | undefined, string | null>;
+  proxy_no_proxy: ColumnType<string | null, string | null | undefined, string | null>;
   require_admin_totp: ColumnType<boolean, boolean | undefined, boolean>;
   // Was config.ts's HOST_RETENTION_DAYS env var - moved here so it's
   // live-editable from the Settings page (see retention.ts). 0 disables

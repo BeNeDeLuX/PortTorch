@@ -5,6 +5,8 @@ import { config } from "../config";
 import { logger } from "../logger";
 import { dispatchWebhook } from "../webhooks/dispatch";
 import { ANY_TRIAGE_STATE, cveNotTriaged } from "../findingTriage/sqlFilters";
+import { outboundGet } from "../lib/outbound";
+import { caBundle } from "../settings/caCertificates";
 
 // Unlike cve_cache (see sync.ts), EPSS scores genuinely change day to day -
 // FIRST.org recomputes the underlying model daily - so this re-checks every
@@ -169,11 +171,11 @@ export async function checkHighEpssAlerts(): Promise<void> {
 
 async function fetchEpssForCves(cveIds: string[]): Promise<Map<string, { epss: number; percentile: number }>> {
   const url = `https://api.first.org/data/v1/epss?cve=${cveIds.map(encodeURIComponent).join(",")}`;
-  const res = await fetch(url);
+  const res = await outboundGet(url, { ca: await caBundle() });
   if (!res.ok) {
-    throw new Error(`EPSS API returned ${res.status}`);
+    throw new Error(`EPSS API request failed: ${res.error ?? `status ${res.status}`}`);
   }
-  const body = (await res.json()) as { data?: Array<{ cve: string; epss: string; percentile: string }> };
+  const body = JSON.parse(res.body ?? "{}") as { data?: Array<{ cve: string; epss: string; percentile: string }> };
   const result = new Map<string, { epss: number; percentile: number }>();
   for (const entry of body.data ?? []) {
     result.set(entry.cve, { epss: parseFloat(entry.epss), percentile: parseFloat(entry.percentile) });

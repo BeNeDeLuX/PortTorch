@@ -1,6 +1,8 @@
 import { db } from "../db";
 import { config } from "../config";
 import { logger } from "../logger";
+import { outboundGet } from "../lib/outbound";
+import { caBundle } from "../settings/caCertificates";
 
 // GitHub's unauthenticated REST API rate limit is 60 req/hour/IP - a
 // single releases-list fetch per hour stays comfortably under that, same
@@ -48,17 +50,18 @@ export function startGithubSync(): void {
 // silently-unchanged cache; the scheduled tick above is the one place
 // that catches and only logs it, since nothing is waiting on that path.
 export async function syncScannerRelease(): Promise<void> {
-  const res = await fetch(`https://api.github.com/repos/${config.githubRepoSlug}/releases`, {
+  const res = await outboundGet(`https://api.github.com/repos/${config.githubRepoSlug}/releases`, {
     headers: {
       // GitHub's API rejects requests with no User-Agent at all.
       "User-Agent": "porttorch-webserver",
       Accept: "application/vnd.github+json",
     },
+    ca: await caBundle(),
   });
   if (!res.ok) {
-    throw new Error(`GitHub releases fetch returned ${res.status}`);
+    throw new Error(`GitHub releases fetch failed: ${res.error ?? `status ${res.status}`}`);
   }
-  const releases = (await res.json()) as GitHubRelease[];
+  const releases = JSON.parse(res.body ?? "[]") as GitHubRelease[];
 
   const candidates = releases
     .filter((r) => !r.draft && !r.prerelease && r.tag_name.startsWith(TAG_PREFIX))

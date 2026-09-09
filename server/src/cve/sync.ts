@@ -4,6 +4,8 @@ import { config } from "../config";
 import { logger } from "../logger";
 import { cpe22to23 } from "./cpe";
 import type { CveEntry } from "../db/types";
+import { outboundGet } from "../lib/outbound";
+import { caBundle } from "../settings/caCertificates";
 
 // Daily is plenty - CVE data doesn't change minute to minute, and NVD's
 // public rate limit (5 req/30s without a key, 50/30s with one) makes
@@ -83,8 +85,12 @@ async function fetchCvesForCpe(cpe22: string): Promise<CveEntry[]> {
   if (!cpe23) return [];
 
   const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?cpeName=${encodeURIComponent(cpe23)}&resultsPerPage=20`;
-  const res = await fetch(url, {
+  const res = await outboundGet(url, {
     headers: config.nvdApiKey ? { apiKey: config.nvdApiKey } : {},
+    // The uploaded trust anchors, so a proxy that terminates TLS with its
+    // own certificate is fixable from the Settings page rather than an
+    // unfixable sync failure. fetch could not take these at all.
+    ca: await caBundle(),
   });
   // NVD returns 404 for a well-formed but non-existent CPE, which is the
   // normal case for a versionless CPE (e.g. cpe:/a:golang:go with no
@@ -92,13 +98,13 @@ async function fetchCvesForCpe(cpe22: string): Promise<CveEntry[]> {
   // match, not an error worth retrying/warning about.
   if (res.status === 404) return [];
   if (!res.ok) {
-    throw new Error(`NVD API returned ${res.status} for ${cpe23}`);
+    throw new Error(`NVD API request failed for ${cpe23}: ${res.error ?? `status ${res.status}`}`);
   }
   interface CvssMetric {
     cvssData: { baseScore: number; baseSeverity?: string };
     baseSeverity?: string; // CVSS v2 puts it here instead of inside cvssData
   }
-  const body = (await res.json()) as {
+  const body = JSON.parse(res.body ?? "{}") as {
     vulnerabilities?: Array<{
       cve: {
         id: string;

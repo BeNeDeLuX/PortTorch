@@ -2,6 +2,8 @@ import { db } from "../db";
 import { logger } from "../logger";
 import { config } from "../config";
 import { VERSION } from "../version";
+import { outboundGet } from "../lib/outbound";
+import { caBundle } from "../settings/caCertificates";
 
 // Hourly, matching the scanner release sync beside it - a new webserver
 // image appears when someone pushes to master, not minute to minute, and
@@ -57,14 +59,15 @@ export function startWebserverReleaseSync(): void {
 export async function syncWebserverRelease(): Promise<void> {
   const url = `https://hub.docker.com/v2/repositories/${config.webserverImageRepo}/tags?page_size=100&ordering=last_updated`;
   try {
-    const res = await fetch(url, {
+    const res = await outboundGet(url, {
       headers: { "User-Agent": "porttorch-webserver", Accept: "application/json" },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      ca: await caBundle(),
     });
     if (!res.ok) {
-      throw new Error(`Docker Hub returned ${res.status}`);
+      throw new Error(`Docker Hub request failed: ${res.error ?? `status ${res.status}`}`);
     }
-    const body = (await res.json()) as { results?: DockerHubTag[] };
+    const body = JSON.parse(res.body ?? "{}") as { results?: DockerHubTag[] };
     const versions = (body.results ?? []).filter((t) => VERSION_TAG.test(t.name));
     if (versions.length === 0) {
       throw new Error("no version-shaped tags found");

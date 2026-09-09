@@ -2,13 +2,19 @@ import http from "http";
 import https from "https";
 import net from "net";
 import { URL } from "url";
-import { proxyForUrl } from "./proxy";
+import { proxyForUrl, ProxyConfig } from "./proxy";
+import { getAppSettings } from "../settings/appSettings";
 
-export interface OutboundPostResult {
+export interface OutboundResult {
   ok: boolean;
   status?: number;
   error?: string;
+  /** Response body, only collected when the caller asked for one. */
+  body?: string;
 }
+
+/** Kept as the old name so existing callers read unchanged. */
+export type OutboundPostResult = OutboundResult;
 
 export interface OutboundPostOptions {
   headers?: Record<string, string>;
@@ -21,6 +27,38 @@ export interface OutboundPostOptions {
   // How much of an error response body to keep. Enough to identify the
   // problem, not enough to put a target's whole error page in a log line.
   maxErrorBytes?: number;
+  // The proxy configuration to use. Omitted means "look it up" - see
+  // resolveProxy below on why that is the default rather than an
+  // env-only fallback.
+  proxy?: ProxyConfig | null;
+}
+
+export interface OutboundGetOptions extends OutboundPostOptions {
+  // A successful response body is only worth collecting when someone is
+  // going to read it, and the API responses these fetch are large - the
+  // KEV catalogue alone is over a megabyte.
+  maxResponseBytes?: number;
+}
+
+/**
+ * Every outbound request resolves its proxy the same way, and a caller
+ * that forgets to pass one gets the configured value rather than the
+ * environment. That default is deliberate: an env-only fallback would
+ * mean a call site added later silently keeps using .env after an admin
+ * has moved the proxy into Settings, which is precisely the split this
+ * module exists to end. One extra settings read per outbound network
+ * call is not measurable against the call itself.
+ */
+async function resolveProxy(options: { proxy?: ProxyConfig | null }): Promise<ProxyConfig | null> {
+  if (options.proxy !== undefined) return options.proxy;
+  try {
+    return (await getAppSettings()).proxy;
+  } catch {
+    // A settings read that fails must not stop an outbound request that
+    // might well work: fall through to the environment, which is what
+    // proxyForUrl does with a null config.
+    return null;
+  }
 }
 
 // A POST to a server the operator runs, over Node's http/https rather
@@ -52,7 +90,7 @@ export async function outboundPost(
   const transport = target.protocol === "https:" ? https : http;
   const maxErrorBytes = options.maxErrorBytes ?? 300;
   const timeoutMs = options.timeoutMs ?? 20_000;
-  const proxy = proxyForUrl(targetUrl);
+  const proxy = proxyForUrl(targetUrl, await resolveProxy(options));
   const targetPort = Number(target.port || (target.protocol === "https:" ? 443 : 80));
 
   // An http target through a proxy is just a request to the proxy with an
@@ -184,31 +222,140 @@ function proxyAuthHeader(proxy: URL): Record<string, string> {
 function sendRequest(
   transport: typeof http | typeof https,
   options: http.RequestOptions & Record<string, unknown>,
-  payload: Buffer,
-  maxErrorBytes: number
-): Promise<OutboundPostResult> {
-  return new Promise<OutboundPostResult>((resolve) => {
+  payload: Buffer | null,
+  maxErrorBytes: number,
+  // When set, a successful body is collected up to this many bytes. Left
+  // undefined for POST, whose callers only ever want to know whether it
+  // landed - keeping a delivery's response would put an arbitrary target's
+  // output in memory for nothing.
+  maxResponseBytes?: number
+): Promise<OutboundResult> {
+  return new Promise<OutboundResult>((resolve) => {
     const req = transport.request(options, (res) => {
+      const status = res.statusCode ?? 0;
+      const ok = status >= 200 && status < 300;
+      const budget = ok ? maxResponseBytes ?? maxErrorBytes : maxErrorBytes;
       const chunks: Buffer[] = [];
       let size = 0;
+      // Read to the end even when the body is not wanted, so the socket
+      // can be reused and the response is not left dangling.
       res.on("data", (c: Buffer) => {
-        if (size < maxErrorBytes) {
+        if (size < budget) {
           chunks.push(c);
           size += c.length;
         }
       });
       res.on("end", () => {
-        const status = res.statusCode ?? 0;
-        if (status >= 200 && status < 300) {
-          resolve({ ok: true, status });
+        const text = Buffer.concat(chunks).toString("utf8");
+        if (ok) {
+          resolve({ ok: true, status, ...(maxResponseBytes ? { body: text.slice(0, maxResponseBytes) } : {}) });
           return;
         }
-        const text = Buffer.concat(chunks).toString("utf8").slice(0, maxErrorBytes);
-        resolve({ ok: false, status, error: `target responded ${status}${text ? `: ${text}` : ""}` });
+        const snippet = text.slice(0, maxErrorBytes);
+        resolve({ ok: false, status, error: `target responded ${status}${snippet ? `: ${snippet}` : ""}` });
       });
     });
     req.on("timeout", () => req.destroy(new Error("target did not respond in time")));
     req.on("error", (err) => resolve({ ok: false, error: err.message }));
-    req.end(payload);
+    req.end(payload ?? undefined);
   });
+}
+
+/**
+ * A GET over the same three paths outboundPost uses - direct, through a
+ * proxy in absolute form, and over a CONNECT tunnel - returning the
+ * response body.
+ *
+ * This exists so the NVD, EPSS, KEV, GitHub and Docker Hub syncs stop
+ * using fetch. Two things follow from that, and both are the point rather
+ * than side effects: the proxy becomes a live setting for them too
+ * (undici captures the environment at startup and cannot be changed
+ * afterwards), and they gain the uploaded CA bundle, which fetch cannot
+ * take at all - so a proxy that terminates TLS with its own certificate,
+ * the normal corporate arrangement, is now something an admin can fix
+ * from the dashboard instead of an unfixable sync failure.
+ */
+export async function outboundGet(targetUrl: string, options: OutboundGetOptions = {}): Promise<OutboundResult> {
+  let target: URL;
+  try {
+    target = new URL(targetUrl);
+  } catch {
+    return { ok: false, error: "not a valid URL" };
+  }
+  if (target.protocol !== "http:" && target.protocol !== "https:") {
+    return { ok: false, error: "url must be http or https" };
+  }
+
+  const maxErrorBytes = options.maxErrorBytes ?? 300;
+  const maxResponseBytes = options.maxResponseBytes ?? 32 * 1024 * 1024;
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  const proxy = proxyForUrl(targetUrl, await resolveProxy(options));
+  const targetPort = Number(target.port || (target.protocol === "https:" ? 443 : 80));
+  // gzip is deliberately not requested: fetch decompressed transparently,
+  // and asking for it here would mean decompressing by hand for no gain
+  // on an hourly job.
+  const headers = { Accept: "application/json", ...options.headers };
+
+  if (proxy && target.protocol === "http:") {
+    return sendRequest(http, {
+      hostname: proxy.hostname,
+      port: Number(proxy.port || 80),
+      path: targetUrl,
+      method: "GET",
+      headers: { Host: target.host, ...proxyAuthHeader(proxy), ...headers },
+      timeout: timeoutMs,
+    }, null, maxErrorBytes, maxResponseBytes);
+  }
+
+  if (proxy && target.protocol === "https:") {
+    return new Promise<OutboundResult>((resolve) => {
+      const connectReq = http.request({
+        host: proxy.hostname,
+        port: Number(proxy.port || 80),
+        method: "CONNECT",
+        path: `${target.hostname}:${targetPort}`,
+        headers: { Host: `${target.hostname}:${targetPort}`, ...proxyAuthHeader(proxy) },
+        timeout: timeoutMs,
+      });
+      connectReq.on("connect", (res, socket: net.Socket) => {
+        if (res.statusCode !== 200) {
+          socket.destroy();
+          resolve({ ok: false, status: res.statusCode, error: `proxy refused CONNECT (${res.statusCode})` });
+          return;
+        }
+        sendRequest(https, {
+          socket,
+          agent: false,
+          servername: target.hostname,
+          host: target.hostname,
+          port: targetPort,
+          path: `${target.pathname}${target.search}`,
+          method: "GET",
+          headers,
+          rejectUnauthorized: options.verifyTls ?? true,
+          ...(options.ca ? { ca: options.ca } : {}),
+          timeout: timeoutMs,
+        }, null, maxErrorBytes, maxResponseBytes)
+          // Same leak the POST path documents: with `agent: false` and a
+          // socket handed in, nothing else ever closes it.
+          .finally(() => socket.destroy())
+          .then(resolve);
+      });
+      connectReq.on("timeout", () => connectReq.destroy(new Error("proxy did not respond in time")));
+      connectReq.on("error", (err) => resolve({ ok: false, error: `proxy connection failed: ${err.message}` }));
+      connectReq.end();
+    });
+  }
+
+  return sendRequest(target.protocol === "https:" ? https : http, {
+    protocol: target.protocol,
+    hostname: target.hostname,
+    port: target.port || (target.protocol === "https:" ? 443 : 80),
+    path: `${target.pathname}${target.search}`,
+    method: "GET",
+    headers,
+    rejectUnauthorized: options.verifyTls ?? true,
+    ...(options.ca ? { ca: options.ca } : {}),
+    timeout: timeoutMs,
+  }, null, maxErrorBytes, maxResponseBytes);
 }

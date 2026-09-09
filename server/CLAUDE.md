@@ -466,6 +466,79 @@ so the only feedback was a rejected save.
 
 ### Outbound HTTP proxy
 
+**The proxy is a Settings-page value now, and that required moving every
+outbound call onto one transport.** It could not have been a setting
+before, and the reason is worth stating because it looks like an
+arbitrary limitation: outbound traffic was split between `fetch` (the
+NVD, EPSS, KEV, GitHub and Docker Hub syncs) and `lib/outboundPost`
+(alert channels, HEC), and **undici captures the proxy environment at
+process start and never re-reads it** - measured, not assumed: with
+`NODE_USE_ENV_PROXY=1`, a variable set before Node starts is honoured and
+the same variable set at runtime has no effect at all. A database-backed
+value would therefore have applied to the alert channels immediately and
+to the syncs only after a restart: two proxies configured in one field,
+silently disagreeing. Worse than either extreme.
+
+So `lib/outboundPost.ts` became `lib/outbound.ts` and grew `outboundGet`,
+and the five sync call sites use it instead of `fetch`. No new dependency
+- reaching a proxy from `fetch` needs undici's `ProxyAgent`, which Node
+bundles but does not export, while the hard part (CONNECT tunnelling with
+`rejectUnauthorized` and a CA bundle) was already written and tested
+here. None of the five targets redirect, checked against the real
+endpoints, so the GET path needs no redirect handling.
+
+**A second thing falls out that matters as much as the proxy itself: the
+syncs now honour the uploaded CA bundle.** `fetch` cannot take one, so
+behind a proxy that terminates TLS with its own certificate - the normal
+corporate arrangement - the CVE/EPSS/KEV/GitHub/Docker Hub syncs failed
+with a certificate error and there was *nothing* an admin could do about
+it from the dashboard. Now uploading the CA under Trusted CA Certificates
+fixes them, the same way it already fixed SMTP and HEC.
+
+**Precedence is configured-then-environment, and the migration
+deliberately does not seed.** Every earlier move out of `config.ts`
+(`host_retention_days`, SMTP, the alerting tunables) copied the env value
+once and never read the variable again, because each had exactly one
+consumer. Here the environment keeps mattering: an empty field falls back
+to it, so a deployment already configured through `.env` keeps working
+untouched, and an admin who fills the field in takes over from that
+point. Seeding would have shown a value nobody typed and left `.env`
+looking authoritative when it no longer was.
+
+`proxyForUrl` takes the config as a parameter rather than reading it, the
+shape `lib/staleness.ts` uses for its threshold - no hidden cache to go
+stale. `lib/outbound.ts` looks the settings up itself when a caller
+passes none, which is the opposite of that rule and deliberately so: an
+env-only default would mean a call site added later silently keeps using
+`.env` after the proxy moved, which is the split this whole change exists
+to end.
+
+**`POST /api/settings/proxy/test` fetches the real CVE feed over the real
+transport** - same reasoning as the SMTP test sending an actual message
+rather than calling `verify()` - and reports *whether it went through a
+proxy*, not just pass/fail. On a network that only permits proxied
+egress, a direct success means the setting is being ignored, which reads
+as a pass otherwise. Proxy credentials belong in the URL and are never
+logged; only the host reaches the log line and the audit entry.
+
+Verified against a real CONNECT proxy in a disposable stack rather than
+reasoned about: with nothing configured the test goes direct; setting the
+proxy through the API alone makes the very next call tunnel through it
+(the proxy logs `CONNECT services.nvd.nist.gov:443`) with **no restart**;
+a real sync follows the same route (`CONNECT hub.docker.com:443`); a
+configured no-proxy entry sends it direct again; and a bogus proxy fails
+with a clear error rather than silently falling back.
+
+**The webhook test button moved onto the same transport while there.** It
+used `fetch` while real delivery used `outboundPost`, so testing a channel
+exercised a different path than delivering to it - and through a proxy, or
+against a target with a private CA, those two paths give different
+answers.
+
+#### Original notes
+
+### Outbound HTTP proxy
+
 Every outbound call this webserver makes was direct-only, which in a network that requires a proxy meant the NVD/EPSS/KEV syncs and the scanner release check simply timed out - with nothing in the logs pointing at the proxy, since a blocked connection and an unreachable host look identical from here.
 
 The two halves need different mechanisms, which is the thing to know before touching either. **`fetch` (undici) ignores `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` unless `NODE_USE_ENV_PROXY=1` is set** - measured, not assumed: with the variables set and that flag absent, a request still went direct and failed. The Dockerfile sets it unconditionally, which is safe because it only ever means "honour those variables if they exist at all" (also measured: with none set, connections go direct exactly as before). That covers every `fetch` call site with no code change.

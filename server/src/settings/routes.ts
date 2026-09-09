@@ -27,6 +27,7 @@ import {
   setScanQueueWarningThreshold,
   setHecSettings,
   setSmtpSettings,
+  setProxySettings,
   setStaleScanThresholdMinutes,
 } from "./appSettings";
 import { buildTransporter, resetSmtpTransporter, senderAddress } from "../webhooks/email";
@@ -35,6 +36,8 @@ import { CaCertificateError, caBundle, parseCaCertificate, resetCaBundle } from 
 import { runHecForward } from "../hec/forwarder";
 import { runRetentionSweep } from "../retention";
 import { backupRouter } from "../backup/routes";
+import { outboundGet } from "../lib/outbound";
+import { proxyForUrl } from "../lib/proxy";
 
 // Everything here is admin-only, like scanner agents/schedules/webhooks/
 // excludes/user management (see CLAUDE.md's "Roles and permissions") -
@@ -183,6 +186,15 @@ const appSettingsSchema = z.object({
     .optional(),
   // One object for the same reason as smtp: a collector URL without its
   // token is not a usable half-state, and the form saves them together.
+  proxy: z
+    .object({
+      // A blank string is the normal way a form says "cleared"; the
+      // setter normalises it to null so "empty" is one state, not two.
+      httpUrl: z.string().trim().max(500).nullable(),
+      httpsUrl: z.string().trim().max(500).nullable(),
+      noProxy: z.string().trim().max(2000).nullable(),
+    })
+    .optional(),
   hec: z
     .object({
       url: z.string().trim().min(1).nullable(),
@@ -331,6 +343,32 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
     recordAudit("settings.smtp_updated", req.session.username, req.ip, {
       smtp_host: parsed.data.smtp.host,
       smtp_port: parsed.data.smtp.port,
+    });
+  }
+
+  if ("proxy" in req.body && parsed.data.proxy !== undefined) {
+    await setProxySettings(parsed.data.proxy);
+    // The URL can carry credentials (http://user:pass@proxy:3128), which
+    // is how they are conventionally supplied - so only the host is
+    // logged, never the value.
+    const hostOf = (v: string | null) => {
+      if (!v) return null;
+      try {
+        return new URL(v).host;
+      } catch {
+        return "invalid";
+      }
+    };
+    logger.info({
+      event: "settings.proxy_updated",
+      http_proxy_host: hostOf(parsed.data.proxy.httpUrl),
+      https_proxy_host: hostOf(parsed.data.proxy.httpsUrl),
+      no_proxy_set: Boolean(parsed.data.proxy.noProxy),
+      updated_by: req.session.username,
+    });
+    await recordAudit("settings.proxy_updated", req.session.username, req.ip, {
+      http_proxy_host: hostOf(parsed.data.proxy.httpUrl),
+      https_proxy_host: hostOf(parsed.data.proxy.httpsUrl),
     });
   }
 
@@ -692,3 +730,41 @@ settingsRouter.get("/storage", asyncHandler(async (_req, res) => {
     screenshots: { files: screenshotFiles, bytes: screenshotBytes },
   });
 }));
+
+// Proves the configured proxy actually reaches the internet, over exactly
+// the transport the syncs use - the same "test the real path, not an
+// equivalent one" reasoning as the SMTP test sending a real message
+// rather than calling verify(). The target is the CVE feed's own host,
+// since that is the sync whose failure is least visible.
+settingsRouter.post(
+  "/proxy/test",
+  asyncHandler(async (req, res) => {
+    const settings = await getAppSettings();
+    const target = "https://services.nvd.nist.gov/rest/json/cves/2.0?resultsPerPage=1";
+    const started = Date.now();
+    const result = await outboundGet(target, {
+      proxy: settings.proxy,
+      ca: await caBundle(),
+      timeoutMs: 20_000,
+      maxResponseBytes: 2048,
+    });
+    const viaProxy = proxyForUrl(target, settings.proxy);
+    logger.info({
+      event: "settings.proxy_tested",
+      ok: result.ok,
+      via_proxy: viaProxy ? viaProxy.host : null,
+      duration_ms: Date.now() - started,
+      tested_by: req.session.username,
+    });
+    res.json({
+      ok: result.ok,
+      status: result.status,
+      error: result.error,
+      // So the answer is not just pass/fail but "and it did/did not go
+      // through a proxy" - a direct success in a proxy-only network means
+      // the setting is being ignored, which reads as a pass otherwise.
+      viaProxy: viaProxy ? viaProxy.host : null,
+      durationMs: Date.now() - started,
+    });
+  })
+);

@@ -7,6 +7,8 @@ import { logger } from "../logger";
 import { buildTeamsAdaptiveCardBody, recordDelivery, WebhookEvent } from "./dispatch";
 import { sendEmailAlert } from "./email";
 import { recordAudit } from "../audit/log";
+import { outboundPost } from "../lib/outbound";
+import { caBundle } from "../settings/caCertificates";
 
 export const webhooksRouter = Router();
 webhooksRouter.use(requireAuth);
@@ -269,7 +271,7 @@ webhooksRouter.post("/:id/test", requireAdmin, asyncHandler(async (req, res) => 
     return;
   }
   const webhookId = req.params.id as string;
-  const webhook = await db.selectFrom("webhooks").select(["channel_type", "url", "email_to"]).where("id", "=", webhookId).executeTakeFirst();
+  const webhook = await db.selectFrom("webhooks").select(["channel_type", "url", "email_to", "verify_tls"]).where("id", "=", webhookId).executeTakeFirst();
   if (!webhook) {
     res.status(404).json({ error: "webhook not found" });
     return;
@@ -299,19 +301,18 @@ webhooksRouter.post("/:id/test", requireAdmin, asyncHandler(async (req, res) => 
           timestamp: new Date().toISOString(),
         });
 
-  try {
-    const testResponse = await fetch(webhook.url!, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: testBody,
-    });
-    await recordDelivery(webhookId, "test", testResponse.ok, testResponse.status, null);
-    res.json({ ok: testResponse.ok, status: testResponse.status });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await recordDelivery(webhookId, "test", false, null, message);
-    res.json({ ok: false, error: message });
-  }
+  // The same transport a real delivery uses, not fetch. Testing a channel
+  // over a different path than the one that delivers to it is how a test
+  // passes while delivery fails - and through a proxy, or against a
+  // target with a private CA, that is not hypothetical: only this
+  // transport carries the proxy setting, the uploaded CA bundle and the
+  // channel's own verify-TLS switch.
+  const result = await outboundPost(webhook.url!, testBody, {
+    verifyTls: webhook.verify_tls,
+    ca: await caBundle(),
+  });
+  await recordDelivery(webhookId, "test", result.ok, result.status ?? null, result.error ?? null);
+  res.json(result.ok ? { ok: true, status: result.status } : { ok: false, status: result.status, error: result.error });
 }));
 
 export { EVENTS as WEBHOOK_EVENTS };
