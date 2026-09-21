@@ -100,6 +100,15 @@ func RunTLSCertProbe(ctx context.Context, cfg Config, ip string, port int, sni s
 	if err != nil {
 		return nil, fmt.Errorf("tcp dial %s: %w", address, err)
 	}
+
+	return certificateFromConn(ctx, rawConn, address, port, sni)
+}
+
+// certificateFromConn is the half of the probe that starts at the TLS
+// handshake, split out so RDP can reuse it: RDP reaches this point only
+// after its own X.224 negotiation (see rdptls.go), on the very same
+// socket. Takes ownership of rawConn and closes it.
+func certificateFromConn(ctx context.Context, rawConn net.Conn, address string, port int, sni string) (*TLSCertificate, error) {
 	defer rawConn.Close()
 
 	tlsConn := tls.Client(rawConn, &tls.Config{

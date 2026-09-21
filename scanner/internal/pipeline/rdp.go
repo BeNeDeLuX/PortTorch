@@ -2,8 +2,10 @@ package pipeline
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"image/png"
 	"net"
 	"os"
 	"os/exec"
@@ -59,12 +61,37 @@ func RunRDPScreenshot(ctx context.Context, cfg Config, ip string, port int) (*RD
 	}
 	rdpCmd := exec.CommandContext(ctx, cfg.XfreerdpPath, rdpArgs...)
 	rdpCmd.Env = append(os.Environ(), "DISPLAY="+display)
+	// Kept so a failure can say *why* rather than only that it happened -
+	// "SEC_E_INVALID_TOKEN" and "connection refused" call for very
+	// different responses from whoever reads it.
+	var rdpStderr bytes.Buffer
+	rdpCmd.Stderr = &rdpStderr
 	if err := rdpCmd.Start(); err != nil {
 		return nil, fmt.Errorf("starting xfreerdp: %w", err)
 	}
-	defer stopProcess(rdpCmd)
+	// Waited for in a goroutine rather than left to the deferred kill,
+	// because the exit is the signal that matters: xfreerdp that dies
+	// immediately - which is what a server requiring NLA does to
+	// /sec:rdp - leaves an Xvfb root window nothing ever drew into, and
+	// capturing that yields a perfectly valid, perfectly black PNG. The
+	// old code only checked that a file appeared and was non-empty, both
+	// of which a black frame satisfies, so a refused connection was
+	// stored and displayed as though it were a screenshot.
+	exited := make(chan error, 1)
+	go func() { exited <- rdpCmd.Wait() }()
+	defer func() {
+		_ = rdpCmd.Process.Kill()
+		<-exited
+	}()
 
 	select {
+	case err := <-exited:
+		// Put it back so the deferred drain does not block.
+		exited <- err
+		return nil, fmt.Errorf(
+			"xfreerdp exited before %s:%d could be captured (%v): %s",
+			ip, port, err, summariseRDPFailure(rdpStderr.String()),
+		)
 	case <-time.After(time.Duration(cfg.RDPScreenshotDelaySeconds) * time.Second):
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -85,6 +112,19 @@ func RunRDPScreenshot(ctx context.Context, cfg Config, ip string, port int) (*RD
 	if info, err := os.Stat(imagePath); err != nil || info.Size() == 0 {
 		os.RemoveAll(tmpDir)
 		return nil, fmt.Errorf("rdp screenshot for %s:%d was not created", ip, port)
+	}
+
+	// Belt and braces alongside the exit check above: xfreerdp can also
+	// stay alive having drawn nothing (a server that accepts the
+	// connection and then sits silent), and the result is the same black
+	// frame. A uniform image is never a real login screen, so it is
+	// reported as the failure it is rather than filed as a capture.
+	if blank, err := imageIsUniform(imagePath); err == nil && blank {
+		os.RemoveAll(tmpDir)
+		return nil, fmt.Errorf(
+			"rdp screenshot for %s:%d came out blank - the connection produced no graphical output (a server requiring NLA does this): %s",
+			ip, port, summariseRDPFailure(rdpStderr.String()),
+		)
 	}
 
 	return &RDPScreenshot{Port: port, ImagePath: imagePath}, nil
@@ -139,4 +179,55 @@ func stopProcess(cmd *exec.Cmd) {
 	}
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait()
+}
+
+// imageIsUniform reports whether every pixel of the capture is the same
+// colour - the signature of a framebuffer nothing ever drew into.
+//
+// Deliberately "uniform" rather than "black": Xvfb's empty root is black
+// today, but a different depth or a server that paints a solid background
+// and nothing else is just as empty of information, and the test costs
+// the same.
+func imageIsUniform(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	img, err := png.Decode(f)
+	if err != nil {
+		return false, err
+	}
+	bounds := img.Bounds()
+	if bounds.Empty() {
+		return true, nil
+	}
+	first := img.At(bounds.Min.X, bounds.Min.Y)
+	fr, fg, fb, fa := first.RGBA()
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, a := img.At(x, y).RGBA()
+			if r != fr || g != fg || b != fb || a != fa {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
+
+// summariseRDPFailure turns xfreerdp's output into one line worth putting
+// in an error. Its log is verbose and mostly irrelevant; the last
+// non-empty line is where the actual reason sits.
+func summariseRDPFailure(stderr string) string {
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			if len(line) > 200 {
+				line = line[:200]
+			}
+			return line
+		}
+	}
+	return "no output from xfreerdp"
 }

@@ -2,8 +2,13 @@ package pipeline
 
 import (
 	"context"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"testing"
 )
@@ -105,5 +110,63 @@ func TestIsRDPPort(t *testing.T) {
 				t.Errorf("isRDPPort(%+v) = %v, want %v", c.port, got, c.want)
 			}
 		})
+	}
+}
+
+// The check that separates "captured a login screen" from "captured an
+// empty framebuffer" - the whole reason a failed RDP connection used to
+// be stored as a screenshot.
+func TestImageIsUniform(t *testing.T) {
+	write := func(t *testing.T, name string, paint func(*image.RGBA)) string {
+		t.Helper()
+		img := image.NewRGBA(image.Rect(0, 0, 32, 24))
+		paint(img)
+		path := filepath.Join(t.TempDir(), name)
+		f, err := os.Create(path)
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		defer f.Close()
+		if err := png.Encode(f, img); err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		return path
+	}
+
+	black := write(t, "black.png", func(img *image.RGBA) {
+		draw.Draw(img, img.Bounds(), &image.Uniform{color.RGBA{0, 0, 0, 255}}, image.Point{}, draw.Src)
+	})
+	if uniform, err := imageIsUniform(black); err != nil || !uniform {
+		t.Fatalf("an all-black capture must be recognised as blank (uniform=%v err=%v)", uniform, err)
+	}
+
+	// Not black, but equally empty of information - which is why the test
+	// is for uniformity rather than for the colour black specifically.
+	grey := write(t, "grey.png", func(img *image.RGBA) {
+		draw.Draw(img, img.Bounds(), &image.Uniform{color.RGBA{40, 40, 40, 255}}, image.Point{}, draw.Src)
+	})
+	if uniform, err := imageIsUniform(grey); err != nil || !uniform {
+		t.Fatalf("a solid non-black capture must also count as blank (uniform=%v err=%v)", uniform, err)
+	}
+
+	// One differing pixel is enough to be a real capture: a login screen
+	// is overwhelmingly background, so the test must not need much.
+	almost := write(t, "almost.png", func(img *image.RGBA) {
+		draw.Draw(img, img.Bounds(), &image.Uniform{color.RGBA{0, 0, 0, 255}}, image.Point{}, draw.Src)
+		img.Set(17, 11, color.RGBA{255, 255, 255, 255})
+	})
+	if uniform, err := imageIsUniform(almost); err != nil || uniform {
+		t.Fatalf("a capture with any content must not be discarded (uniform=%v err=%v)", uniform, err)
+	}
+}
+
+func TestSummariseRDPFailureTakesTheLastMeaningfulLine(t *testing.T) {
+	// xfreerdp's log is verbose and the reason sits at the end.
+	got := summariseRDPFailure("[INFO] connecting\n[ERROR] SEC_E_INVALID_TOKEN\n\n")
+	if got != "[ERROR] SEC_E_INVALID_TOKEN" {
+		t.Fatalf("got %q", got)
+	}
+	if summariseRDPFailure("   \n\n") != "no output from xfreerdp" {
+		t.Fatal("empty output should say so rather than producing a blank reason")
 	}
 }

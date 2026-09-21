@@ -476,9 +476,9 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 							}
 						}
 						if isRDPPort(p) {
-							subTasks++
-						}
-						if isTLSPort(p) {
+							subTasks++ // screenshot
+							subTasks++ // certificate, via the X.224 negotiation
+						} else if isTLSPort(p) {
 							subTasks++
 						}
 					}
@@ -574,7 +574,18 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 								tracker.complete(host.IP, nil)
 							}
 						}
-						if isTLSPort(p) {
+						// An RDP port takes the RDP-negotiating variant instead
+						// of the plain one, never both: nmap sometimes reports
+						// 3389 as ssl/ms-wbt-server, which would otherwise
+						// enqueue a second, guaranteed-to-fail plain handshake
+						// against the same port.
+						if isRDPPort(p) {
+							select {
+							case tlsJobs <- tlsJob{ip: host.IP, port: p.Port, sniHostname: sniHostname, rdp: true}:
+							case <-ctx.Done():
+								tracker.complete(host.IP, nil)
+							}
+						} else if isTLSPort(p) {
 							select {
 							case tlsJobs <- tlsJob{ip: host.IP, port: p.Port, sniHostname: sniHostname}:
 							case <-ctx.Done():
@@ -832,6 +843,10 @@ type tlsJob struct {
 	// only uses this for the ServerName in its tls.Config), so there's no
 	// DNS dependency here.
 	sniHostname string
+	// rdp selects the X.224 pre-negotiation before the handshake (see
+	// rdptls.go). RDP does not begin with TLS, so a plain handshake
+	// against 3389 gets nothing at all.
+	rdp bool
 }
 
 // startTLSWorkers is startGowitnessWorkers' TLS-certificate equivalent -
@@ -855,7 +870,13 @@ func startTLSWorkers(ctx context.Context, cfg Config, jobs <-chan tlsJob, tracke
 					}
 
 					onProgress("tls", fmt.Sprintf("capturing %s", target))
-					cert, err := RunTLSCertProbe(ctx, cfg, j.ip, j.port, sni)
+					var cert *TLSCertificate
+					var err error
+					if j.rdp {
+						cert, err = RunRDPCertProbe(ctx, cfg, j.ip, j.port, sni)
+					} else {
+						cert, err = RunTLSCertProbe(ctx, cfg, j.ip, j.port, sni)
+					}
 					if err != nil {
 						onProgress("tls", fmt.Sprintf("failed for %s: %v", target, err))
 						tracker.complete(j.ip, nil)
