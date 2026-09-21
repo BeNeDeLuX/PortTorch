@@ -116,14 +116,16 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
           <label>
             Target
             <input
-              placeholder="192.168.1.0/24, 2001:db8::1, or a DNS hostname"
+              placeholder="192.168.1.0/24, 2001:db8::1, web1.internal, or a mix"
               value={targetSpec}
               onChange={(e) => setTargetSpec(e.target.value)}
             />
           </label>
           <p className="empty">
-            A DNS hostname is resolved by the scanner itself and used as the scan target - it's also automatically
-            used as the TLS SNI / screenshot hostname, the same effect as setting a host's "probe hostname" by hand.
+            DNS hostnames are resolved by the scanner itself, and can be mixed freely with IPs, CIDRs and ranges in
+            one comma-separated list. Each resolved name also becomes that host's TLS SNI / screenshot hostname, the
+            same effect as setting its "probe hostname" by hand. A name that does not resolve fails the scan rather
+            than being skipped.
           </p>
           <label>
             Ports

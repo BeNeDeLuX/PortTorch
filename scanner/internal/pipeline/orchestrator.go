@@ -279,6 +279,63 @@ func withProbeHostname(probeHostnames map[string]string, ip, hostname string) ma
 	return merged
 }
 
+// resolveHostnamesInTargetSpec resolves every DNS name in a target spec,
+// which may mix names with IPs, CIDRs and ranges: "web1.internal,
+// 10.0.0.0/24,db.internal" is a perfectly reasonable thing to type and
+// used to fail at masscan with "unknown command-line parameter", a
+// message that says nothing about names not being resolved here.
+//
+// Only one name worked before, because isHostname disqualifies anything
+// containing a comma - correct for a single spec, since a comma separates
+// masscan targets and a hostname never contains one. Splitting first and
+// asking the same question per part keeps that rule intact and makes it
+// answer the right question.
+//
+// **The spec is rebuilt only if a name was actually resolved.** A spec of
+// pure IPs/CIDRs/ranges is returned byte-identical, so nothing that works
+// today can change shape on the way to masscan - including a
+// comma-separated IPv6 list, whose parts isHostname already rejects.
+//
+// A name that does not resolve fails the whole scan rather than being
+// skipped: the same fail-closed treatment the single-name case always
+// had, and the right one for a tool whose value is covering everything it
+// was asked to.
+func resolveHostnamesInTargetSpec(
+	ctx context.Context,
+	targetSpec string,
+	onProgress ProgressFunc,
+) (string, map[string]string, error) {
+	parts := strings.Split(targetSpec, ",")
+	resolved := make(map[string]string)
+	rebuilt := make([]string, len(parts))
+	changed := false
+
+	for i, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if !isHostname(trimmed) {
+			rebuilt[i] = part
+			continue
+		}
+		ip, err := resolveHostnameIPv4(ctx, trimmed)
+		if err != nil {
+			return "", nil, fmt.Errorf("resolving hostname %q: %w", trimmed, err)
+		}
+		onProgress("discovery", fmt.Sprintf("resolved %s -> %s", trimmed, ip))
+		// Two names pointing at one address is normal (a host with
+		// several records); the map keys on the address, so the last one
+		// wins for SNI/screenshot purposes. Both are still scanned -
+		// they are the same machine.
+		resolved[ip] = trimmed
+		rebuilt[i] = ip
+		changed = true
+	}
+
+	if !changed {
+		return targetSpec, resolved, nil
+	}
+	return strings.Join(rebuilt, ","), resolved, nil
+}
+
 func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, excludes Excludes, probeHostnames map[string]string, nseScripts []string, nucleiProfile *NucleiProfile, onProgress ProgressFunc, onHostComplete HostCompleteFunc) (*ScanResult, error) {
 	cfg = cfg.withDefaults()
 	if onProgress == nil {
@@ -313,15 +370,14 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 	// probeHostnames override below, the exact same mechanism a manually
 	// set hosts.probe_hostname already uses for TLS SNI and the gowitness
 	// screenshot URL (see RunScan's own doc comment above).
-	if isHostname(targetSpec) {
-		resolvedIP, err := resolveHostnameIPv4(ctx, targetSpec)
-		if err != nil {
-			return nil, fmt.Errorf("resolving hostname %q: %w", targetSpec, err)
-		}
-		onProgress("discovery", fmt.Sprintf("resolved %s -> %s", targetSpec, resolvedIP))
-		probeHostnames = withProbeHostname(probeHostnames, resolvedIP, targetSpec)
-		targetSpec = resolvedIP
+	resolvedSpec, resolvedNames, err := resolveHostnamesInTargetSpec(ctx, targetSpec, onProgress)
+	if err != nil {
+		return nil, err
 	}
+	for ip, hostname := range resolvedNames {
+		probeHostnames = withProbeHostname(probeHostnames, ip, hostname)
+	}
+	targetSpec = resolvedSpec
 
 	var discovered map[string][]PortResult
 	if strings.Contains(targetSpec, ":") {

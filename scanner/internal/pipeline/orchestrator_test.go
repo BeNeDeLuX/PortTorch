@@ -3,6 +3,8 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"net"
+	"strings"
 	"testing"
 )
 
@@ -191,5 +193,86 @@ func TestWithProbeHostname(t *testing.T) {
 	fromNil := withProbeHostname(nil, "10.0.0.1", "only.internal")
 	if len(fromNil) != 1 || fromNil["10.0.0.1"] != "only.internal" {
 		t.Errorf("withProbeHostname(nil, ...) = %v, want a single entry", fromNil)
+	}
+}
+
+// A target spec may mix names with IPs, CIDRs and ranges. The guarantee
+// that matters most is the negative one: a spec with no names in it comes
+// back byte-identical, so nothing that works today changes shape on its
+// way to masscan.
+func TestResolveHostnamesInTargetSpecLeavesNonHostnameSpecsUntouched(t *testing.T) {
+	unchanged := []string{
+		"10.0.0.5",
+		"10.0.0.0/24",
+		"10.0.0.1-10.0.0.50",
+		"10.0.0.0/24,192.168.1.0/24",
+		"2001:db8::1",
+		// A comma-separated IPv6 list - the case the comma rule in
+		// isHostname was originally written to protect.
+		"2001:db8::1,2001:db8::2",
+		"10.0.0.1, 10.0.0.2",
+		"",
+	}
+	for _, spec := range unchanged {
+		t.Run(spec, func(t *testing.T) {
+			got, resolved, err := resolveHostnamesInTargetSpec(context.Background(), spec, noopProgress)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != spec {
+				t.Fatalf("spec was rewritten: got %q, want %q unchanged", got, spec)
+			}
+			if len(resolved) != 0 {
+				t.Fatalf("nothing should have been resolved, got %v", resolved)
+			}
+		})
+	}
+}
+
+// localhost is the one name every machine running these tests resolves,
+// so it stands in for a real hostname without needing a fixture resolver.
+func TestResolveHostnamesInTargetSpecResolvesSeveralAndMixes(t *testing.T) {
+	if _, err := resolveHostnameIPv4(context.Background(), "localhost"); err != nil {
+		t.Skipf("localhost does not resolve to IPv4 here: %v", err)
+	}
+
+	spec := "localhost,10.0.0.0/24,localhost"
+	got, resolved, err := resolveHostnamesInTargetSpec(context.Background(), spec, noopProgress)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	parts := strings.Split(got, ",")
+	if len(parts) != 3 {
+		t.Fatalf("part count changed: got %q", got)
+	}
+	if net.ParseIP(parts[0]) == nil || net.ParseIP(parts[2]) == nil {
+		t.Fatalf("both names should have become addresses: %q", got)
+	}
+	// The untouched part keeps its exact position, so the order someone
+	// typed is the order masscan receives.
+	if parts[1] != "10.0.0.0/24" {
+		t.Fatalf("the CIDR moved or changed: %q", got)
+	}
+	if len(resolved) != 1 {
+		// Both names are the same host, so one address is recorded once.
+		t.Fatalf("expected one resolved address, got %v", resolved)
+	}
+	for ip, hostname := range resolved {
+		if hostname != "localhost" {
+			t.Fatalf("resolved map should name the hostname, got %q for %s", hostname, ip)
+		}
+	}
+}
+
+// Fail-closed: one unresolvable name stops the scan rather than silently
+// scanning a subset of what was asked for.
+func TestResolveHostnamesInTargetSpecFailsOnOneBadName(t *testing.T) {
+	spec := "10.0.0.1,no-such-host.invalid"
+	_, _, err := resolveHostnamesInTargetSpec(context.Background(), spec, noopProgress)
+	if err == nil {
+		t.Fatal("expected an error rather than a partial target list")
+	}
+	if !strings.Contains(err.Error(), "no-such-host.invalid") {
+		t.Fatalf("the error should name the host that failed, got: %v", err)
 	}
 }
