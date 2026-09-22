@@ -17,6 +17,8 @@ import sys
 
 import yaml
 
+from build_yml import CLEANED_IMPORTS, clean_python_code
+
 HERE = pathlib.Path(__file__).parent
 UNIFIED = HERE / "PortTorch.yml"
 SOURCE = HERE / "PortTorch.py"
@@ -43,8 +45,17 @@ def main() -> int:
             fail(problems, f"missing script.{key}")
 
     code = script_block.get("script") or ""
-    if code.strip() != SOURCE.read_text().strip():
+    if code.strip() != clean_python_code(SOURCE.read_text()).strip():
         fail(problems, "PortTorch.yml is stale - re-run build_yml.py, its embedded code differs from PortTorch.py")
+
+    # The three imports the runtime does not provide. Left in, the
+    # integration fails on its very first command with
+    # "ModuleNotFoundError: No module named 'demistomock'" - which says
+    # nothing about the code being correct, only that it was shipped the
+    # way it is developed.
+    for pattern in CLEANED_IMPORTS:
+        if re.search(pattern, code):
+            fail(problems, f"embedded code still contains an import XSOAR does not provide: /{pattern}/")
     try:
         tree = ast.parse(code)
     except SyntaxError as exc:

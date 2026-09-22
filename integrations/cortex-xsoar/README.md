@@ -208,9 +208,22 @@ handled but never declared), an argument the UI offers that the code never reads
 a docker image that is not pinned to an exact version, and required metadata
 fields.
 
-Compiling on the machine you edit on proves less than it looks: what matters is
-the Python inside the pinned image, which is the one thing a host-side check
-cannot see. Run the integration there before trusting it.
+**The three imports at the top of `PortTorch.py` do not ship.** `build_yml.py`
+strips `import demistomock as demisto`, `from CommonServerPython import *` and
+`from CommonServerUserPython import *` when it builds the unified file - the same
+three regexes `demisto-sdk`'s own `clean_python_code` applies. They exist so the
+source can be compiled, linted and run locally. XSOAR has no `demistomock`
+module at all: it concatenates CommonServerPython and the integration into one
+namespace and injects `demisto` itself, so shipping those imports fails the
+integration on its first command with `ModuleNotFoundError: No module named
+'demistomock'`. `validate.py` refuses a unified file that still contains them.
+
+Compiling on the machine you edit on proves less than it looks, and so does
+importing the code as a module: the import succeeds precisely because
+`demistomock` is sitting next to it. What matters is the Python inside the
+pinned image and the namespace XSOAR actually builds. Verify by running the
+integration that way - one shared globals dict, CommonServerPython cleaned the
+same way, `demistomock` not importable - against a disposable PortTorch.
 
 Run both after editing either source. The generated file is committed, so
 someone who only wants to install the integration never has to build anything.

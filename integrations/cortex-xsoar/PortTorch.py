@@ -248,7 +248,7 @@ def test_module(client: PortTorchClient) -> str:
     return "ok"
 
 
-def list_hosts_command(client: PortTorchClient, args: dict) -> List[CommandResults]:
+def list_hosts_command(client: PortTorchClient, args: dict) -> list:
     params = assign_params(
         q=args.get("query"),
         port=args.get("port"),

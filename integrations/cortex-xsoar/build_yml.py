@@ -15,6 +15,7 @@ Run after editing either source file:
 """
 
 import pathlib
+import re
 import sys
 
 import yaml
@@ -29,6 +30,29 @@ HEADER = (
     "# Sources: PortTorch.meta.yml (metadata) + PortTorch.py (code).\n"
     "# Upload this file in Cortex XSOAR: Settings -> Integrations -> BYOI.\n"
 )
+
+
+# The three imports XSOAR's own runtime does not have, removed exactly as
+# demisto-sdk's clean_python_code removes them (same three regexes).
+#
+# They exist so the source can be compiled, linted and run locally. At
+# runtime the server concatenates CommonServerPython and this file into
+# one namespace and injects `demisto` itself - there is no demistomock
+# module there at all, and importing it fails the integration before a
+# single command runs. CommonServerPython's own copy of that import is
+# stripped the same way, which is why the traceback points here and not
+# at it.
+CLEANED_IMPORTS = (
+    r"import demistomock as demisto[ \t]*(#.*)?",
+    r"from CommonServerPython import \*[ \t]*(#.*)?",
+    r"from CommonServerUserPython import \*[ \t]*(#.*)?",
+)
+
+
+def clean_python_code(code: str) -> str:
+    for pattern in CLEANED_IMPORTS:
+        code = re.sub(pattern, "", code)
+    return code
 
 
 class LiteralBlock(str):
@@ -50,7 +74,7 @@ def main() -> int:
     # PyYAML silently falls back to a quoted scalar if it finds any, which
     # still loads correctly but turns the embedded code into one
     # unreadable escaped string.
-    code = "\n".join(line.rstrip() for line in SOURCE.read_text().splitlines()) + "\n"
+    code = "\n".join(line.rstrip() for line in clean_python_code(SOURCE.read_text()).splitlines()) + "\n"
     integration["script"]["script"] = LiteralBlock(code)
 
     body = yaml.dump(integration, sort_keys=False, allow_unicode=True, width=10_000, default_flow_style=False)
