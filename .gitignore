@@ -16,3 +16,4 @@ scanner/*.yaml
 
 # Backup archives (contain the TLS private key and password hashes)
 /backups/
+__pycache__/

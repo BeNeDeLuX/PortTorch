@@ -1,0 +1,432 @@
+commonfields:
+  id: PortTorch
+  version: -1
+name: PortTorch
+display: PortTorch
+category: Vulnerability Management
+description: Query and drive PortTorch, an internal network reconnaissance platform - look hosts up with their open ports, service fingerprints and correlated CVEs, queue rescans and ad-hoc scans, stop a running scan, and record triage decisions so a handled finding stops resurfacing.
+detaileddescription: |
+  ## PortTorch
+
+  PortTorch is an internal, Shodan-style network reconnaissance platform: Go scanners
+  run masscan -> nmap -> gowitness/nuclei against your own networks and ship results to
+  a central webserver with a dashboard and a PostgreSQL database.
+
+  This integration speaks PortTorch's **external API** (`/api/v1`), which is the whole of
+  what an API token can reach. The dashboard's own `/api/*` routes are session
+  authenticated and the scanner ingest API is a private scanner-to-webserver protocol;
+  neither is reachable with a token, and neither is a stable contract.
+
+  ### Setup
+
+  1. In PortTorch, sign in as an admin and open **Admin -> API Tokens**.
+  2. Create a token. The plaintext value is shown **once**, at creation - copy it now.
+     - Scope **read** is enough for `porttorch-list-hosts` and `porttorch-get-host`.
+     - Scope **read_write** is required to queue or cancel scans and to clear triage.
+     - Optionally restrict the token to specific scanner agents; every command then only
+       ever sees those scanners' hosts.
+  3. In XSOAR, configure this integration with the PortTorch server URL (including the
+     port, e.g. `https://porttorch.internal:8443`) and that token.
+
+  ### Notes
+
+  - PortTorch generates its **own self-signed TLS certificate** on first boot. Either
+    upload a real certificate under Settings -> TLS Certificate, add its CA to the
+    XSOAR engine's trust store, or tick *Trust any certificate*.
+  - Leave *Use system proxy settings* off unless XSOAR genuinely reaches PortTorch
+    through a proxy - PortTorch is usually internal.
+  - Tokens are **rate limited per token** (120 requests/minute by default). A throttled
+    call returns a clear error naming the retry delay rather than failing silently.
+  - A host's identity in PortTorch is (IP, scanner agent), because two scanners in two
+    separate networks can each have a real device at the same private address. If a
+    lookup matches more than one, the command fails with the candidate list and you
+    re-run it with `scanner_agent` set.
+  - `porttorch-triage-finding` currently works with a **read-only** token, unlike every
+    other writing command. That is PortTorch's own behaviour - `PUT /findings/triage` is
+    not behind its write-scope guard while `DELETE` on the same path is - and is stated
+    here because a read-only token is otherwise assumed to be unable to change anything.
+  - There is no `fetch-incidents`. PortTorch pushes rather than being polled: configure a
+    webhook channel under Admin -> Webhooks pointing at XSOAR and subscribe to the events
+    that should raise an incident.
+configuration:
+  - display: PortTorch server URL (e.g. https://porttorch.internal:8443)
+    name: url
+    type: 0
+    required: true
+    additionalinfo: The dashboard's base URL including the port. Do not append /api/v1 - the integration does that.
+  - display: ""
+    displaypassword: API Token
+    name: credentials
+    type: 9
+    required: true
+    hiddenusername: true
+    additionalinfo: An API token from Admin -> API Tokens. Not a scanner agent API key, and not a dashboard password.
+  - display: Trust any certificate (not secure)
+    name: insecure
+    type: 8
+    required: false
+    additionalinfo: Needed while PortTorch still serves its own self-signed certificate. Prefer trusting the real CA instead.
+  - display: Use system proxy settings
+    name: proxy
+    type: 8
+    required: false
+script:
+  script: ""
+  type: python
+  subtype: python3
+  dockerimage: demisto/python3:latest
+  isfetch: false
+  longRunning: false
+  longRunningPort: false
+  runonce: false
+  commands:
+    - name: porttorch-list-hosts
+      description: List hosts in the fleet, using the same filters as the dashboard's host list. Use this to enumerate; use porttorch-get-host when you already know an IP or hostname and want the full enrichment record.
+      arguments:
+        - name: query
+          description: Free-text search across IP, hostname, banners, service products, NSE script output, OCR'd screenshot text and CVE ids - the dashboard's own search box.
+        - name: port
+          description: 'Comma-separated port numbers. A leading minus excludes: "80,-53" means "has 80 open, does not have 53 open".'
+          isArray: true
+        - name: service
+          description: Comma-separated nmap service names (http, ssh, ms-wbt-server). A leading minus excludes.
+          isArray: true
+        - name: tag
+          description: Comma-separated host tags, manual or auto-derived (WebServer, RDP, SMB). A leading minus excludes.
+          isArray: true
+        - name: os_family
+          description: Comma-separated OS families as nmap classified them (Linux, Windows).
+          isArray: true
+        - name: device_type
+          description: Comma-separated device types as nmap classified them (general purpose, printer, webcam).
+          isArray: true
+        - name: scanner_agent_id
+          description: Comma-separated scanner agent UUIDs, to narrow to one scanner's hosts.
+          isArray: true
+        - name: has_stale_ports
+          description: Only hosts with at least one port that is still recorded open but was not confirmed by the host's most recent scan.
+          auto: PREDEFINED
+          predefined:
+            - "true"
+            - "false"
+        - name: last_seen_after
+          description: Only hosts last seen at or after this ISO 8601 timestamp.
+        - name: last_seen_before
+          description: Only hosts last seen at or before this ISO 8601 timestamp.
+        - name: page
+          description: Page number, 1-based.
+          defaultValue: "1"
+        - name: page_size
+          description: Hosts per page, 1-200 (PortTorch's own cap).
+          defaultValue: "50"
+        - name: all_results
+          description: Page through every match instead of returning one page. Capped at 100 pages.
+          auto: PREDEFINED
+          predefined:
+            - "true"
+            - "false"
+          defaultValue: "false"
+      outputs:
+        - contextPath: PortTorch.Host.ID
+          description: PortTorch's internal host UUID.
+          type: String
+        - contextPath: PortTorch.Host.IP
+          description: The host's IP address.
+          type: String
+        - contextPath: PortTorch.Host.Hostname
+          description: Hostname from the scanner's reverse DNS lookup, if any.
+          type: String
+        - contextPath: PortTorch.Host.OSFamily
+          description: OS family as nmap classified it. Only populated when a scanner could run OS detection.
+          type: String
+        - contextPath: PortTorch.Host.DeviceType
+          description: Device type as nmap classified it.
+          type: String
+        - contextPath: PortTorch.Host.MACAddress
+          description: MAC address. Only ever resolved for a host on the scanner's own network segment.
+          type: String
+        - contextPath: PortTorch.Host.ScannerAgent
+          description: Name of the scanner agent that owns this host record.
+          type: String
+        - contextPath: PortTorch.Host.FirstSeen
+          description: When this host was first discovered.
+          type: Date
+        - contextPath: PortTorch.Host.LastSeen
+          description: When this host was last seen by a scan.
+          type: Date
+        - contextPath: PortTorch.HostSearch.Total
+          description: Total number of hosts matching the filters, regardless of paging.
+          type: Number
+        - contextPath: PortTorch.HostSearch.Page
+          description: The page that was fetched, or the last page fetched when all_results was set.
+          type: Number
+        - contextPath: PortTorch.HostSearch.PageSize
+          description: The page size that was used.
+          type: Number
+        - contextPath: PortTorch.HostSearch.Returned
+          description: How many hosts this command actually returned.
+          type: Number
+    - name: porttorch-get-host
+      description: Look one host up by IP or hostname and return its full record - open ports with service and version fingerprints, correlated CVEs, tags, and when and by which scanner it was last seen.
+      arguments:
+        - name: ip
+          description: The host's IP address. Provide this or hostname, not both.
+        - name: hostname
+          description: The host's hostname as PortTorch recorded it. Provide this or ip, not both.
+        - name: scanner_agent
+          description: Scanner agent name, needed only when the same IP or hostname exists under more than one scanner.
+      outputs:
+        - contextPath: PortTorch.Host.IP
+          description: The host's IP address.
+          type: String
+        - contextPath: PortTorch.Host.Hostname
+          description: Hostname from the scanner's reverse DNS lookup, if any.
+          type: String
+        - contextPath: PortTorch.Host.OSName
+          description: Full OS name as nmap fingerprinted it.
+          type: String
+        - contextPath: PortTorch.Host.OSFamily
+          description: OS family as nmap classified it.
+          type: String
+        - contextPath: PortTorch.Host.OSVendor
+          description: OS vendor as nmap classified it.
+          type: String
+        - contextPath: PortTorch.Host.DeviceType
+          description: Device type as nmap classified it.
+          type: String
+        - contextPath: PortTorch.Host.OSAccuracy
+          description: nmap's own confidence in the OS match, as a percentage.
+          type: Number
+        - contextPath: PortTorch.Host.ScannerAgent
+          description: Name of the scanner agent that last scanned this host.
+          type: String
+        - contextPath: PortTorch.Host.FirstSeen
+          description: When this host was first discovered.
+          type: Date
+        - contextPath: PortTorch.Host.LastSeen
+          description: When this host was last seen by a scan.
+          type: Date
+        - contextPath: PortTorch.Host.Tags
+          description: Tags on the host, manual and auto-derived.
+          type: Unknown
+        - contextPath: PortTorch.Host.OpenPorts.Port
+          description: Port number.
+          type: Number
+        - contextPath: PortTorch.Host.OpenPorts.Protocol
+          description: tcp or udp.
+          type: String
+        - contextPath: PortTorch.Host.OpenPorts.Service
+          description: Service name as nmap identified it.
+          type: String
+        - contextPath: PortTorch.Host.OpenPorts.Product
+          description: Product name as nmap identified it.
+          type: String
+        - contextPath: PortTorch.Host.OpenPorts.Version
+          description: Product version as nmap identified it.
+          type: String
+        - contextPath: PortTorch.Host.OpenPorts.Banner
+          description: Service banner, for services that greet a client unprompted.
+          type: String
+        - contextPath: PortTorch.Host.OpenPorts.CPEs
+          description: CPE identifiers nmap derived for this port - what CVEs are matched against.
+          type: Unknown
+        - contextPath: PortTorch.Host.OpenPorts.ObservedAt
+          description: When this port was last confirmed open.
+          type: Date
+        - contextPath: PortTorch.Host.OpenPorts.CVEs.ID
+          description: CVE identifier.
+          type: String
+        - contextPath: PortTorch.Host.OpenPorts.CVEs.CVSS
+          description: CVSS base score from NVD.
+          type: Number
+        - contextPath: PortTorch.Host.OpenPorts.CVEs.Severity
+          description: CVSS severity from NVD.
+          type: String
+        - contextPath: PortTorch.Host.OpenPorts.CVEs.Description
+          description: CVE description from NVD.
+          type: String
+        - contextPath: PortTorch.Host.LastScan.ObservedAt
+          description: When the most recent observation of this host was recorded.
+          type: Date
+        - contextPath: PortTorch.Host.LastScan.ScannerAgent
+          description: Which scanner agent produced that observation.
+          type: String
+        - contextPath: PortTorch.Host.LastScanRequest.Status
+          description: Status of the most recent queued scan request for this host.
+          type: String
+        - contextPath: PortTorch.Host.LastScanRequest.CreatedAt
+          description: When that request was queued.
+          type: Date
+        - contextPath: PortTorch.Host.LastScanRequest.CompletedAt
+          description: When that request finished, if it has.
+          type: Date
+    - name: porttorch-rescan-host
+      description: Queue a rescan of a known host, using its currently open ports as the port spec and whichever scanner agent last scanned it - the same mechanism as the dashboard's Rescan button. Requires a read_write token.
+      arguments:
+        - name: ip
+          description: The host's IP address. Provide this or hostname, not both.
+        - name: hostname
+          description: The host's hostname as PortTorch recorded it. Provide this or ip, not both.
+        - name: scanner_agent
+          description: Scanner agent name, needed only when the same IP or hostname exists under more than one scanner.
+        - name: profile
+          description: 'Which NSE scripts to run: "default", "all_safe", or the exact name of a Custom profile from the Scan Profiles page. Omitted means default.'
+          defaultValue: default
+        - name: priority
+          description: Where this lands in the target scanner's claim order. Same-priority requests stay first-in-first-out.
+          auto: PREDEFINED
+          predefined:
+            - high
+            - normal
+            - low
+          defaultValue: normal
+      outputs:
+        - contextPath: PortTorch.ScanRequest.ID
+          description: The queued scan request's UUID.
+          type: String
+        - contextPath: PortTorch.ScanRequest.Status
+          description: Queue status, normally "pending" until a scanner claims it.
+          type: String
+        - contextPath: PortTorch.ScanRequest.CreatedAt
+          description: When the request was queued.
+          type: Date
+        - contextPath: PortTorch.ScanRequest.NSEProfile
+          description: The NSE profile the request resolved to.
+          type: String
+    - name: porttorch-cancel-scan
+      description: Stop the scan currently running against a host. The scanner notices on its next check and aborts, so this is a request rather than an immediate kill, and it only covers scans started from PortTorch's own queue. Requires a read_write token.
+      arguments:
+        - name: ip
+          description: The host's IP address. Provide this or hostname, not both.
+        - name: hostname
+          description: The host's hostname as PortTorch recorded it. Provide this or ip, not both.
+        - name: scanner_agent
+          description: Scanner agent name, needed only when the same IP or hostname exists under more than one scanner.
+    - name: porttorch-start-adhoc-scan
+      description: Queue a one-shot scan against any target, whether or not PortTorch already knows it - for reacting to something learned elsewhere, such as a firewall alert about a newly seen address. Requires a read_write token.
+      arguments:
+        - name: scanner_agent
+          description: Name of the scanner agent that should run this scan. It has to be able to reach the target from its own network.
+          required: true
+        - name: target_spec
+          description: 'What to scan: an IPv4 address, CIDR, start-end range, a comma-separated list of IPv6 addresses, or a DNS hostname. A hostname is resolved by the scanner itself, on its own network, and becomes that scan''s TLS SNI and screenshot hostname.'
+          required: true
+        - name: port_spec
+          description: 'Which ports, in masscan/nmap syntax: "80,443", "1-1024", or with per-part protocol prefixes such as "80,443,U:53,U:161". Bare parts are TCP. UDP is far slower than TCP - an unanswered UDP probe can only time out, never be refused.'
+          required: true
+        - name: profile
+          description: 'Which NSE scripts to run: "default", "all_safe", or the exact name of a Custom profile from the Scan Profiles page.'
+          defaultValue: default
+        - name: nuclei_profile
+          description: 'Whether nuclei runs: "off" (the default), "safe", or the exact name of a Custom nuclei profile.'
+          defaultValue: "off"
+        - name: masscan_rate
+          description: Packets per second for this scan only, overriding the scanner's own configured rate. Leave empty to use the scanner's setting. Lower this for fragile segments.
+        - name: priority
+          description: Where this lands in the target scanner's claim order.
+          auto: PREDEFINED
+          predefined:
+            - high
+            - normal
+            - low
+          defaultValue: normal
+      outputs:
+        - contextPath: PortTorch.ScanRequest.ID
+          description: The queued scan request's UUID.
+          type: String
+        - contextPath: PortTorch.ScanRequest.Status
+          description: Queue status, normally "pending" until a scanner claims it.
+          type: String
+        - contextPath: PortTorch.ScanRequest.CreatedAt
+          description: When the request was queued.
+          type: Date
+        - contextPath: PortTorch.ScanRequest.ScannerAgent
+          description: The scanner agent the request was queued for.
+          type: String
+        - contextPath: PortTorch.ScanRequest.NSEProfile
+          description: The NSE profile the request resolved to.
+          type: String
+        - contextPath: PortTorch.ScanRequest.NucleiProfile
+          description: The nuclei profile the request resolved to.
+          type: String
+    - name: porttorch-triage-finding
+      description: Record a decision about a CVE or web finding on one host, so it stops resurfacing after every scan and stops counting toward that host's risk indicator and EPSS/KEV alerting. Meant for closing the loop when a remediation ticket closes.
+      arguments:
+        - name: ip
+          description: The host's IP address. Provide this or hostname, not both.
+        - name: hostname
+          description: The host's hostname as PortTorch recorded it. Provide this or ip, not both.
+        - name: scanner_agent
+          description: Scanner agent name, needed only when the same IP or hostname exists under more than one scanner.
+        - name: cve_id
+          description: The CVE to triage, e.g. CVE-2019-11248. Provide this, or template_id together with matched_at.
+        - name: template_id
+          description: The nuclei template id to triage. Provide this together with matched_at, instead of cve_id.
+        - name: matched_at
+          description: The URL the nuclei template matched on, exactly as PortTorch recorded it. Required with template_id.
+        - name: state
+          description: 'What was decided. false_positive and fixed drop the finding out of the host''s risk indicator; accepted_risk deliberately still counts, since deciding to live with an exposure does not make the host less exposed. All three silence EPSS and KEV alerting for it.'
+          required: true
+          auto: PREDEFINED
+          predefined:
+            - false_positive
+            - accepted_risk
+            - fixed
+        - name: note
+          description: Why, for whoever reads this next. Up to 2000 characters.
+        - name: review_at
+          description: ISO 8601 timestamp after which the decision lapses and the finding comes back. Omitted means it never expires, which is rarely what you want for an accepted risk.
+      outputs:
+        - contextPath: PortTorch.Triage.ID
+          description: The triage record's UUID.
+          type: String
+        - contextPath: PortTorch.Triage.State
+          description: The recorded state.
+          type: String
+        - contextPath: PortTorch.Triage.Note
+          description: The recorded note.
+          type: String
+        - contextPath: PortTorch.Triage.ReviewAt
+          description: When the decision lapses, or null if it never does.
+          type: Date
+    - name: porttorch-clear-triage
+      description: Clear a finding's triage state on one host, returning it to untriaged so it shows up again wherever triaged findings are hidden. Requires a read_write token.
+      arguments:
+        - name: ip
+          description: The host's IP address. Provide this or hostname, not both.
+        - name: hostname
+          description: The host's hostname as PortTorch recorded it. Provide this or ip, not both.
+        - name: scanner_agent
+          description: Scanner agent name, needed only when the same IP or hostname exists under more than one scanner.
+        - name: cve_id
+          description: The CVE whose triage should be cleared. Provide this, or template_id together with matched_at.
+        - name: template_id
+          description: The nuclei template id whose triage should be cleared. Provide this together with matched_at.
+        - name: matched_at
+          description: The URL the nuclei template matched on. Required with template_id.
+    - name: porttorch-api-request
+      description: 'Call any /api/v1 endpoint directly. An escape hatch for an endpoint added to PortTorch after this integration was built - not a way into the dashboard''s own /api/* routes, which need a session cookie and answer 401 to an API token no matter what is put here.'
+      arguments:
+        - name: endpoint
+          description: Path relative to /api/v1, e.g. /hosts/lookup.
+          required: true
+        - name: method
+          description: HTTP method.
+          auto: PREDEFINED
+          predefined:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+          defaultValue: GET
+        - name: query
+          description: 'Query string parameters as a JSON object, e.g. {"ip": "10.0.0.5"}.'
+        - name: body
+          description: Request body as a JSON object.
+      outputs:
+        - contextPath: PortTorch.RawResponse
+          description: The endpoint's response body, unmodified.
+          type: Unknown
+fromversion: 6.0.0
+tests:
+  - No tests

@@ -1240,6 +1240,24 @@ curl -H "Authorization: Bearer <token>" \
   "https://porttorch.internal/api/v1/hosts/lookup?ip=10.0.0.5&scannerAgent=office-berlin"
 ```
 
+### Cortex XSOAR integration
+
+`integrations/cortex-xsoar/PortTorch.yml` is a ready-made BYOI package for
+Cortex XSOAR covering every endpoint above - upload it under **Settings →
+Integrations → BYOI**, point it at the server URL and an API token, and
+XSOAR gets eight commands: list hosts (with the dashboard's own filters,
+negation included), look one up with its ports/CVEs/tags, queue a rescan
+or an ad-hoc scan, stop a running scan, set or clear a finding's triage
+state, and a raw `/api/v1` passthrough for anything added later. See
+[`integrations/cortex-xsoar/README.md`](integrations/cortex-xsoar/README.md)
+for setup, the command reference, and how the package is built from its
+sources.
+
+There is deliberately no `fetch-incidents`: PortTorch pushes rather than
+being polled, so an alert channel (**Admin → Webhooks**) pointed at XSOAR
+is the way to raise incidents, filtered by scanner, tag or minimum
+severity.
+
 ## Shipping logs to a SIEM
 
 Every stdout line from both the webserver and the scanner is a single
