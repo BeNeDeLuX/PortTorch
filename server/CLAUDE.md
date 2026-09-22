@@ -167,6 +167,105 @@ The two cursors have different shapes because the tables do. `audit_log` has a m
 
 **The honest limitation, stated in the UI too:** retention deletes old audit rows and scan logs on its own schedule. If the collector stays unreachable longer than that window, those events are gone before they were ever forwarded, and the cursor simply resumes at what still exists rather than blocking forever on rows that no longer do. Forwarding is not a substitute for the retention settings.
 
+**Two more streams carry the findings themselves**, which the first two
+never did: the audit trail says who pressed what and the scan log says
+what the scanner was doing, while "3389 opened on this server" reached a
+SIEM only as a fire-and-forget webhook post, with no cursor and no
+backfill. `host_port_observations` is the scan results (one event per
+observation, open *and* closed - a port that stopped answering is a change
+worth correlating) and `nuclei_findings` is the web findings. Both are
+off by default: turning on a stream that would replay months of history is
+an admin's decision.
+
+Each cursor follows the shape of the table it pages. Observations have a
+bigserial, so "everything after id N" is exact, like the audit stream.
+Findings are keyed by uuid and need the `(timestamp, id)` pair the
+scan-log stream already used.
+
+**Writing that second cursor surfaced a real bug in the first one.**
+Postgres keeps `timestamptz` to microseconds; node-postgres hands it to JS
+as a `Date`, which is milliseconds - so writing the cursor back truncates
+it, and `created_at > cursor` is still true for the very row the cursor
+came from. The scan-log stream had been re-sending every scan log on every
+tick, and no test caught it because none ran a second pass. Both cursors
+now truncate to milliseconds *in SQL* on both sides of the comparison
+(`date_trunc('milliseconds', ...)`), which costs the index on those
+columns - irrelevant at these row counts, and worth strictly less than a
+cursor that works. The second-pass assertion the scan-log stream never had
+is now there for all four streams.
+
+### Scan quality: how much of a scan to believe
+
+The platform recorded what it found and never said how much of it to
+trust. Two artefacts, both measured on a real deployment, were invisible
+by construction - each one is only visible *across* a range, which is the
+view no per-host page has.
+
+**A discovery hit that enrichment could not confirm is not a host.**
+masscan reports a SYN-ACK, nmap re-probes and finds nothing, the scanner
+still completes that host and submits it with an empty port list - and the
+upsert in `ingestHostPayload`, which runs before any port is looked at,
+turned each one into a permanent `hosts` row. On the deployment this was
+found on that was **423 of 768 rows, 55% of the fleet**, and they never
+aged out either: retention deletes by `last_seen_at`, and the nightly
+rescan refreshed it every night. `host.new` fired for every one of them,
+so enabling an alert channel would have paged on them.
+
+Only *creation* is skipped now. A host already known still goes through
+unchanged, because an empty payload for one of those is a real statement -
+it is exactly what the `port.closed` inference reads to conclude that
+ports it used to have are gone. Both halves are pinned by tests, because
+getting the second one wrong would silently disable closure detection.
+
+**`scanJobs/anomalies.ts` runs at completion and names the other one.**
+`dominant_service` fires when one `(port, protocol, product)` covers ≥80%
+of a job's hosts (with ≥20 hosts, below which the share means nothing):
+something intercepting `:53` made 261 addresses look like 261 Unbound
+resolvers when three existed, and nmap fingerprinted each one perfectly
+correctly. `unconfirmed_discovery` fires when enrichment confirms under a
+quarter of what discovery found - a nightly /24 reporting 256 discovered
+and 5 confirmed, every night, for weeks.
+
+Computed from what actually landed in the database rather than from the
+scanner's own tally, the same reasoning as the completion counts beside
+it - the one exception being `discovered_hosts`, which only the scanner
+can know and which it now reports on the completion PATCH (absent means
+*unknown*, deliberately not zero, so an older scanner never produces a
+finding about itself). Deliberately descriptive, not corrective: nothing
+here deletes or rewrites an observation. An artefact is a statement about
+how to read the data, and the operator is the one who knows whether a
+range really does hold 260 resolvers. Skipped entirely for a cancelled or
+failed job, which has every reason to look lopsided.
+
+Surfaced as a warning badge beside the target on Scan History, with the
+explanation in its `title`, and as a `confirmed of discovered` pair in the
+Hosts scanned column shown only when the two differ. `scan.anomaly` is
+logged at warn level per finding.
+
+### Duplicate scanner coverage
+
+A host's identity is `(ip, scanner_agent_id)`, so two scanners covering
+one range legitimately produce two rows for one machine. That is correct -
+neither scanner can know it is looking at the same device - but nothing
+said it was happening, and every fleet-wide number counts those machines
+twice. Measured: **768 host rows for 512 distinct addresses**, because both
+scanners were pointed at the same /24.
+
+`GET /api/hosts/overlap` reports the two totals plus the duplicated
+addresses themselves (capped at 100 - on a fully overlapped /24 the list is
+every address in it), and Fleet Health renders it as a **warning**, never
+critical: it is a configuration choice, not a fault.
+
+Two details worth keeping, both found by running it against a database
+rather than by reading it. The join to `scanner_agents` has to be a
+**left** join - `scanner_agent_id` is `ON DELETE SET NULL`, so a host whose
+scanner was deleted still occupies an address, and an inner join dropped
+exactly those, making the list disagree with the count beside it. And the
+duplicated-address count is **counted, not derived** from
+`hostRows - distinctAddresses`: that difference is the number of excess
+*rows*, which is a different number the moment one address is held by three
+scanners rather than two.
+
 ### The Settings page is a grouped card grid, one component per setting
 
 `Settings.tsx` had reached 1149 lines, 11 sections, 10 forms and 67 `useState` calls in one component, all in a flat column with no grouping - so host retention, scan-log retention and storage, which all answer "how long do we keep things and what does that cost", had two unrelated scan thresholds wedged between them. It is now a ~100-line layout shell over `pages/settings/*`, one component per setting, each owning its own state next to the markup that uses it.

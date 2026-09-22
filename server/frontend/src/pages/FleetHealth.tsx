@@ -72,8 +72,8 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
 
       <h2>Fleet Health</h2>
       <p className="host-meta">
-        A single overview of scanner staleness, version drift, the scan queue backlog, and the webserver's own TLS
-        certificate expiry - each card links to the page with the full detail.
+        A single overview of scanner staleness, version drift, the scan queue backlog, duplicate scanner coverage, and
+        the webserver's own TLS certificate expiry - each card links to the page with the full detail.
       </p>
 
       {health.overall === "ok" ? (
@@ -137,6 +137,31 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
               ? `${health.staleTemplateAgents.length} scanner${health.staleTemplateAgents.length === 1 ? "" : "s"} over ${NUCLEI_TEMPLATES_WARN_DAYS}d - refresh from Scanner Agents`
               : "All scanners reasonably current"}
         </HealthCard>
+
+        {health.overlap && (
+          <HealthCard to="/" title="Duplicate Coverage" status={health.overlapStatus}>
+            {health.overlap.hostRows} host record{health.overlap.hostRows === 1 ? "" : "s"} for{" "}
+            {health.overlap.distinctAddresses} address{health.overlap.distinctAddresses === 1 ? "" : "es"}
+            <br />
+            {health.overlap.duplicatedAddresses === 0 ? (
+              "No address is covered by more than one scanner"
+            ) : (
+              <>
+                {health.overlap.duplicatedAddresses} address
+                {health.overlap.duplicatedAddresses === 1 ? " is" : "es are"} scanned by more than one scanner, so
+                those machines are counted twice in every fleet-wide figure
+                {health.overlap.duplicates.length > 0 && (
+                  <>
+                    {" "}
+                    (e.g. {health.overlap.duplicates[0].ip} via{" "}
+                    {health.overlap.duplicates[0].scanners.join(" and ")})
+                  </>
+                )}
+                . Narrow one scanner's target range, or keep it deliberately.
+              </>
+            )}
+          </HealthCard>
+        )}
 
         <HealthCard to="/agents" title="Submission Retry Backlog" status={health.retryQueueStatus}>
           {health.totalRetryQueuePending} host submission{health.totalRetryQueuePending === 1 ? "" : "s"} waiting to

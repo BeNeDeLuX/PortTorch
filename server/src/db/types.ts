@@ -181,6 +181,17 @@ export interface ScanJobsTable {
   // since a scan_jobs row is created fresh per scan and either finishes
   // normally or stays stuck in "running" forever.
   stale_alert_sent_at: Date | null;
+  // What the scanner's discovery stage actually turned up, reported by
+  // the scanner because only it knows: the webserver sees only the hosts
+  // that survived nmap enrichment. The gap between this and the confirmed
+  // count is the most useful single statement about a scan's quality.
+  // Null for a scanner too old to report it, which is not the same as 0.
+  discovered_hosts: ColumnType<number | null, number | null | undefined, number | null>;
+  // Scan-quality findings computed at completion from what actually
+  // landed in the database - see scanJobs/anomalies.ts. Null means the
+  // job predates the check or never completed; [] means it was checked
+  // and looked fine.
+  anomalies: ColumnType<unknown[] | null, string | null | undefined, string | null>;
 }
 
 // Live-ish progress pushed by the scanner itself while a scan runs (see
@@ -649,6 +660,9 @@ export interface HecStateTable {
   last_success_at: ColumnType<Date | null, string | null | undefined, string | null>;
   last_attempt_at: ColumnType<Date | null, string | null | undefined, string | null>;
   last_error: ColumnType<string | null, string | null | undefined, string | null>;
+  observation_cursor: ColumnType<string | null, string | null | undefined, string | null>;
+  finding_cursor_at: ColumnType<Date | null, string | null | undefined, string | null>;
+  finding_cursor_id: ColumnType<string | null, string | null | undefined, string | null>;
   events_forwarded: ColumnType<string, string | undefined, string>;
 }
 
@@ -807,6 +821,8 @@ export interface AppSettingsTable {
   hec_index: ColumnType<string | null, string | null | undefined, string | null>;
   hec_sourcetype: ColumnType<string | null, string | null | undefined, string | null>;
   hec_verify_tls: ColumnType<boolean, boolean | undefined, boolean>;
+  hec_observations_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  hec_findings_enabled: ColumnType<boolean, boolean | undefined, boolean>;
   // Whether the mail server's certificate chain is verified. Separate
   // from smtp_secure, which selects implicit TLS vs STARTTLS - a
   // different question from whether the presented certificate is checked.

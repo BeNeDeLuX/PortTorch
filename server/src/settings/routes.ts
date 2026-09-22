@@ -201,6 +201,11 @@ const appSettingsSchema = z.object({
       token: z.string().min(1).nullable().optional(),
       auditEnabled: z.boolean(),
       scanLogEnabled: z.boolean(),
+      // Default false rather than required: a caller written before these
+      // streams existed would otherwise 400 on every save, the same trap
+      // smtp.verifyTls's own optionality was added to avoid.
+      observationsEnabled: z.boolean().default(false),
+      findingsEnabled: z.boolean().default(false),
       index: z.string().trim().min(1).nullable(),
       sourcetype: z.string().trim().min(1).nullable(),
       verifyTls: z.boolean(),
@@ -379,6 +384,8 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
       hec_url: parsed.data.hec.url,
       hec_audit_enabled: parsed.data.hec.auditEnabled,
       hec_scan_log_enabled: parsed.data.hec.scanLogEnabled,
+      hec_observations_enabled: parsed.data.hec.observationsEnabled,
+      hec_findings_enabled: parsed.data.hec.findingsEnabled,
       hec_verify_tls: parsed.data.hec.verifyTls,
       // Never the token, and never even whether it changed - same
       // discipline as the SMTP password above.
@@ -389,6 +396,8 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
       hec_url: parsed.data.hec.url,
       hec_audit_enabled: parsed.data.hec.auditEnabled,
       hec_scan_log_enabled: parsed.data.hec.scanLogEnabled,
+      hec_observations_enabled: parsed.data.hec.observationsEnabled,
+      hec_findings_enabled: parsed.data.hec.findingsEnabled,
     });
   }
 

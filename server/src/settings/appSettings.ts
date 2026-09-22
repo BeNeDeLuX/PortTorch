@@ -34,6 +34,8 @@ export interface HecSettings {
   token: string | null;
   auditEnabled: boolean;
   scanLogEnabled: boolean;
+  observationsEnabled: boolean;
+  findingsEnabled: boolean;
   index: string | null;
   sourcetype: string | null;
   verifyTls: boolean;
@@ -45,6 +47,8 @@ export interface HecSettingsInput {
   token?: string | null;
   auditEnabled: boolean;
   scanLogEnabled: boolean;
+  observationsEnabled: boolean;
+  findingsEnabled: boolean;
   index: string | null;
   sourcetype: string | null;
   verifyTls: boolean;
@@ -101,6 +105,8 @@ export async function getAppSettings(): Promise<AppSettings> {
       "hec_token",
       "hec_audit_enabled",
       "hec_scan_log_enabled",
+      "hec_observations_enabled",
+      "hec_findings_enabled",
       "hec_index",
       "hec_sourcetype",
       "hec_verify_tls",
@@ -134,6 +140,8 @@ export async function getAppSettings(): Promise<AppSettings> {
       token: row.hec_token,
       auditEnabled: row.hec_audit_enabled,
       scanLogEnabled: row.hec_scan_log_enabled,
+      observationsEnabled: row.hec_observations_enabled,
+      findingsEnabled: row.hec_findings_enabled,
       index: row.hec_index,
       sourcetype: row.hec_sourcetype,
       verifyTls: row.hec_verify_tls,
@@ -195,6 +203,8 @@ export async function setHecSettings(input: HecSettingsInput): Promise<void> {
       hec_url: input.url,
       hec_audit_enabled: input.auditEnabled,
       hec_scan_log_enabled: input.scanLogEnabled,
+      hec_observations_enabled: input.observationsEnabled,
+      hec_findings_enabled: input.findingsEnabled,
       hec_index: input.index,
       hec_sourcetype: input.sourcetype,
       hec_verify_tls: input.verifyTls,

@@ -1267,6 +1267,27 @@ whole terminal screen). `scan_job_id` correlates events across both
 services for the same scan run. Never logged: API keys, passwords,
 session cookies, `Authorization` headers.
 
+**Or let PortTorch push to the collector itself.** Settings → SIEM
+Forwarding (HTTP Event Collector) ships four independent streams to a
+Splunk HEC endpoint, or any collector that speaks its shape, without a log
+shipper in between:
+
+- **Audit log** - who did what in the dashboard.
+- **Scan logs** - each scanner's own per-job log lines, one event per line.
+- **Scan results** - one event per port observation, open and closed, with
+  the address and hostname resolved so a SIEM can key on them.
+- **Web findings** - one event per nuclei match, carrying nuclei's own
+  severity rather than a remapped one.
+
+Each stream is forwarded from a stored cursor rather than
+fire-and-forget, so a collector that was unreachable for a while causes
+the next run to catch up instead of leaving a silent gap. Delivery is
+at-least-once: a repeat is possible after a connection breaks mid-batch, a
+missing event is not. All four are off until switched on - turning on a
+stream that would replay months of history is a deliberate act. Retention
+still applies: if the collector stays unreachable longer than the
+retention window, those rows are deleted before they were ever forwarded.
+
 Any log shipper that can read Docker container output works. Two
 common options:
 

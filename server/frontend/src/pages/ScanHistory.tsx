@@ -1,10 +1,11 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, Me, ScanHistoryResult } from "../api";
-import { IconInfo, IconSearch } from "../components/icons";
+import { IconInfo, IconWarning, IconSearch } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScanProgressModal from "../components/ScanProgressModal";
 import { formatDateTime } from "../lib/formatDate";
 import { durationLabel } from "../lib/elapsed";
+import { anomalyLabel, describeScanAnomaly } from "../lib/scanAnomalies";
 
 const STATUSES = ["completed", "failed", "cancelled"] as const;
 const PAGE_SIZE = 50;
@@ -134,7 +135,14 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
             <tbody>
               {items.map((s) => (
                 <tr key={s.id}>
-                  <td className="spec-cell">{s.target_spec}</td>
+                  <td className="spec-cell">
+                    {s.target_spec}
+                    {(s.anomalies ?? []).map((a, i) => (
+                      <span key={i} className="scan-anomaly-badge" title={describeScanAnomaly(a)}>
+                        <IconWarning /> {anomalyLabel(a)}
+                      </span>
+                    ))}
+                  </td>
                   <td className="spec-cell">{s.port_spec}</td>
                   <td>{s.scanner_agent_name ?? "?"}</td>
                   <td>
@@ -142,7 +150,16 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
                   </td>
                   <td>{formatDateTime(s.started_at, me.preferences)}</td>
                   <td>{s.duration_ms !== null ? durationLabel(s.duration_ms) : "-"}</td>
-                  <td>{s.hosts_scanned}</td>
+                  {/* Discovery found N, enrichment confirmed M. Shown as a
+                      pair only when they differ, so the ordinary case stays
+                      one number - the gap is the interesting part, not the
+                      first figure on its own. */}
+                  <td>
+                    {s.hosts_scanned}
+                    {s.discovered_hosts !== null && s.discovered_hosts !== s.hosts_scanned && (
+                      <span className="host-meta"> of {s.discovered_hosts} found</span>
+                    )}
+                  </td>
                   <td>{s.open_ports_found}</td>
                   <td>{s.screenshots + s.rdp_screenshots}</td>
                   <td>{s.tls_certificates}</td>

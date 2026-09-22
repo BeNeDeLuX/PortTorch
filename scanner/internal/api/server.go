@@ -890,7 +890,7 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, nucle
 		return
 	}
 
-	if err := s.client.CompleteScanJob(context.Background(), jobID, "completed"); err != nil {
+	if err := s.client.CompleteScanJobWithDiscovery(context.Background(), jobID, "completed", result.DiscoveredHosts); err != nil {
 		state.setFailed(err)
 		s.recordScanResult("failed")
 		s.logger.Error("reporting scan job completion failed", "event", "scan.complete_report_failed", "scan_job_id", jobID, "error", err.Error())

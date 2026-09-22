@@ -115,6 +115,8 @@ export interface HecSettingsView {
   url: string | null;
   auditEnabled: boolean;
   scanLogEnabled: boolean;
+  observationsEnabled: boolean;
+  findingsEnabled: boolean;
   index: string | null;
   sourcetype: string | null;
   verifyTls: boolean;
@@ -125,6 +127,8 @@ export interface HecSettingsInput {
   url: string | null;
   auditEnabled: boolean;
   scanLogEnabled: boolean;
+  observationsEnabled: boolean;
+  findingsEnabled: boolean;
   index: string | null;
   sourcetype: string | null;
   verifyTls: boolean;
@@ -1174,6 +1178,34 @@ export interface ScanHistoryEntry {
   screenshots: number;
   rdp_screenshots: number;
   tls_certificates: number;
+  // What the scanner's discovery stage turned up before enrichment.
+  // null for a scan run by a scanner too old to report it - deliberately
+  // not 0, which would claim discovery found nothing.
+  discovered_hosts: number | null;
+  // Scan-quality findings, computed at completion. null means the scan
+  // predates the check or never completed; [] means it was checked and
+  // looked fine.
+  anomalies: ScanAnomaly[] | null;
+}
+
+export type ScanAnomaly =
+  | {
+      kind: "dominant_service";
+      port: number;
+      protocol: string;
+      product: string | null;
+      serviceName: string | null;
+      hosts: number;
+      totalHosts: number;
+    }
+  | { kind: "unconfirmed_discovery"; discovered: number; confirmed: number };
+
+export interface ScannerOverlap {
+  hostRows: number;
+  distinctAddresses: number;
+  duplicatedAddresses: number;
+  duplicates: Array<{ ip: string; scanners: string[] }>;
+  truncated: boolean;
 }
 
 export interface ScanHistoryResult {
@@ -1596,10 +1628,16 @@ export const api = {
     return res.json() as Promise<TlsCertificateInfo>;
   },
   appSettings: () => request<AppSettings>("/api/settings/app"),
+  // Two scanners covering one range record the same machine twice - see
+  // the endpoint's own comment. Its own call rather than a field on the
+  // host list, because it is a fleet-wide fact, not a property of a page.
+  hostsOverlap: () => request<ScannerOverlap>("/api/hosts/overlap"),
   hecStatus: () => request<HecStatus>("/api/settings/hec/status"),
   testHec: () => request<{ ok: boolean; error?: string }>("/api/settings/hec/test", { method: "POST" }),
   forwardHecNow: () =>
-    request<{ audit: number; scanLog: number }>("/api/settings/hec/forward-now", { method: "POST" }),
+    request<{ audit: number; scanLog: number; observations: number; findings: number }>("/api/settings/hec/forward-now", {
+      method: "POST",
+    }),
   updateAppSettings: (
     patch: Partial<Omit<AppSettings, "smtp" | "hec">> & { smtp?: SmtpSettingsInput; hec?: HecSettingsInput }
   ) =>

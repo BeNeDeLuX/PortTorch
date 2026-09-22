@@ -113,6 +113,8 @@ scanJobsRouter.get("/history", asyncHandler(async (req, res) => {
       "scan_jobs.status as status",
       "scan_jobs.started_at as started_at",
       "scan_jobs.finished_at as finished_at",
+      "scan_jobs.discovered_hosts as discovered_hosts",
+      "scan_jobs.anomalies as anomalies",
       "scanner_agents.name as scanner_agent_name",
       sql<number>`(select count(distinct host_id) from host_port_observations where scan_job_id = scan_jobs.id)`.as(
         "hosts_scanned"

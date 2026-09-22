@@ -8,6 +8,8 @@ const settings: HecSettings = {
   token: "t",
   auditEnabled: true,
   scanLogEnabled: true,
+  observationsEnabled: true,
+  findingsEnabled: true,
   index: null,
   sourcetype: null,
   verifyTls: true,

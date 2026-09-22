@@ -235,6 +235,26 @@ An empty queue still costs exactly one poll per tick, not one per free slot, so 
 
 Raising it is a resource decision, not a free speedup: `concurrency`, `gowitnessConcurrency`, `nucleiConcurrency` and the rest are **per-scan**, so two scans at once means twice the processes and twice the bandwidth.
 
+### Reporting what discovery found, not only what survived it
+
+`ScanResult.DiscoveredHosts` is the host count the discovery stage turned
+up, kept separately from `len(Hosts)` because the gap between the two is
+the point. masscan reports a SYN-ACK, nmap re-probes and finds nothing,
+and on a network where one device answers for a whole range those two
+numbers differ by two orders of magnitude - a real /24 discovered 256 and
+confirmed 5, nightly, for weeks.
+
+The webserver cannot derive it: it only ever sees the hosts that survived
+enrichment. So `CompleteScanJobWithDiscovery` sends it on the completion
+PATCH, alongside the status. `CompleteScanJob` stays as it was for the
+paths that have no `ScanResult` to report from - a failure before the
+pipeline produced one, or a cancellation - and **absence is not zero**:
+the webserver treats a missing field as "this scanner did not say", and
+only flags a scan when it has a real number to compare against. That
+distinction is what keeps an older scanner from producing a finding about
+itself, and is pinned by tests asserting the field is absent from one call
+and present (including as `0`) in the other.
+
 ### Reporting slot usage back to the dashboard
 
 **What gets reported is `activeScans`, not the slot reservations.** The queue loop has to reserve a slot *before* it asks the webserver whether there is any work (claiming mutates `scan_requests`, so the capacity check must come first) - and that poll request itself carries the header, so an idle scanner reported `1/1` on every poll and `0/1` in between, flapping for the entire time it had nothing to do. The dashboard showed a busy scanner that was doing nothing. `runningScans` still decides capacity; a second counter, incremented in `runScan` where a scan genuinely begins, is what the header carries. `reserveScanSlot`/`releaseScanSlot` deliberately publish nothing at all now. Pinned by the queue-loop test asserting that every header seen on an idle poll starts with `0/`.

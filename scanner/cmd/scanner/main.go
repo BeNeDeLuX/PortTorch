@@ -480,7 +480,7 @@ func runScan(configPath, target, ports string, nseScripts []string, nucleiProfil
 		return fmt.Errorf("scan failed: %w", scanErr)
 	}
 
-	if err := c.CompleteScanJob(context.Background(), jobID, "completed"); err != nil {
+	if err := c.CompleteScanJobWithDiscovery(context.Background(), jobID, "completed", result.DiscoveredHosts); err != nil {
 		return fmt.Errorf("completing scan job: %w", err)
 	}
 
@@ -489,6 +489,7 @@ func runScan(configPath, target, ports string, nseScripts []string, nucleiProfil
 		"scan_job_id", jobID,
 		"target", target,
 		"ports", ports,
+		"discovered_hosts", result.DiscoveredHosts,
 		"hosts_found", len(result.Hosts),
 		"hosts_submitted", hostsSubmitted,
 		"open_ports_found", openPorts,

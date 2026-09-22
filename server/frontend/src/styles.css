@@ -2078,6 +2078,31 @@ th {
   border: 1px solid var(--danger);
 }
 
+/* A scan-quality finding on a Scan History row. Warning-coloured rather
+   than danger: the scan itself worked, what is in question is how to read
+   its numbers. Inline with the target rather than its own column, since
+   most scans have none and an empty column on every row would cost more
+   width than the badge ever does. */
+.scan-anomaly-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  color: var(--warning);
+  border: 1px solid var(--warning);
+  white-space: nowrap;
+  cursor: help;
+}
+
+.scan-anomaly-badge svg {
+  width: 0.85em;
+  height: 0.85em;
+}
+
 .cert-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(620px, 1fr));

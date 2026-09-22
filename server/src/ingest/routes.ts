@@ -17,6 +17,7 @@ import { deriveServiceTags } from "../lib/serviceTags";
 import { recordAudit } from "../audit/log";
 import { scanPriorityOrder } from "../scanPriority";
 import { parsePortSpec, portSpecCovers } from "../lib/portSpec";
+import { detectScanAnomalies, describeAnomaly, type ScanAnomaly } from "../scanJobs/anomalies";
 import { SCANNER_TUNABLES } from "../scannerConfig/tunables";
 
 export const ingestRouter = Router();
@@ -64,6 +65,11 @@ ingestRouter.post("/scan-jobs", asyncHandler(async (req, res) => {
 
 const updateScanJobSchema = z.object({
   status: z.enum(["completed", "failed", "cancelled"]),
+  // How many hosts the discovery stage turned up, before enrichment.
+  // Optional, because only the scanner knows it and an older scanner does
+  // not send it - absent means "unknown", deliberately not the same as 0,
+  // which is why the column is nullable rather than defaulted.
+  discoveredHosts: z.number().int().min(0).optional(),
 });
 
 ingestRouter.patch("/scan-jobs/:id", asyncHandler(async (req, res) => {
@@ -79,7 +85,11 @@ ingestRouter.patch("/scan-jobs/:id", asyncHandler(async (req, res) => {
   const finishedAt = new Date();
   const updated = await db
     .updateTable("scan_jobs")
-    .set({ status: parsed.data.status, finished_at: finishedAt })
+    .set({
+      status: parsed.data.status,
+      finished_at: finishedAt,
+      ...(parsed.data.discoveredHosts === undefined ? {} : { discovered_hosts: parsed.data.discoveredHosts }),
+    })
     .where("id", "=", req.params.id)
     .where("scanner_agent_id", "=", req.scannerAgentId!)
     .returning(["started_at", "target_spec", "port_spec"])
@@ -111,6 +121,30 @@ ingestRouter.patch("/scan-jobs/:id", asyncHandler(async (req, res) => {
     db.selectFrom("tls_certificates").select(({ fn }) => fn.countAll<number>().as("count")).where("scan_job_id", "=", req.params.id).executeTakeFirstOrThrow(),
   ]);
 
+  // Scan-quality checks, run once here because this is the only moment
+  // the whole job's results exist and are final. A cancelled or failed
+  // job is deliberately skipped: a scan that stopped early has every
+  // reason to look lopsided, and calling that an anomaly would be noise.
+  let anomalies: ScanAnomaly[] = [];
+  if (parsed.data.status === "completed") {
+    anomalies = await detectScanAnomalies(singleParam(req.params.id), parsed.data.discoveredHosts ?? null);
+    await db
+      .updateTable("scan_jobs")
+      .set({ anomalies: JSON.stringify(anomalies) })
+      .where("id", "=", req.params.id)
+      .execute();
+    for (const anomaly of anomalies) {
+      logger.warn({
+        event: "scan.anomaly",
+        scan_job_id: req.params.id,
+        scanner_agent_name: req.scannerAgentName,
+        target_spec: updated.target_spec,
+        kind: anomaly.kind,
+        detail: describeAnomaly(anomaly),
+      });
+    }
+  }
+
   logger.info({
     event: parsed.data.status === "completed" ? "scan.completed" : parsed.data.status === "cancelled" ? "scan.cancelled" : "scan.failed",
     scan_job_id: req.params.id,
@@ -119,8 +153,10 @@ ingestRouter.patch("/scan-jobs/:id", asyncHandler(async (req, res) => {
     target_spec: updated.target_spec,
     port_spec: updated.port_spec,
     duration_ms: finishedAt.getTime() - updated.started_at.getTime(),
+    discovered_hosts: parsed.data.discoveredHosts ?? null,
     hosts_scanned: Number(hostsAndPorts.hosts_scanned),
     open_ports_found: Number(hostsAndPorts.open_ports_found),
+    anomalies: anomalies.length,
     screenshots: Number(screenshotCount.count),
     rdp_screenshots: Number(rdpScreenshotCount.count),
     tls_certificates: Number(tlsCertCount.count),
@@ -699,8 +735,40 @@ export async function ingestHostPayload(
     .executeTakeFirst();
   const scannedPorts = scanJob ? parsePortSpec(scanJob.port_spec) : null;
 
+  // Hosts in this payload that carry no ports at all and that we have
+  // never seen before - counted rather than created, see below.
+  let skippedPortless = 0;
+
   await db.transaction().execute(async (trx) => {
     for (const host of payload.hosts) {
+      // A discovery hit that enrichment could not confirm is not a host.
+      //
+      // masscan reports a SYN-ACK; nmap re-probes and finds nothing; the
+      // scanner still completes that host and submits it with an empty
+      // port list, and the upsert below - which runs before any port is
+      // looked at - turned each one into a permanent hosts row. On a real
+      // deployment that was 423 of 768 rows, 55% of the fleet, and they
+      // never aged out either: retention deletes by last_seen_at, and
+      // every nightly rescan refreshed it. host.new fired for each of
+      // them too, so enabling an alert channel would have paged on them.
+      //
+      // Only *creation* is skipped. A host already known still goes
+      // through unchanged, because an empty payload for one of those is a
+      // real statement - it is what the port.closed inference below reads
+      // to conclude that ports it used to have are gone.
+      if (host.ports.length === 0) {
+        const known = await trx
+          .selectFrom("hosts")
+          .select(["id"])
+          .where("ip", "=", host.ip)
+          .where("scanner_agent_id", "=", ctx.scannerAgentId)
+          .executeTakeFirst();
+        if (!known) {
+          skippedPortless++;
+          continue;
+        }
+      }
+
       const existingOpenPorts = await trx
         .selectFrom("current_host_ports")
         .innerJoin("hosts", "hosts.id", "current_host_ports.host_id")
@@ -958,6 +1026,20 @@ export async function ingestHostPayload(
   // the auto-tags applied in this same transaction, which is what makes
   // "only alert for hosts tagged WebServer" work on the very scan that
   // discovered the web server.
+  if (skippedPortless > 0) {
+    // Its own event rather than a silent drop: this is the difference
+    // between what discovery claimed and what is worth recording, and on
+    // a network where something answers for a whole range it is the
+    // largest number in the scan.
+    logger.info({
+      event: "scan.hosts_skipped_portless",
+      scan_job_id: payload.scanJobId,
+      scanner_agent_id: ctx.scannerAgentId,
+      scanner_agent_name: ctx.scannerAgentName ?? null,
+      skipped: skippedPortless,
+    });
+  }
+
   const alertHostIds = [
     ...new Set([
       ...hostNewEvents.map((e) => e.hostId),

@@ -426,7 +426,8 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 		}
 	}
 
-	if len(discovered) == 0 {
+	discoveredHosts := len(discovered)
+	if discoveredHosts == 0 {
 		return &ScanResult{TargetSpec: targetSpec, PortSpec: portSpec}, nil
 	}
 
@@ -673,7 +674,7 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 		return nil, fmt.Errorf("nmap stage: all %d host(s) failed", nmapFailed)
 	}
 
-	return &ScanResult{TargetSpec: targetSpec, PortSpec: portSpec, Hosts: results}, nil
+	return &ScanResult{TargetSpec: targetSpec, PortSpec: portSpec, Hosts: results, DiscoveredHosts: discoveredHosts}, nil
 }
 
 // hostTracker tracks, per host, how many gowitness/RDP/TLS sub-tasks are

@@ -5,6 +5,7 @@ import {
   Me,
   QueuedScanRequest,
   ScannerAgent,
+  ScannerOverlap,
   ScannerReleaseInfo,
   TlsCertificateInfo,
   WebserverReleaseStatus,
@@ -67,6 +68,8 @@ export interface FleetHealthData {
   // single oldest age in days (null when no agent reports one at all).
   staleTemplateAgents: ScannerAgent[];
   oldestTemplateAgeDays: number | null;
+  overlapStatus: HealthStatus;
+  overlap: ScannerOverlap | null;
 }
 
 // Shared by the Fleet Health page itself and the Dashboard's own small
@@ -87,6 +90,7 @@ export function useFleetHealth(me: Me): FleetHealthData {
   // admin-editable (Settings page), defaults to 1 (today's behavior)
   // until that first fetch resolves.
   const [queueWarningThreshold, setQueueWarningThreshold] = useState(1);
+  const [overlap, setOverlap] = useState<ScannerOverlap | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -100,12 +104,17 @@ export function useFleetHealth(me: Me): FleetHealthData {
       // settings router, and both are about the webserver itself rather
       // than the fleet it watches.
       me.role === "admin" ? api.webserverRelease().catch(() => null) : Promise.resolve(null),
+      // Not admin-gated, unlike the two above: a duplicated host is a
+      // fact about the fleet everyone's numbers are built on, and the
+      // endpoint is scanner-scoped like every other fleet-wide read.
+      api.hostsOverlap().catch(() => null),
     ])
-      .then(([a, release, ws, threshold, serverRelease]) => {
+      .then(([a, release, ws, threshold, serverRelease, dup]) => {
         setAgents(a);
         setLatestRelease(release);
         setWebserverCert(ws);
         setWebserverRelease(serverRelease);
+        setOverlap(dup);
         if (threshold) setQueueWarningThreshold(threshold.warningThreshold);
       })
       .catch(() => setError(true))
@@ -230,12 +239,19 @@ export function useFleetHealth(me: Me): FleetHealthData {
           ? "warning"
           : "ok";
 
+  // Two scanners covering one range is a configuration choice, not a
+  // fault - so a warning, never critical. It is here at all because the
+  // consequence is invisible: every fleet-wide number silently counts
+  // those machines twice, and nothing else on this page would say so.
+  const overlapStatus: HealthStatus = overlap && overlap.duplicatedAddresses > 0 ? "warning" : "ok";
+
   const overall = worstOf(
     scannerStatus,
     updatesStatus,
     queueStatus,
     retryQueueStatus,
     nucleiTemplatesStatus,
+    overlapStatus,
     webserverCert ? webserverCertStatus : "ok",
     webserverVersionStatus
   );
@@ -244,6 +260,8 @@ export function useFleetHealth(me: Me): FleetHealthData {
     loading,
     error,
     overall,
+    overlapStatus,
+    overlap,
     scannerStatus,
     updatesStatus,
     queueStatus,

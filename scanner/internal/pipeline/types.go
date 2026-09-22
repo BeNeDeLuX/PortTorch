@@ -197,4 +197,13 @@ type ScanResult struct {
 	TargetSpec string
 	PortSpec   string
 	Hosts      []HostResult
+
+	// How many hosts the discovery stage turned up, before nmap
+	// enrichment had a chance to contradict it. Kept separately from
+	// len(Hosts) because the gap between the two is the point: masscan
+	// reports a SYN-ACK, nmap re-probes and finds nothing, and a network
+	// where something answers for a whole range makes those two numbers
+	// differ by two orders of magnitude. Nothing downstream could see
+	// that before, because only this stage ever knew the first number.
+	DiscoveredHosts int
 }

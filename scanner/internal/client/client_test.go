@@ -153,3 +153,60 @@ func TestScanSlotsHeader(t *testing.T) {
 		t.Errorf("expected 2/3, got %q", got[2])
 	}
 }
+
+// The webserver distinguishes "this scanner did not report a discovery
+// count" from "discovery found nothing", and uses that distinction to
+// decide whether to flag a scan at all - so an absent field and a zero
+// are not interchangeable, and the two calls must differ on the wire.
+func TestCompleteScanJobOmitsDiscoveryUnlessReported(t *testing.T) {
+	var body map[string]any
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	if err := c.CompleteScanJob(context.Background(), "job-1", "completed"); err != nil {
+		t.Fatalf("CompleteScanJob: %v", err)
+	}
+	if _, present := body["discoveredHosts"]; present {
+		t.Errorf("plain CompleteScanJob sent discoveredHosts = %v, want the field absent", body["discoveredHosts"])
+	}
+	if body["status"] != "completed" {
+		t.Errorf("status = %v, want completed", body["status"])
+	}
+}
+
+func TestCompleteScanJobWithDiscoveryReportsTheCount(t *testing.T) {
+	var body map[string]any
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	if err := c.CompleteScanJobWithDiscovery(context.Background(), "job-1", "completed", 256); err != nil {
+		t.Fatalf("CompleteScanJobWithDiscovery: %v", err)
+	}
+	// JSON numbers decode as float64 - compared as a number rather than
+	// formatted, so a change to how it is encoded still fails here.
+	if got, ok := body["discoveredHosts"].(float64); !ok || got != 256 {
+		t.Errorf("discoveredHosts = %v, want 256", body["discoveredHosts"])
+	}
+}
+
+// Zero is a real answer - discovery ran and found nothing - and has to
+// reach the webserver as 0 rather than being elided as if unreported.
+func TestCompleteScanJobWithDiscoverySendsZero(t *testing.T) {
+	var body map[string]any
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	if err := c.CompleteScanJobWithDiscovery(context.Background(), "job-1", "completed", 0); err != nil {
+		t.Fatalf("CompleteScanJobWithDiscovery: %v", err)
+	}
+	got, ok := body["discoveredHosts"].(float64)
+	if !ok || got != 0 {
+		t.Errorf("discoveredHosts = %v, want 0", body["discoveredHosts"])
+	}
+}

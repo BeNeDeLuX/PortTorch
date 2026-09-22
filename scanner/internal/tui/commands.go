@@ -133,7 +133,11 @@ func runScanCmd(c *client.Client, pcfg pipeline.Config, queueDir string, auditLo
 		if scanErr != nil {
 			status = "failed"
 		}
-		_ = c.CompleteScanJob(context.Background(), jobID, status)
+		if result != nil {
+			_ = c.CompleteScanJobWithDiscovery(context.Background(), jobID, status, result.DiscoveredHosts)
+		} else {
+			_ = c.CompleteScanJob(context.Background(), jobID, status)
+		}
 
 		return scanDoneMsg{result: result, err: scanErr, screenshotErrors: screenshotErrors}
 	}
