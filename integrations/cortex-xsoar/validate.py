@@ -51,6 +51,15 @@ def main() -> int:
         fail(problems, f"embedded Python does not compile: {exc}")
         tree = None
 
+    # The image tag decides which Python actually compiles this code, and
+    # getting it wrong fails before a single line runs. demisto/python3:latest
+    # was last pushed in 2017 and is Python 3.3 - every f-string in this file
+    # is a SyntaxError there, which is exactly how it failed in a real XSOAR.
+    # demisto pins an exact build on every content integration; so does this.
+    image = script_block.get("dockerimage") or ""
+    if not re.fullmatch(r"demisto/[a-z0-9][a-z0-9._-]*:\d+(\.\d+)+", image):
+        fail(problems, f"dockerimage must be a demisto image pinned to an exact version, got: {image or '(unset)'}")
+
     declared = [c["name"] for c in script_block.get("commands") or []]
     if len(declared) != len(set(declared)):
         fail(problems, "duplicate command names in the YAML")

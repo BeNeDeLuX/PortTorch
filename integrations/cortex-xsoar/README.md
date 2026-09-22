@@ -63,10 +63,26 @@ the fallback while neither is in place.
 
 ### Docker image
 
-The YAML ships `dockerimage: demisto/python3:latest`. If your deployment pins
-images (air-gapped, or a curated registry), change that line to whichever
-`demisto/python3` tag your XSOAR already has before uploading. The code needs
-nothing beyond `requests`, which every `demisto/python3` image carries.
+The YAML pins `dockerimage: demisto/python3:3.12.14.13053055` (Python 3.12.14).
+If your deployment restricts images (air-gapped, or a curated registry), change
+that line to another **exact** `demisto/python3` build before uploading. The
+code needs nothing beyond `requests`, which every `demisto/python3` image
+carries.
+
+**Never `:latest`.** That tag exists, which is what makes it a trap: it was last
+pushed in 2017 and is **Python 3.3**, where every f-string in the integration is
+a syntax error. XSOAR reports it as a compile failure in its own runner, with no
+hint that the image is the cause:
+
+```
+File "<string>", line 16151
+  headers={"Authorization": f"Bearer {token}", ...
+                                            ^
+SyntaxError: invalid syntax
+```
+
+This is why `validate.py` refuses any tag that is not an exact version, and why
+every demisto-maintained integration pins one too.
 
 ## Using it
 
@@ -189,7 +205,12 @@ python3 validate.py      # check the result before uploading it anywhere
 not parse, embedded Python that will not compile, a stale `PortTorch.yml` whose
 code no longer matches `PortTorch.py`, a command declared but never handled (or
 handled but never declared), an argument the UI offers that the code never reads,
-and required metadata fields.
+a docker image that is not pinned to an exact version, and required metadata
+fields.
+
+Compiling on the machine you edit on proves less than it looks: what matters is
+the Python inside the pinned image, which is the one thing a host-side check
+cannot see. Run the integration there before trusting it.
 
 Run both after editing either source. The generated file is committed, so
 someone who only wants to install the integration never has to build anything.
