@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { Link } from "react-router";
-import { Me } from "../api";
+import { api, Me, ScannerOverlap } from "../api";
 import { IconCheck, IconWarning } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { certExpiryDaysLeft, certExpiryLabel } from "../lib/certExpiry";
 import { elapsedLabel } from "../lib/elapsed";
+import { formatDateOnly } from "../lib/formatDate";
 import {
   HealthStatus,
   NUCLEI_TEMPLATES_WARN_DAYS,
@@ -12,23 +14,166 @@ import {
   useFleetHealth,
 } from "../lib/useFleetHealth";
 
+// `to` is optional: a card that carries its own control cannot also be
+// one big anchor, since a button inside a link is neither reliably
+// clickable nor valid markup.
 function HealthCard({
   to,
   title,
   status,
   children,
 }: {
-  to: string;
+  to?: string;
   title: string;
   status: HealthStatus;
   children: React.ReactNode;
 }) {
-  return (
-    <Link to={to} className={`health-card health-${status}`}>
+  const body = (
+    <>
       <div className="health-card-title">{title}</div>
       <div className={`health-card-status health-${status}`}>{STATUS_LABEL[status]}</div>
       <div className="health-card-detail">{children}</div>
+    </>
+  );
+  return to ? (
+    <Link to={to} className={`health-card health-${status}`}>
+      {body}
     </Link>
+  ) : (
+    <div className={`health-card health-${status}`}>{body}</div>
+  );
+}
+
+const ACCEPT_DAYS = [30, 90, 180];
+
+// The card that has to say *why* an address is duplicated, because the
+// two causes call for opposite responses - see the server's
+// search/duplicateCoverage.ts.
+function DuplicateCoverageCard({
+  me,
+  overlap,
+  status,
+  onChanged,
+}: {
+  me: Me;
+  overlap: ScannerOverlap;
+  status: HealthStatus;
+  onChanged: (o: ScannerOverlap) => void;
+}) {
+  const isAdmin = me.role === "admin";
+  const [days, setDays] = useState(ACCEPT_DAYS[0]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const ack = overlap.acknowledgement;
+  const duplicated = overlap.duplicatedAddresses;
+  const allStale = duplicated > 0 && overlap.staleDuplicates === duplicated;
+  const someStale = overlap.staleDuplicates > 0;
+  const example = overlap.duplicates[0];
+
+  async function accept() {
+    setBusy(true);
+    setError(null);
+    try {
+      const until = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+      onChanged(await api.acknowledgeOverlap(until));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not record that.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clear() {
+    setBusy(true);
+    setError(null);
+    try {
+      onChanged(await api.clearOverlapAcknowledgement());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not clear that.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <HealthCard title="Duplicate Coverage" status={status}>
+      {overlap.hostRows} host record{overlap.hostRows === 1 ? "" : "s"} for {overlap.distinctAddresses} address
+      {overlap.distinctAddresses === 1 ? "" : "es"}
+      <br />
+      {duplicated === 0 ? (
+        "No address is covered by more than one scanner"
+      ) : (
+        <>
+          {duplicated} address{duplicated === 1 ? " is" : "es are"} held by more than one scanner, so those machines
+          are counted twice in every fleet-wide figure
+          {example && (
+            <>
+              {" "}
+              (e.g. {example.ip} via {example.holders.map((h) => h.scanner).join(" and ")})
+            </>
+          )}
+          .{" "}
+          {/* The advice, and the reason this card knows which to give:
+              rows nobody is refreshing are not double coverage at all. */}
+          {allStale ? (
+            <>
+              Nothing is scanning these twice any more - on every one of them, one scanner's rows have not been
+              refreshed in a fortnight or longer. Delete the stale side (filter the host list by that scanner and the
+              range, then Delete selected), or leave them to age out through retention.
+            </>
+          ) : someStale ? (
+            <>
+              On {overlap.staleDuplicates} of them one scanner's rows are already stale and only need clearing out;
+              the rest are genuinely being scanned twice, so narrow one scanner's target range or keep the redundancy
+              deliberately.
+            </>
+          ) : (
+            <>Both scanners are still scanning these. Narrow one scanner's target range, or keep it deliberately.</>
+          )}
+        </>
+      )}
+      {ack && (
+        <>
+          <br />
+          {ack.active ? (
+            <>
+              Accepted until {formatDateOnly(ack.until, me.preferences)}
+              {ack.by ? ` by ${ack.by}` : ""}
+              {ack.acceptedCount !== null && ` (${ack.acceptedCount} accepted)`}.
+            </>
+          ) : (
+            <>
+              An earlier acceptance no longer applies -{" "}
+              {new Date(ack.until).getTime() <= Date.now()
+                ? `it expired on ${formatDateOnly(ack.until, me.preferences)}`
+                : `more addresses are duplicated now than the ${ack.acceptedCount} that were accepted`}
+              .
+            </>
+          )}
+        </>
+      )}
+      {isAdmin && duplicated > 0 && (
+        <div className="inline-actions health-card-actions">
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))} disabled={busy}>
+            {ACCEPT_DAYS.map((d) => (
+              <option key={d} value={d}>
+                {d} days
+              </option>
+            ))}
+          </select>
+          <button type="button" onClick={accept} disabled={busy}>
+            {ack?.active ? "Extend" : "Accept"}
+          </button>
+          {ack && (
+            <button type="button" className="link-button" onClick={clear} disabled={busy}>
+              Remove acceptance
+            </button>
+          )}
+        </div>
+      )}
+      {error && <p className="error">{error}</p>}
+    </HealthCard>
   );
 }
 
@@ -139,28 +284,12 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
         </HealthCard>
 
         {health.overlap && (
-          <HealthCard to="/" title="Duplicate Coverage" status={health.overlapStatus}>
-            {health.overlap.hostRows} host record{health.overlap.hostRows === 1 ? "" : "s"} for{" "}
-            {health.overlap.distinctAddresses} address{health.overlap.distinctAddresses === 1 ? "" : "es"}
-            <br />
-            {health.overlap.duplicatedAddresses === 0 ? (
-              "No address is covered by more than one scanner"
-            ) : (
-              <>
-                {health.overlap.duplicatedAddresses} address
-                {health.overlap.duplicatedAddresses === 1 ? " is" : "es are"} scanned by more than one scanner, so
-                those machines are counted twice in every fleet-wide figure
-                {health.overlap.duplicates.length > 0 && (
-                  <>
-                    {" "}
-                    (e.g. {health.overlap.duplicates[0].ip} via{" "}
-                    {health.overlap.duplicates[0].scanners.join(" and ")})
-                  </>
-                )}
-                . Narrow one scanner's target range, or keep it deliberately.
-              </>
-            )}
-          </HealthCard>
+          <DuplicateCoverageCard
+            me={me}
+            overlap={health.overlap}
+            status={health.overlapStatus}
+            onChanged={health.setOverlap}
+          />
         )}
 
         <HealthCard to="/agents" title="Submission Retry Backlog" status={health.retryQueueStatus}>

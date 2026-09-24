@@ -70,6 +70,7 @@ export interface FleetHealthData {
   oldestTemplateAgeDays: number | null;
   overlapStatus: HealthStatus;
   overlap: ScannerOverlap | null;
+  setOverlap: (o: ScannerOverlap) => void;
 }
 
 // Shared by the Fleet Health page itself and the Dashboard's own small
@@ -243,7 +244,12 @@ export function useFleetHealth(me: Me): FleetHealthData {
   // fault - so a warning, never critical. It is here at all because the
   // consequence is invisible: every fleet-wide number silently counts
   // those machines twice, and nothing else on this page would say so.
-  const overlapStatus: HealthStatus = overlap && overlap.duplicatedAddresses > 0 ? "warning" : "ok";
+  //
+  // An active acknowledgement makes it "ok" rather than hiding the card:
+  // the numbers stay on screen with the accepted-until date beside them,
+  // which is the difference between a decision and a blind spot.
+  const overlapStatus: HealthStatus =
+    overlap && overlap.duplicatedAddresses > 0 && !overlap.acknowledgement?.active ? "warning" : "ok";
 
   const overall = worstOf(
     scannerStatus,
@@ -262,6 +268,9 @@ export function useFleetHealth(me: Me): FleetHealthData {
     overall,
     overlapStatus,
     overlap,
+    // Acknowledging replaces the card's own data rather than re-running
+    // every request the page makes - the other cards did not change.
+    setOverlap,
     scannerStatus,
     updatesStatus,
     queueStatus,

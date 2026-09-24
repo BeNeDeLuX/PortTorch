@@ -823,6 +823,12 @@ export interface AppSettingsTable {
   hec_verify_tls: ColumnType<boolean, boolean | undefined, boolean>;
   hec_observations_enabled: ColumnType<boolean, boolean | undefined, boolean>;
   hec_findings_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  // "We know, stop warning until this date" for the duplicate-coverage
+  // card, plus how many duplicated addresses were accepted - see the
+  // duplicate_coverage_ack migration for why the count is part of it.
+  duplicate_coverage_ack_until: ColumnType<Date | null, string | null | undefined, string | null>;
+  duplicate_coverage_ack_count: ColumnType<number | null, number | null | undefined, number | null>;
+  duplicate_coverage_ack_by: ColumnType<string | null, string | null | undefined, string | null>;
   // Whether the mail server's certificate chain is verified. Separate
   // from smtp_secure, which selects implicit TLS vs STARTTLS - a
   // different question from whether the presented certificate is checked.

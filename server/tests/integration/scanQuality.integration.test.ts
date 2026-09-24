@@ -249,11 +249,103 @@ describe("scanner coverage overlap", () => {
 
     const duplicate = res.body.duplicates.find((d: { ip: string }) => d.ip === sharedIp);
     expect(duplicate).toBeDefined();
-    expect(duplicate.scanners).toContain(agentA.name);
-    expect(duplicate.scanners).toContain(agentB.name);
+    const scanners = duplicate.holders.map((h: { scanner: string }) => h.scanner);
+    expect(scanners).toContain(agentA.name);
+    expect(scanners).toContain(agentB.name);
+    // Each holder carries when it last saw the address, which is what
+    // makes "one side is simply old" answerable at all.
+    expect(duplicate.holders.every((h: { lastSeen: string }) => !Number.isNaN(Date.parse(h.lastSeen)))).toBe(true);
 
     // An address only one scanner has must not be listed - the whole
     // value of the number is that it counts real duplication.
     expect(res.body.duplicates.some((d: { ip: string }) => d.ip === uniqueIp)).toBe(false);
+  });
+
+  // The distinction the card's advice depends on: rows nobody is
+  // refreshing are not double coverage at all, and telling that operator
+  // to narrow a target range is advice about a problem they do not have.
+  it("tells a stale holder apart from one that is still scanning", async () => {
+    let res = await client.get("/api/hosts/overlap");
+    let duplicate = res.body.duplicates.find((d: { ip: string }) => d.ip === sharedIp);
+    // Both were ingested moments ago, so neither is behind the other.
+    expect(duplicate.holders.every((h: { stale: boolean }) => h.stale === false)).toBe(true);
+    expect(res.body.staleDuplicates).toBe(0);
+
+    // Wind one side back past the threshold.
+    await db
+      .updateTable("hosts")
+      .set({ last_seen_at: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString() })
+      .where("scanner_agent_id", "=", agentB.id)
+      .execute();
+
+    res = await client.get("/api/hosts/overlap");
+    duplicate = res.body.duplicates.find((d: { ip: string }) => d.ip === sharedIp);
+    const stale = duplicate.holders.filter((h: { stale: boolean }) => h.stale);
+    expect(stale).toHaveLength(1);
+    expect(stale[0].scanner).toBe(agentB.name);
+    // The fresh side is the yardstick and is never itself stale.
+    expect(duplicate.holders.find((h: { scanner: string }) => h.scanner === agentA.name).stale).toBe(false);
+    expect(res.body.staleDuplicates).toBeGreaterThanOrEqual(1);
+  });
+
+  it("accepts the overlap for a while, and stops accepting it once it grows", async () => {
+    const until = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const res = await client.post("/api/hosts/overlap/acknowledge").send({ until });
+    expect(res.status).toBe(200);
+    expect(res.body.acknowledgement.active).toBe(true);
+    expect(res.body.acknowledgement.by).toBe(admin.username);
+    const accepted = res.body.acknowledgement.acceptedCount;
+    expect(accepted).toBe(res.body.duplicatedAddresses);
+
+    // A *growing* overlap is news even while the known one is accepted -
+    // otherwise this would be a blind spot rather than a decision.
+    await db
+      .updateTable("app_settings")
+      .set({ duplicate_coverage_ack_count: accepted - 1 })
+      .where("id", "=", 1)
+      .execute();
+    const after = await client.get("/api/hosts/overlap");
+    expect(after.body.acknowledgement.active).toBe(false);
+  });
+
+  it("stops accepting once the date has passed", async () => {
+    await db
+      .updateTable("app_settings")
+      .set({
+        duplicate_coverage_ack_until: new Date(Date.now() - 60_000).toISOString(),
+        duplicate_coverage_ack_count: 9999,
+      })
+      .where("id", "=", 1)
+      .execute();
+    const res = await client.get("/api/hosts/overlap");
+    expect(res.body.acknowledgement.active).toBe(false);
+  });
+
+  it("refuses a date in the past", async () => {
+    const res = await client
+      .post("/api/hosts/overlap/acknowledge")
+      .send({ until: new Date(Date.now() - 86_400_000).toISOString() });
+    expect(res.status).toBe(400);
+  });
+
+  it("only lets an admin accept or clear it", async () => {
+    const operator = await createTestUser("operator");
+    const opClient = await loginAs(operator.username, operator.password);
+    try {
+      // Reading is not admin-gated: seeing why a number looks wrong is no
+      // more sensitive than seeing the number.
+      expect((await opClient.get("/api/hosts/overlap")).status).toBe(200);
+      const until = new Date(Date.now() + 86_400_000).toISOString();
+      expect((await opClient.post("/api/hosts/overlap/acknowledge").send({ until })).status).toBe(403);
+      expect((await opClient.delete("/api/hosts/overlap/acknowledge")).status).toBe(403);
+    } finally {
+      await deleteTestUser(operator.id);
+    }
+  });
+
+  it("clears the acceptance again", async () => {
+    const res = await client.delete("/api/hosts/overlap/acknowledge");
+    expect(res.status).toBe(200);
+    expect(res.body.acknowledgement).toBeNull();
   });
 });

@@ -266,6 +266,50 @@ duplicated-address count is **counted, not derived** from
 *rows*, which is a different number the moment one address is held by three
 scanners rather than two.
 
+**Why an address is duplicated decides what to do about it, and the two
+causes call for opposite advice.** Either both scanners still scan it - a
+configuration choice, narrow one range or keep the redundancy - or one
+scanner's rows are simply old, in which case nothing is double-scanning at
+all and the answer is to clear the leftovers. The first version of this
+card only knew the second sentence, and gave the wrong advice on the very
+deployment it was built for: one scanner had touched that range exactly
+once, three weeks earlier, and "narrow one scanner's target range" was
+advice about a problem nobody had.
+
+`search/duplicateCoverage.ts` draws the distinction by comparing each
+holder against **the freshest holder of that same address**, not against
+`now()`. A fortnightly schedule is not stale, it is fortnightly; only the
+comparison between the holders says which side is actually keeping the
+address current. `DUPLICATE_STALE_DAYS` (14) is a display-only heuristic,
+like Fleet Health's own queue and template thresholds. `staleDuplicates`
+is counted over *every* duplicate rather than the capped list, since the
+advice depends on it and a sample would be wrong exactly when the list is
+longest.
+
+**The card can be acknowledged, and the acknowledgement is time-boxed and
+count-bound.** `app_settings.duplicate_coverage_ack_until` / `_count` /
+`_by` (migration `1746000000000_duplicate_coverage_ack.js`), set through
+`POST /api/hosts/overlap/acknowledge` (admin), cleared through the
+matching `DELETE`. Without it the only honest options were "fix it" or
+"look at a yellow card for the 160 days until retention takes the rows" -
+and a warning nobody can answer is one people stop reading.
+
+Two properties make it a decision rather than a mute. It **expires**, the
+same reasoning `finding_triage.review_at` carries. And the accepted count
+is stored with it, so the acknowledgement stops applying once *more*
+addresses are duplicated than were accepted - a growing overlap is news
+even while the known one is accepted, the same idea as
+`ssh_shared_key_alerts` keeping `ip_count` so a group that gains a member
+alerts again. A shrinking one stays accepted; it is moving the way the
+operator wanted. The count is read server-side at acknowledge time rather
+than taken from the client, so what gets accepted is what was actually
+there.
+
+The card stays on screen with its numbers either way - acknowledging turns
+it green and adds "accepted until …", it does not hide it. `HealthCard`'s
+`to` became optional for this: a card carrying a control cannot also be
+one big `<Link>`.
+
 ### The Settings page is a grouped card grid, one component per setting
 
 `Settings.tsx` had reached 1149 lines, 11 sections, 10 forms and 67 `useState` calls in one component, all in a flat column with no grouping - so host retention, scan-log retention and storage, which all answer "how long do we keep things and what does that cost", had two unrelated scan thresholds wedged between them. It is now a ~100-line layout shell over `pages/settings/*`, one component per setting, each owning its own state next to the markup that uses it.

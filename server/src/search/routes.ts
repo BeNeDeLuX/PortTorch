@@ -20,6 +20,11 @@ import { NucleiProfileSelection } from "../nucleiProfiles/resolve";
 import { singleParam } from "../lib/reqParams";
 import { deleteScreenshotFiles, screenshotPathsForHosts } from "../screenshots/files";
 import { csvEscape } from "../lib/csv";
+import {
+  clearDuplicateCoverageAck,
+  computeDuplicateCoverage,
+  setDuplicateCoverageAck,
+} from "./duplicateCoverage";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -1095,66 +1100,61 @@ hostsRouter.get("/facets/ports", asyncHandler(async (req, res) => {
 // overlap only among the scanners it is allowed to see - which may
 // legitimately be none of it.
 hostsRouter.get("/overlap", asyncHandler(async (req, res) => {
-  const allowed = getAllowedScannerAgentIds(req);
+  res.json(await computeDuplicateCoverage(getAllowedScannerAgentIds(req)));
+}));
 
-  let base = db.selectFrom("hosts");
-  if (allowed) base = base.where("hosts.scanner_agent_id", "in", allowed);
+// "We know, stop warning until this date." Admin-only, like every other
+// setting that changes what the fleet reports rather than what it shows
+// one person.
+//
+// Time-boxed on purpose - an acknowledgement that never expires recreates
+// the problem it solves, the same reasoning finding_triage.review_at
+// carries. The accepted count is stored with it so a *growing* overlap
+// still surfaces while the known one stays quiet.
+const acknowledgeOverlapSchema = z.object({
+  until: z
+    .string()
+    .refine((v) => !Number.isNaN(new Date(v).getTime()) && new Date(v).getTime() > Date.now(), {
+      message: "until must be a valid date in the future",
+    }),
+});
 
-  const totals = await base
-    .select([
-      sql<string>`count(*)`.as("host_rows"),
-      sql<string>`count(distinct hosts.ip)`.as("distinct_addresses"),
-    ])
-    .executeTakeFirstOrThrow();
+hostsRouter.post("/overlap/acknowledge", requireAdmin, asyncHandler(async (req, res) => {
+  const parsed = acknowledgeOverlapSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
 
-  // The addresses themselves, so the answer is actionable rather than
-  // just a number - capped, because on a fully overlapped /24 the list is
-  // every address in it and nobody reads 254 rows to learn one fact.
-  //
-  // leftJoin, not inner: hosts.scanner_agent_id is ON DELETE SET NULL, so
-  // a host whose scanner was deleted still exists and still occupies an
-  // address. An inner join dropped exactly those, which made the list
-  // disagree with the count beside it - caught by running this against a
-  // database that had some.
-  const duplicateSelect = () => {
-    let q = db
-      .selectFrom("hosts")
-      .leftJoin("scanner_agents", "scanner_agents.id", "hosts.scanner_agent_id")
-      .groupBy("hosts.ip")
-      .having(sql<boolean>`count(*) > 1`);
-    if (allowed) q = q.where("hosts.scanner_agent_id", "in", allowed);
-    return q;
-  };
+  // The count is taken here rather than trusted from the client, so what
+  // gets accepted is what is actually there at the moment of accepting.
+  const current = await computeDuplicateCoverage(null);
+  await setDuplicateCoverageAck(
+    new Date(parsed.data.until).toISOString(),
+    current.duplicatedAddresses,
+    req.session.username ?? null
+  );
 
-  const duplicates = await duplicateSelect()
-    .select([
-      sql<string>`host(hosts.ip)`.as("ip"),
-      // coalesce rather than dropping the row: "the scanner is gone" is
-      // itself the explanation for a duplicate nobody can account for.
-      sql<string[]>`array_agg(coalesce(scanner_agents.name, '(deleted scanner)') order by scanner_agents.name)`.as(
-        "scanners"
-      ),
-    ])
-    .orderBy(sql`min(hosts.ip)`)
-    .limit(100)
-    .execute();
-
-  // Counted, not derived from hostRows - distinctAddresses. That
-  // difference is the number of *excess rows*, which is a different
-  // number as soon as one address is held by three scanners rather than
-  // two, and reporting it as an address count would be wrong there.
-  const duplicateCount = await db
-    .selectFrom(duplicateSelect().select(sql<number>`1`.as("one")).as("dupes"))
-    .select(sql<string>`count(*)`.as("count"))
-    .executeTakeFirstOrThrow();
-
-  res.json({
-    hostRows: Number(totals.host_rows),
-    distinctAddresses: Number(totals.distinct_addresses),
-    duplicatedAddresses: Number(duplicateCount.count),
-    duplicates,
-    truncated: duplicates.length === 100,
+  logger.info({
+    event: "duplicate_coverage.acknowledged",
+    until: parsed.data.until,
+    accepted_count: current.duplicatedAddresses,
+    actor: req.session.username,
+    source_ip: req.ip,
   });
+  recordAudit("duplicate_coverage.acknowledged", req.session.username, req.ip, {
+    until: parsed.data.until,
+    accepted_count: current.duplicatedAddresses,
+  });
+
+  res.json(await computeDuplicateCoverage(getAllowedScannerAgentIds(req)));
+}));
+
+hostsRouter.delete("/overlap/acknowledge", requireAdmin, asyncHandler(async (req, res) => {
+  await clearDuplicateCoverageAck();
+  logger.info({ event: "duplicate_coverage.acknowledgement_cleared", actor: req.session.username, source_ip: req.ip });
+  recordAudit("duplicate_coverage.acknowledgement_cleared", req.session.username, req.ip, {});
+  res.json(await computeDuplicateCoverage(getAllowedScannerAgentIds(req)));
 }));
 
 hostsRouter.get("/:id", asyncHandler(async (req, res) => {

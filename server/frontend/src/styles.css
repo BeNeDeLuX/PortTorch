@@ -2083,6 +2083,20 @@ th {
    its numbers. Inline with the target rather than its own column, since
    most scans have none and an empty column on every row would cost more
    width than the badge ever does. */
+/* A Fleet Health card that carries its own control rather than being one
+   big link - the acceptance action on Duplicate Coverage. Pushed to the
+   bottom of the card so the numbers stay the first thing read. */
+.health-card-actions {
+  margin-top: 0.6rem;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.health-card-actions select,
+.health-card-actions button {
+  font-size: 0.8rem;
+}
+
 .scan-anomaly-badge {
   display: inline-flex;
   align-items: center;

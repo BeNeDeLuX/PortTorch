@@ -1200,12 +1200,30 @@ export type ScanAnomaly =
     }
   | { kind: "unconfirmed_discovery"; discovered: number; confirmed: number };
 
+export interface DuplicateHolder {
+  scanner: string;
+  lastSeen: string;
+  // True when this holder is at least two weeks behind the freshest one
+  // for the same address - the difference between "both scanners still
+  // scan this" and "one scanner's rows are simply old".
+  stale: boolean;
+}
+
 export interface ScannerOverlap {
   hostRows: number;
   distinctAddresses: number;
   duplicatedAddresses: number;
-  duplicates: Array<{ ip: string; scanners: string[] }>;
+  staleDuplicates: number;
+  duplicates: Array<{ ip: string; holders: DuplicateHolder[] }>;
   truncated: boolean;
+  acknowledgement: {
+    until: string;
+    by: string | null;
+    acceptedCount: number | null;
+    // Whether it currently suppresses the warning - false once expired,
+    // or once more addresses are duplicated than were accepted.
+    active: boolean;
+  } | null;
 }
 
 export interface ScanHistoryResult {
@@ -1632,6 +1650,13 @@ export const api = {
   // the endpoint's own comment. Its own call rather than a field on the
   // host list, because it is a fleet-wide fact, not a property of a page.
   hostsOverlap: () => request<ScannerOverlap>("/api/hosts/overlap"),
+  acknowledgeOverlap: (until: string) =>
+    request<ScannerOverlap>("/api/hosts/overlap/acknowledge", {
+      method: "POST",
+      body: JSON.stringify({ until }),
+    }),
+  clearOverlapAcknowledgement: () =>
+    request<ScannerOverlap>("/api/hosts/overlap/acknowledge", { method: "DELETE" }),
   hecStatus: () => request<HecStatus>("/api/settings/hec/status"),
   testHec: () => request<{ ok: boolean; error?: string }>("/api/settings/hec/test", { method: "POST" }),
   forwardHecNow: () =>
