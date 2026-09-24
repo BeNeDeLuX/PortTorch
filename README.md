@@ -1268,16 +1268,46 @@ services for the same scan run. Never logged: API keys, passwords,
 session cookies, `Authorization` headers.
 
 **Or let PortTorch push to the collector itself.** Settings → SIEM
-Forwarding (HTTP Event Collector) ships four independent streams to a
+Forwarding (HTTP Event Collector) ships six independent streams to a
 Splunk HEC endpoint, or any collector that speaks its shape, without a log
 shipper in between:
 
-- **Audit log** - who did what in the dashboard.
-- **Scan logs** - each scanner's own per-job log lines, one event per line.
-- **Scan results** - one event per port observation, open and closed, with
-  the address and hostname resolved so a SIEM can key on them.
-- **Web findings** - one event per nuclei match, carrying nuclei's own
-  severity rather than a remapped one.
+- **Audit log** (`source=porttorch:audit`) - who did what in the dashboard.
+- **Scan logs** (`porttorch:scan`) - each scanner's own per-job log lines,
+  one event per line.
+- **Scan results** (`porttorch:observation`) - one event per port
+  observation, open and closed, with the address and hostname resolved so
+  a SIEM can key on them.
+- **Web findings** (`porttorch:finding`) - one event per nuclei match,
+  carrying nuclei's own severity rather than a remapped one.
+- **Hosts** (`porttorch:host`) - the asset record: OS, device type, MAC
+  manufacturer, tags, first/last seen, retired. Re-sent whenever a scan
+  refreshes the host, and carrying the same `host_id`/`ip` the port events
+  do, so the two join.
+- **TLS certificates** (`porttorch:certificate`) - one event per capture,
+  with issuer, validity, SANs, TLS version, cipher and key size.
+
+Always filter on `source`: if you set a custom sourcetype it applies to
+every stream, while `source` stays distinct. `_time` is when the scan saw
+the thing, not when it was forwarded.
+
+One thing to know before writing searches: the observation stream is
+*history*, while the dashboard's own statistics show *current state*. To
+reproduce them, reduce to the newest observation per host, port and
+protocol first, over a window at least as long as your slowest rescan
+cycle:
+
+```
+index=porttorch source="porttorch:observation"
+| stats latest(state) as state, latest(service_name) as service_name,
+        latest(service_product) as service_product, latest(ip) as ip
+        by host_id, port, protocol
+| search state=open
+```
+
+That is the same "newest row per identity" the `current_host_ports` view
+performs. A plain `stats count by port` over the raw stream counts every
+observation ever made instead.
 
 Each stream is forwarded from a stored cursor rather than
 fire-and-forget, so a collector that was unreachable for a while causes

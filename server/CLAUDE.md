@@ -177,10 +177,36 @@ worth correlating) and `nuclei_findings` is the web findings. Both are
 off by default: turning on a stream that would replay months of history is
 an admin's decision.
 
-Each cursor follows the shape of the table it pages. Observations have a
-bigserial, so "everything after id N" is exact, like the audit stream.
-Findings are keyed by uuid and need the `(timestamp, id)` pair the
-scan-log stream already used.
+**Two more after them close the other half**: `hosts` and
+`tls_certificates`. Port events carry nothing about the machine - OS,
+device type, manufacturer and tags all live on `hosts` - so a SIEM
+dashboard could reproduce the service/software charts and none of the
+inventory ones, and nothing at all about certificates. The host stream is
+the asset lookup the port events key against; it carries the same
+`host_id` and `ip` so the two join.
+
+Each cursor follows the shape of the table it pages. Observations and
+certificates have a bigserial, so "everything after id N" is exact, like
+the audit stream. Findings are keyed by uuid and need the
+`(timestamp, id)` pair the scan-log stream already used.
+
+**`hosts` is the one that is not append-only**, and that changes what the
+cursor means. One row per host, updated by every scan that reaches it, so
+it pages by `(last_seen_at, id)` and a host is re-forwarded whenever a
+scan touches it. That is the right behaviour for an asset feed - the SIEM
+gets the current attributes each time they are confirmed, not one event at
+discovery and silence afterwards - and it is why `retired` ships as a
+boolean beside `retired_at`: "is this decommissioned" is what a
+correlation search asks, and making every consumer derive it from a
+nullable date is how two of them derive it differently. Tags are
+aggregated in the same statement rather than a round trip per page. The
+consequence worth knowing: a change that does *not* move `last_seen_at`,
+such as a tag added by hand, is not forwarded until that host's next scan.
+
+Certificates are sent per **capture**, not per (host, port): the table is
+the history of what each port presented, and a consumer wanting only the
+current one takes the latest per `host_id`+`port` - the same reduction the
+Certificates page performs.
 
 **Writing that second cursor surfaced a real bug in the first one.**
 Postgres keeps `timestamptz` to microseconds; node-postgres hands it to JS

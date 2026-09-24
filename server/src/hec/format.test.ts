@@ -10,6 +10,8 @@ const settings: HecSettings = {
   scanLogEnabled: true,
   observationsEnabled: true,
   findingsEnabled: true,
+  hostsEnabled: true,
+  certificatesEnabled: true,
   index: null,
   sourcetype: null,
   verifyTls: true,

@@ -206,6 +206,8 @@ const appSettingsSchema = z.object({
       // smtp.verifyTls's own optionality was added to avoid.
       observationsEnabled: z.boolean().default(false),
       findingsEnabled: z.boolean().default(false),
+      hostsEnabled: z.boolean().default(false),
+      certificatesEnabled: z.boolean().default(false),
       index: z.string().trim().min(1).nullable(),
       sourcetype: z.string().trim().min(1).nullable(),
       verifyTls: z.boolean(),
@@ -386,6 +388,8 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
       hec_scan_log_enabled: parsed.data.hec.scanLogEnabled,
       hec_observations_enabled: parsed.data.hec.observationsEnabled,
       hec_findings_enabled: parsed.data.hec.findingsEnabled,
+      hec_hosts_enabled: parsed.data.hec.hostsEnabled,
+      hec_certificates_enabled: parsed.data.hec.certificatesEnabled,
       hec_verify_tls: parsed.data.hec.verifyTls,
       // Never the token, and never even whether it changed - same
       // discipline as the SMTP password above.
@@ -398,6 +402,8 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
       hec_scan_log_enabled: parsed.data.hec.scanLogEnabled,
       hec_observations_enabled: parsed.data.hec.observationsEnabled,
       hec_findings_enabled: parsed.data.hec.findingsEnabled,
+      hec_hosts_enabled: parsed.data.hec.hostsEnabled,
+      hec_certificates_enabled: parsed.data.hec.certificatesEnabled,
     });
   }
 

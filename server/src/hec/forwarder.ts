@@ -4,7 +4,15 @@ import { logger } from "../logger";
 import { getAppSettings, type HecSettings } from "../settings/appSettings";
 import { postToHec } from "./client";
 import { caBundle } from "../settings/caCertificates";
-import { auditEvent, findingEvent, observationEvent, scanLogEvents, type HecEvent } from "./format";
+import {
+  auditEvent,
+  certificateEvent,
+  findingEvent,
+  hostEvent,
+  observationEvent,
+  scanLogEvents,
+  type HecEvent,
+} from "./format";
 
 // Often enough that a SIEM feed is useful for alerting, rarely enough
 // that an idle deployment isn't querying two tables every few seconds.
@@ -47,23 +55,36 @@ export function startHecForwarder(): void {
 // Exported so tests can drive one full pass deterministically instead of
 // waiting on the interval - same shape as runOperationalAlertChecks and
 // runRetentionSweep.
-export async function runHecForward(): Promise<{ audit: number; scanLog: number; observations: number; findings: number }> {
-  const none = { audit: 0, scanLog: 0, observations: 0, findings: 0 };
+export interface HecForwardCounts {
+  audit: number;
+  scanLog: number;
+  observations: number;
+  findings: number;
+  hosts: number;
+  certificates: number;
+}
+
+export async function runHecForward(): Promise<HecForwardCounts> {
+  const none: HecForwardCounts = { audit: 0, scanLog: 0, observations: 0, findings: 0, hosts: 0, certificates: 0 };
   const settings = (await getAppSettings()).hec;
   if (!settings.url || !settings.token) return none;
-  if (!settings.auditEnabled && !settings.scanLogEnabled && !settings.observationsEnabled && !settings.findingsEnabled) {
-    return none;
-  }
+  const anyEnabled =
+    settings.auditEnabled ||
+    settings.scanLogEnabled ||
+    settings.observationsEnabled ||
+    settings.findingsEnabled ||
+    settings.hostsEnabled ||
+    settings.certificatesEnabled;
+  if (!anyEnabled) return none;
 
-  let audit = 0;
-  let scanLog = 0;
-  let observations = 0;
-  let findings = 0;
-  if (settings.auditEnabled) audit = await forwardAudit(settings);
-  if (settings.scanLogEnabled) scanLog = await forwardScanLogs(settings);
-  if (settings.observationsEnabled) observations = await forwardObservations(settings);
-  if (settings.findingsEnabled) findings = await forwardFindings(settings);
-  return { audit, scanLog, observations, findings };
+  const counts = { ...none };
+  if (settings.auditEnabled) counts.audit = await forwardAudit(settings);
+  if (settings.scanLogEnabled) counts.scanLog = await forwardScanLogs(settings);
+  if (settings.observationsEnabled) counts.observations = await forwardObservations(settings);
+  if (settings.findingsEnabled) counts.findings = await forwardFindings(settings);
+  if (settings.hostsEnabled) counts.hosts = await forwardHosts(settings);
+  if (settings.certificatesEnabled) counts.certificates = await forwardCertificates(settings);
+  return counts;
 }
 
 async function state() {
@@ -76,6 +97,9 @@ async function state() {
       "observation_cursor",
       "finding_cursor_at",
       "finding_cursor_id",
+      "host_cursor_at",
+      "host_cursor_id",
+      "certificate_cursor",
     ])
     .where("id", "=", 1)
     .executeTakeFirstOrThrow();
@@ -345,5 +369,140 @@ async function forwardFindings(settings: HecSettings): Promise<number> {
     .execute();
   await recordSuccess(events.length);
   logger.info({ event: "hec.findings_forwarded", events: events.length });
+  return events.length;
+}
+
+// The asset record the port events hang off. hosts is updated rather than
+// appended - one row per host, refreshed by every scan that reaches it -
+// so this pages by (last_seen_at, id) and re-sends a host whenever a scan
+// touches it. That is deliberate: a SIEM asset lookup wants the current
+// attributes each time they are confirmed, not one event at discovery.
+//
+// The consequence worth knowing: a change that does *not* move
+// last_seen_at - someone adding a tag by hand - is not forwarded until
+// that host's next scan. Keying on the tag table's own timestamps would
+// fix that and cost a second cursor for a case that resolves itself
+// within a day on any scanned fleet.
+async function forwardHosts(settings: HecSettings): Promise<number> {
+  const { host_cursor_at, host_cursor_id } = await state();
+
+  let query = db
+    .selectFrom("hosts")
+    .leftJoin("scanner_agents", "scanner_agents.id", "hosts.scanner_agent_id")
+    .select([
+      "hosts.id as id",
+      "hosts.ip as ip",
+      "hosts.hostname as hostname",
+      "hosts.os_name as os_name",
+      "hosts.os_family as os_family",
+      "hosts.os_vendor as os_vendor",
+      "hosts.device_type as device_type",
+      "hosts.os_accuracy as os_accuracy",
+      "hosts.mac_address as mac_address",
+      "hosts.mac_vendor as mac_vendor",
+      "hosts.first_seen_at as first_seen_at",
+      "hosts.retired_at as retired_at",
+      "scanner_agents.name as scanner_agent_name",
+      MS("hosts.last_seen_at").as("last_seen_at"),
+      // Aggregated here rather than in a second query: a host has a
+      // handful of tags, and the alternative is one round trip per page
+      // of hosts to assemble something the same statement can return.
+      sql<string[]>`coalesce(
+        (select array_agg(host_tags.tag order by host_tags.tag) from host_tags where host_tags.host_id = hosts.id),
+        '{}'
+      )`.as("tags"),
+    ])
+    .orderBy(MS("hosts.last_seen_at"))
+    .orderBy("hosts.id")
+    .limit(MAX_ROWS_PER_TICK);
+
+  if (host_cursor_at !== null) {
+    const cursorAt = host_cursor_at;
+    const cursorId = host_cursor_id;
+    query = query.where((eb) =>
+      cursorId === null
+        ? eb(MS("hosts.last_seen_at"), ">", cursorAt)
+        : eb.or([
+            eb(MS("hosts.last_seen_at"), ">", cursorAt),
+            eb.and([eb(MS("hosts.last_seen_at"), "=", cursorAt), eb("hosts.id", ">", cursorId)]),
+          ])
+    );
+  }
+
+  const rows = await query.execute();
+  if (rows.length === 0) return 0;
+
+  const events = rows.map((r) => hostEvent(r, settings));
+  if (!(await send(settings, events))) return 0;
+
+  const last = rows[rows.length - 1];
+  await db
+    .updateTable("hec_state")
+    .set({ host_cursor_at: new Date(last.last_seen_at).toISOString(), host_cursor_id: last.id })
+    .where("id", "=", 1)
+    .execute();
+  await recordSuccess(events.length);
+  logger.info({ event: "hec.hosts_forwarded", events: events.length });
+  return events.length;
+}
+
+// tls_certificates is append-only with a bigserial, so this pages exactly
+// like observations do. One event per *capture*, not per (host, port):
+// the table is the history of what each port presented, and a consumer
+// that wants only the current certificate takes the latest per
+// host_id+port - the same reduction the Certificates page performs.
+async function forwardCertificates(settings: HecSettings): Promise<number> {
+  const { certificate_cursor } = await state();
+
+  let query = db
+    .selectFrom("tls_certificates")
+    .innerJoin("hosts", "hosts.id", "tls_certificates.host_id")
+    .leftJoin("scan_jobs", "scan_jobs.id", "tls_certificates.scan_job_id")
+    .leftJoin("scanner_agents", "scanner_agents.id", "scan_jobs.scanner_agent_id")
+    .select([
+      "tls_certificates.id as id",
+      "tls_certificates.host_id as host_id",
+      "hosts.ip as ip",
+      "hosts.hostname as hostname",
+      "tls_certificates.scan_job_id as scan_job_id",
+      "tls_certificates.port as port",
+      "tls_certificates.subject_cn as subject_cn",
+      "tls_certificates.issuer_cn as issuer_cn",
+      "tls_certificates.san_list as san_list",
+      "tls_certificates.not_before as not_before",
+      "tls_certificates.not_after as not_after",
+      "tls_certificates.fingerprint_sha256 as fingerprint_sha256",
+      "tls_certificates.signature_algorithm as signature_algorithm",
+      "tls_certificates.self_signed as self_signed",
+      "tls_certificates.tls_version as tls_version",
+      "tls_certificates.cipher_suite as cipher_suite",
+      "tls_certificates.key_algorithm as key_algorithm",
+      "tls_certificates.key_bits as key_bits",
+      "tls_certificates.captured_at as captured_at",
+      "scanner_agents.name as scanner_agent_name",
+    ])
+    .orderBy("tls_certificates.id")
+    .limit(MAX_ROWS_PER_TICK);
+  if (certificate_cursor !== null) {
+    query = query.where("tls_certificates.id", ">", certificate_cursor);
+  }
+
+  const rows = await query.execute();
+  if (rows.length === 0) return 0;
+
+  const events = rows.map((r) => certificateEvent(r, settings));
+  if (!(await send(settings, events))) return 0;
+
+  await db
+    .updateTable("hec_state")
+    .set({ certificate_cursor: String(rows[rows.length - 1].id) })
+    .where("id", "=", 1)
+    .execute();
+  await recordSuccess(events.length);
+  logger.info({
+    event: "hec.certificates_forwarded",
+    events: events.length,
+    through_certificate_id: String(rows[rows.length - 1].id),
+  });
   return events.length;
 }

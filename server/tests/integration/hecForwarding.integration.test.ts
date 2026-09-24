@@ -58,6 +58,8 @@ describe("HEC log forwarding", () => {
       scanLogEnabled: false,
       observationsEnabled: false,
       findingsEnabled: false,
+      hostsEnabled: false,
+      certificatesEnabled: false,
       index: null,
       sourcetype: null,
       verifyTls: true,
@@ -81,6 +83,9 @@ describe("HEC log forwarding", () => {
         observation_cursor: null,
         finding_cursor_at: null,
         finding_cursor_id: null,
+        host_cursor_at: null,
+        host_cursor_id: null,
+        certificate_cursor: null,
         last_error: null,
       })
       .where("id", "=", 1)
@@ -95,6 +100,8 @@ describe("HEC log forwarding", () => {
       scanLogEnabled: true,
       observationsEnabled: false,
       findingsEnabled: false,
+      hostsEnabled: false,
+      certificatesEnabled: false,
       index: null,
       sourcetype: null,
       verifyTls: true,
@@ -140,6 +147,8 @@ describe("HEC log forwarding", () => {
       scanLogEnabled: false,
       observationsEnabled: false,
       findingsEnabled: false,
+      hostsEnabled: false,
+      certificatesEnabled: false,
       index: null,
       sourcetype: null,
       verifyTls: true,
@@ -149,7 +158,7 @@ describe("HEC log forwarding", () => {
   it("sends nothing while no collector is configured", async () => {
     await addAudit("it.hec.unconfigured");
     const counts = await runHecForward();
-    expect(counts).toEqual({ audit: 0, scanLog: 0, observations: 0, findings: 0 });
+    expect(counts).toEqual({ audit: 0, scanLog: 0, observations: 0, findings: 0, hosts: 0, certificates: 0 });
     expect(received).toHaveLength(0);
   });
 
@@ -331,6 +340,142 @@ describe("HEC log forwarding", () => {
 
     received.length = 0;
     expect((await runHecForward()).findings).toBe(0);
+
+    await db.deleteFrom("hosts").where("id", "=", host.id).execute();
+    await db.deleteFrom("scan_jobs").where("id", "=", job.id).execute();
+  });
+
+  // The asset lookup the port events key against. Without it a SIEM can
+  // chart services and software and none of the inventory dimensions -
+  // OS, device type, manufacturer and tags all live on the host, not on
+  // an observation.
+  it("forwards hosts with their inventory attributes and tags", async () => {
+    await configure({ auditEnabled: false, scanLogEnabled: false, hostsEnabled: true });
+
+    const host = await db
+      .insertInto("hosts")
+      .values({
+        ip: "240.73.0.9",
+        scanner_agent_id: agent.id,
+        hostname: "it-hec-asset.internal",
+        os_name: "Linux 5.x",
+        os_family: "Linux",
+        os_vendor: "Linux",
+        device_type: "general purpose",
+        os_accuracy: 97,
+        mac_address: "BC:24:11:18:6A:68",
+        mac_vendor: "Proxmox Server Solutions GmbH",
+      })
+      .returning(["id"])
+      .executeTakeFirstOrThrow();
+    await db
+      .insertInto("host_tags")
+      .values([
+        { host_id: host.id, tag: "SSH-Server" },
+        { host_id: host.id, tag: "WebServer" },
+      ])
+      .execute();
+
+    const counts = await runHecForward();
+    expect(counts.hosts).toBeGreaterThanOrEqual(1);
+
+    const event = received.flatMap((r) => r.events).find((e) => e.event.ip === "240.73.0.9");
+    expect(event).toBeDefined();
+    expect(event.source).toBe("porttorch:host");
+    expect(event.event.os_family).toBe("Linux");
+    expect(event.event.device_type).toBe("general purpose");
+    expect(event.event.mac_vendor).toBe("Proxmox Server Solutions GmbH");
+    // Sorted and aggregated in the same statement rather than a second
+    // round trip per page of hosts.
+    expect(event.event.tags).toEqual(["SSH-Server", "WebServer"]);
+    // A boolean rather than making every consumer derive it from a
+    // nullable date.
+    expect(event.event.retired).toBe(false);
+    // host_id and ip are what the port events carry, so the two streams
+    // can actually be joined.
+    expect(event.event.host_id).toBe(host.id);
+
+    received.length = 0;
+    expect((await runHecForward()).hosts).toBe(0);
+
+    await db.deleteFrom("hosts").where("id", "=", host.id).execute();
+  });
+
+  // A host is re-sent whenever a scan refreshes it - the point of an
+  // asset feed is the current attributes each time they are confirmed,
+  // not one event at discovery and silence afterwards.
+  it("re-sends a host once a scan refreshes it", async () => {
+    await configure({ auditEnabled: false, scanLogEnabled: false, hostsEnabled: true });
+    const host = await db
+      .insertInto("hosts")
+      .values({ ip: "240.74.0.9", scanner_agent_id: agent.id })
+      .returning(["id"])
+      .executeTakeFirstOrThrow();
+
+    expect((await runHecForward()).hosts).toBeGreaterThanOrEqual(1);
+    received.length = 0;
+    expect((await runHecForward()).hosts).toBe(0);
+
+    await db
+      .updateTable("hosts")
+      .set({ last_seen_at: new Date(Date.now() + 5_000).toISOString(), os_family: "Windows" })
+      .where("id", "=", host.id)
+      .execute();
+
+    expect((await runHecForward()).hosts).toBe(1);
+    const event = received.flatMap((r) => r.events)[0];
+    expect(event.event.os_family).toBe("Windows");
+
+    await db.deleteFrom("hosts").where("id", "=", host.id).execute();
+  });
+
+  it("forwards captured TLS certificates", async () => {
+    await configure({ auditEnabled: false, scanLogEnabled: false, certificatesEnabled: true });
+
+    const job = await db
+      .insertInto("scan_jobs")
+      .values({ scanner_agent_id: agent.id, target_spec: "240.75.0.0/24", port_spec: "443", status: "completed" })
+      .returning(["id"])
+      .executeTakeFirstOrThrow();
+    const host = await db
+      .insertInto("hosts")
+      .values({ ip: "240.75.0.9", scanner_agent_id: agent.id })
+      .returning(["id"])
+      .executeTakeFirstOrThrow();
+    await db
+      .insertInto("tls_certificates")
+      .values({
+        host_id: host.id,
+        scan_job_id: job.id,
+        port: 443,
+        subject_cn: "it-hec.internal",
+        issuer_cn: "it-hec.internal",
+        san_list: ["it-hec.internal"],
+        not_before: new Date(Date.now() - 86_400_000).toISOString(),
+        not_after: new Date(Date.now() + 86_400_000).toISOString(),
+        fingerprint_sha256: "aa".repeat(32),
+        signature_algorithm: "sha256WithRSAEncryption",
+        self_signed: true,
+        tls_version: "TLSv1.3",
+        cipher_suite: "TLS_AES_256_GCM_SHA384",
+        key_algorithm: "RSA",
+        key_bits: 2048,
+      })
+      .execute();
+
+    const counts = await runHecForward();
+    expect(counts.certificates).toBe(1);
+    const event = received.flatMap((r) => r.events)[0];
+    expect(event.source).toBe("porttorch:certificate");
+    expect(event.event.self_signed).toBe(true);
+    expect(event.event.tls_version).toBe("TLSv1.3");
+    expect(event.event.key_bits).toBe(2048);
+    expect(event.event.ip).toBe("240.75.0.9");
+    // Enough to chart expiry in a SIEM without joining anything.
+    expect(Number.isNaN(Date.parse(event.event.not_after))).toBe(false);
+
+    received.length = 0;
+    expect((await runHecForward()).certificates).toBe(0);
 
     await db.deleteFrom("hosts").where("id", "=", host.id).execute();
     await db.deleteFrom("scan_jobs").where("id", "=", job.id).execute();

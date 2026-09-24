@@ -661,6 +661,9 @@ export interface HecStateTable {
   last_attempt_at: ColumnType<Date | null, string | null | undefined, string | null>;
   last_error: ColumnType<string | null, string | null | undefined, string | null>;
   observation_cursor: ColumnType<string | null, string | null | undefined, string | null>;
+  host_cursor_at: ColumnType<Date | null, string | null | undefined, string | null>;
+  host_cursor_id: ColumnType<string | null, string | null | undefined, string | null>;
+  certificate_cursor: ColumnType<string | null, string | null | undefined, string | null>;
   finding_cursor_at: ColumnType<Date | null, string | null | undefined, string | null>;
   finding_cursor_id: ColumnType<string | null, string | null | undefined, string | null>;
   events_forwarded: ColumnType<string, string | undefined, string>;
@@ -823,6 +826,8 @@ export interface AppSettingsTable {
   hec_verify_tls: ColumnType<boolean, boolean | undefined, boolean>;
   hec_observations_enabled: ColumnType<boolean, boolean | undefined, boolean>;
   hec_findings_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  hec_hosts_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  hec_certificates_enabled: ColumnType<boolean, boolean | undefined, boolean>;
   // "We know, stop warning until this date" for the duplicate-coverage
   // card, plus how many duplicated addresses were accepted - see the
   // duplicate_coverage_ack migration for why the count is part of it.

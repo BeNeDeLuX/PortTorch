@@ -22,6 +22,8 @@ export default function HecCard({
   const [scanLog, setScanLog] = useState(settings.hec.scanLogEnabled);
   const [observations, setObservations] = useState(settings.hec.observationsEnabled);
   const [findings, setFindings] = useState(settings.hec.findingsEnabled);
+  const [hosts, setHosts] = useState(settings.hec.hostsEnabled);
+  const [certificates, setCertificates] = useState(settings.hec.certificatesEnabled);
   const [index, setIndex] = useState(settings.hec.index ?? "");
   const [sourcetype, setSourcetype] = useState(settings.hec.sourcetype ?? "");
   const [verifyTls, setVerifyTls] = useState(settings.hec.verifyTls);
@@ -37,6 +39,8 @@ export default function HecCard({
     setScanLog(settings.hec.scanLogEnabled);
     setObservations(settings.hec.observationsEnabled);
     setFindings(settings.hec.findingsEnabled);
+    setHosts(settings.hec.hostsEnabled);
+    setCertificates(settings.hec.certificatesEnabled);
     setIndex(settings.hec.index ?? "");
     setSourcetype(settings.hec.sourcetype ?? "");
     setVerifyTls(settings.hec.verifyTls);
@@ -56,6 +60,8 @@ export default function HecCard({
             scanLogEnabled: scanLog,
             observationsEnabled: observations,
             findingsEnabled: findings,
+            hostsEnabled: hosts,
+            certificatesEnabled: certificates,
             index: index.trim() || null,
             sourcetype: sourcetype.trim() || null,
             verifyTls,
@@ -109,8 +115,8 @@ export default function HecCard({
       title="SIEM Forwarding (HTTP Event Collector)"
       description={
         <>
-          Ships the audit trail, the scanners' own scan logs, and the scan results themselves to a SIEM over an HTTP
-          Event Collector - Splunk's HEC
+          Ships the audit trail, the scanners' own scan logs, and the scan results themselves - hosts, ports,
+          certificates and web findings - to a SIEM over an HTTP Event Collector - Splunk's HEC
           and collectors that speak its shape. Each stream is forwarded from a stored cursor rather than
           fire-and-forget, so a collector that is unreachable for a while causes the next run to catch up instead of
           leaving a silent gap. Delivery is at-least-once: a repeat is possible after a connection breaks mid-batch, a
@@ -170,6 +176,14 @@ export default function HecCard({
         <label className="hide-empty-toggle">
           <input type="checkbox" checked={findings} onChange={(e) => setFindings(e.target.checked)} />
           Forward web findings (one event per nuclei match)
+        </label>
+        <label className="hide-empty-toggle">
+          <input type="checkbox" checked={hosts} onChange={(e) => setHosts(e.target.checked)} />
+          Forward hosts (OS, device type, manufacturer and tags - the asset lookup the port events key against)
+        </label>
+        <label className="hide-empty-toggle">
+          <input type="checkbox" checked={certificates} onChange={(e) => setCertificates(e.target.checked)} />
+          Forward TLS certificates (one event per capture)
         </label>
         <label className="hide-empty-toggle">
           <input type="checkbox" checked={verifyTls} onChange={(e) => setVerifyTls(e.target.checked)} />

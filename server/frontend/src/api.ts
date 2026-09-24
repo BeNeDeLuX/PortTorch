@@ -117,6 +117,8 @@ export interface HecSettingsView {
   scanLogEnabled: boolean;
   observationsEnabled: boolean;
   findingsEnabled: boolean;
+  hostsEnabled: boolean;
+  certificatesEnabled: boolean;
   index: string | null;
   sourcetype: string | null;
   verifyTls: boolean;
@@ -129,6 +131,8 @@ export interface HecSettingsInput {
   scanLogEnabled: boolean;
   observationsEnabled: boolean;
   findingsEnabled: boolean;
+  hostsEnabled: boolean;
+  certificatesEnabled: boolean;
   index: string | null;
   sourcetype: string | null;
   verifyTls: boolean;
@@ -1660,9 +1664,14 @@ export const api = {
   hecStatus: () => request<HecStatus>("/api/settings/hec/status"),
   testHec: () => request<{ ok: boolean; error?: string }>("/api/settings/hec/test", { method: "POST" }),
   forwardHecNow: () =>
-    request<{ audit: number; scanLog: number; observations: number; findings: number }>("/api/settings/hec/forward-now", {
-      method: "POST",
-    }),
+    request<{
+      audit: number;
+      scanLog: number;
+      observations: number;
+      findings: number;
+      hosts: number;
+      certificates: number;
+    }>("/api/settings/hec/forward-now", { method: "POST" }),
   updateAppSettings: (
     patch: Partial<Omit<AppSettings, "smtp" | "hec">> & { smtp?: SmtpSettingsInput; hec?: HecSettingsInput }
   ) =>

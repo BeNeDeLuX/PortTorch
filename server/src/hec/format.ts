@@ -172,6 +172,127 @@ export function findingEvent(
   };
 }
 
+// A host as one event: the asset record the port events hang off.
+//
+// The observation stream carries the port level completely and nothing
+// about the machine - OS, device type, manufacturer and tags all live on
+// `hosts`, not on an observation - so a SIEM could chart services and
+// software and none of the inventory dimensions. This is the lookup that
+// closes that: one event per host, re-sent whenever a scan refreshes it,
+// keyed on the same host_id and ip the port events carry.
+//
+// Timestamped with last_seen_at rather than "now", so a host that has not
+// been seen in a month lands in the SIEM at the time it was actually last
+// confirmed.
+export function hostEvent(
+  row: {
+    id: string;
+    ip: unknown;
+    hostname: string | null;
+    os_name: string | null;
+    os_family: string | null;
+    os_vendor: string | null;
+    device_type: string | null;
+    os_accuracy: number | null;
+    mac_address: string | null;
+    mac_vendor: string | null;
+    first_seen_at: Date | string;
+    last_seen_at: Date | string;
+    retired_at: Date | string | null;
+    scanner_agent_name: string | null;
+    tags: string[] | null;
+  },
+  settings: HecSettings
+): HecEvent {
+  return {
+    time: toEpochSeconds(row.last_seen_at),
+    source: "porttorch:host",
+    sourcetype: settings.sourcetype || "porttorch:host",
+    ...(settings.index ? { index: settings.index } : {}),
+    event: {
+      host_id: row.id,
+      ip: String(row.ip),
+      hostname: row.hostname,
+      os_name: row.os_name,
+      os_family: row.os_family,
+      os_vendor: row.os_vendor,
+      device_type: row.device_type,
+      os_accuracy: row.os_accuracy,
+      mac_address: row.mac_address,
+      mac_vendor: row.mac_vendor,
+      scanner_agent_name: row.scanner_agent_name,
+      first_seen_at: new Date(row.first_seen_at).toISOString(),
+      last_seen_at: new Date(row.last_seen_at).toISOString(),
+      // Carried as a boolean rather than only a timestamp: "is this
+      // decommissioned" is the question a correlation search asks, and
+      // making every consumer derive it from a nullable date is how two
+      // of them end up deriving it differently.
+      retired: row.retired_at !== null,
+      retired_at: row.retired_at ? new Date(row.retired_at).toISOString() : null,
+      tags: row.tags ?? [],
+    },
+  };
+}
+
+// One captured certificate as one event. Sent per capture rather than per
+// (host, port): tls_certificates is append-only, so this is the history of
+// what each port presented, and a SIEM that wants only the current one
+// takes the latest per host_id+port - the same reduction the certificates
+// page performs.
+export function certificateEvent(
+  row: {
+    id: string | number;
+    host_id: string;
+    ip: unknown;
+    hostname: string | null;
+    scan_job_id: string;
+    port: number;
+    subject_cn: string | null;
+    issuer_cn: string | null;
+    san_list: string[] | null;
+    not_before: Date | string | null;
+    not_after: Date | string | null;
+    fingerprint_sha256: string;
+    signature_algorithm: string | null;
+    self_signed: boolean;
+    tls_version: string | null;
+    cipher_suite: string | null;
+    key_algorithm: string | null;
+    key_bits: number | null;
+    captured_at: Date | string;
+    scanner_agent_name: string | null;
+  },
+  settings: HecSettings
+): HecEvent {
+  return {
+    time: toEpochSeconds(row.captured_at),
+    source: "porttorch:certificate",
+    sourcetype: settings.sourcetype || "porttorch:certificate",
+    ...(settings.index ? { index: settings.index } : {}),
+    event: {
+      certificate_id: String(row.id),
+      host_id: row.host_id,
+      ip: String(row.ip),
+      hostname: row.hostname,
+      scan_job_id: row.scan_job_id,
+      scanner_agent_name: row.scanner_agent_name,
+      port: row.port,
+      subject_cn: row.subject_cn,
+      issuer_cn: row.issuer_cn,
+      san_list: row.san_list ?? [],
+      not_before: row.not_before ? new Date(row.not_before).toISOString() : null,
+      not_after: row.not_after ? new Date(row.not_after).toISOString() : null,
+      fingerprint_sha256: row.fingerprint_sha256,
+      signature_algorithm: row.signature_algorithm,
+      self_signed: row.self_signed,
+      tls_version: row.tls_version,
+      cipher_suite: row.cipher_suite,
+      key_algorithm: row.key_algorithm,
+      key_bits: row.key_bits,
+    },
+  };
+}
+
 // HEC's body format: JSON objects one after another, not an array and not
 // comma-separated. Newlines are only for readability - the collector
 // parses object-by-object either way.

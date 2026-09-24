@@ -36,6 +36,8 @@ export interface HecSettings {
   scanLogEnabled: boolean;
   observationsEnabled: boolean;
   findingsEnabled: boolean;
+  hostsEnabled: boolean;
+  certificatesEnabled: boolean;
   index: string | null;
   sourcetype: string | null;
   verifyTls: boolean;
@@ -49,6 +51,8 @@ export interface HecSettingsInput {
   scanLogEnabled: boolean;
   observationsEnabled: boolean;
   findingsEnabled: boolean;
+  hostsEnabled: boolean;
+  certificatesEnabled: boolean;
   index: string | null;
   sourcetype: string | null;
   verifyTls: boolean;
@@ -107,6 +111,8 @@ export async function getAppSettings(): Promise<AppSettings> {
       "hec_scan_log_enabled",
       "hec_observations_enabled",
       "hec_findings_enabled",
+      "hec_hosts_enabled",
+      "hec_certificates_enabled",
       "hec_index",
       "hec_sourcetype",
       "hec_verify_tls",
@@ -142,6 +148,8 @@ export async function getAppSettings(): Promise<AppSettings> {
       scanLogEnabled: row.hec_scan_log_enabled,
       observationsEnabled: row.hec_observations_enabled,
       findingsEnabled: row.hec_findings_enabled,
+      hostsEnabled: row.hec_hosts_enabled,
+      certificatesEnabled: row.hec_certificates_enabled,
       index: row.hec_index,
       sourcetype: row.hec_sourcetype,
       verifyTls: row.hec_verify_tls,
@@ -205,6 +213,8 @@ export async function setHecSettings(input: HecSettingsInput): Promise<void> {
       hec_scan_log_enabled: input.scanLogEnabled,
       hec_observations_enabled: input.observationsEnabled,
       hec_findings_enabled: input.findingsEnabled,
+      hec_hosts_enabled: input.hostsEnabled,
+      hec_certificates_enabled: input.certificatesEnabled,
       hec_index: input.index,
       hec_sourcetype: input.sourcetype,
       hec_verify_tls: input.verifyTls,
