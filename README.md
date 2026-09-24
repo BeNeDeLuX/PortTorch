@@ -1309,6 +1309,12 @@ That is the same "newest row per identity" the `current_host_ports` view
 performs. A plain `stats count by port` over the raw stream counts every
 observation ever made instead.
 
+[`docs/splunk/`](docs/splunk/) has the whole Scan Stats page written out
+as SPL - ports, services, software, OS and device families, manufacturers,
+tags, subnets, unconfirmed ports, certificates and web findings - plus the
+port-category table as an uploadable lookup, generated from the code and
+checked row by row against it.
+
 Each stream is forwarded from a stored cursor rather than
 fire-and-forget, so a collector that was unreachable for a while causes
 the next run to catch up instead of leaving a silent gap. Delivery is

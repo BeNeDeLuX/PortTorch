@@ -1,0 +1,229 @@
+port,protocol,category
+20,tcp,File sharing
+20,udp,File sharing
+21,tcp,File sharing
+21,udp,File sharing
+22,tcp,Remote access
+22,udp,Remote access
+23,tcp,Remote access
+23,udp,Remote access
+25,tcp,Mail
+25,udp,Mail
+53,tcp,Network infrastructure
+53,udp,Network infrastructure
+67,tcp,Network infrastructure
+67,udp,Network infrastructure
+68,tcp,Network infrastructure
+68,udp,Network infrastructure
+69,tcp,Other
+69,udp,File sharing
+80,tcp,Web
+80,udp,Web
+81,tcp,Web
+81,udp,Web
+88,tcp,Directory / auth
+88,udp,Directory / auth
+102,tcp,Industrial / OT
+102,udp,Industrial / OT
+110,tcp,Mail
+110,udp,Mail
+111,tcp,Network infrastructure
+111,udp,Network infrastructure
+115,tcp,File sharing
+115,udp,File sharing
+123,tcp,Network infrastructure
+123,udp,Network infrastructure
+135,tcp,Network infrastructure
+135,udp,Network infrastructure
+137,tcp,Network infrastructure
+137,udp,Network infrastructure
+138,tcp,Network infrastructure
+138,udp,Network infrastructure
+139,tcp,File sharing
+139,udp,File sharing
+143,tcp,Mail
+143,udp,Mail
+161,tcp,Network infrastructure
+161,udp,Network infrastructure
+162,tcp,Network infrastructure
+162,udp,Network infrastructure
+179,tcp,Network infrastructure
+179,udp,Network infrastructure
+389,tcp,Directory / auth
+389,udp,Directory / auth
+443,tcp,Web
+443,udp,Web
+445,tcp,File sharing
+445,udp,File sharing
+464,tcp,Directory / auth
+464,udp,Directory / auth
+465,tcp,Mail
+465,udp,Mail
+500,tcp,Network infrastructure
+500,udp,Network infrastructure
+502,tcp,Industrial / OT
+502,udp,Industrial / OT
+512,tcp,Remote access
+512,udp,Remote access
+513,tcp,Remote access
+513,udp,Remote access
+514,tcp,Remote access
+514,udp,Network infrastructure
+548,tcp,File sharing
+548,udp,File sharing
+587,tcp,Mail
+587,udp,Mail
+591,tcp,Web
+591,udp,Web
+623,tcp,Network infrastructure
+623,udp,Network infrastructure
+636,tcp,Directory / auth
+636,udp,Directory / auth
+749,tcp,Directory / auth
+749,udp,Directory / auth
+873,tcp,File sharing
+873,udp,File sharing
+993,tcp,Mail
+993,udp,Mail
+995,tcp,Mail
+995,udp,Mail
+1194,tcp,Network infrastructure
+1194,udp,Network infrastructure
+1433,tcp,Databases
+1433,udp,Databases
+1434,tcp,Databases
+1434,udp,Databases
+1521,tcp,Databases
+1521,udp,Databases
+1701,tcp,Network infrastructure
+1701,udp,Network infrastructure
+1723,tcp,Network infrastructure
+1723,udp,Network infrastructure
+1812,tcp,Directory / auth
+1812,udp,Directory / auth
+1813,tcp,Directory / auth
+1813,udp,Directory / auth
+1900,tcp,Network infrastructure
+1900,udp,Network infrastructure
+1911,tcp,Industrial / OT
+1911,udp,Industrial / OT
+2049,tcp,File sharing
+2049,udp,File sharing
+2404,tcp,Industrial / OT
+2404,udp,Industrial / OT
+2525,tcp,Mail
+2525,udp,Mail
+3000,tcp,Web
+3000,udp,Web
+3050,tcp,Databases
+3050,udp,Databases
+3260,tcp,File sharing
+3260,udp,File sharing
+3268,tcp,Directory / auth
+3268,udp,Directory / auth
+3269,tcp,Directory / auth
+3269,udp,Directory / auth
+3306,tcp,Databases
+3306,udp,Databases
+3389,tcp,Remote access
+3389,udp,Remote access
+4443,tcp,Web
+4443,udp,Web
+4500,tcp,Network infrastructure
+4500,udp,Network infrastructure
+4567,tcp,Web
+4567,udp,Web
+4840,tcp,Industrial / OT
+4840,udp,Industrial / OT
+5000,tcp,Web
+5000,udp,Web
+5353,tcp,Network infrastructure
+5353,udp,Network infrastructure
+5432,tcp,Databases
+5432,udp,Databases
+5800,tcp,Remote access
+5800,udp,Remote access
+5900,tcp,Remote access
+5900,udp,Remote access
+5901,tcp,Remote access
+5901,udp,Remote access
+5902,tcp,Remote access
+5902,udp,Remote access
+5903,tcp,Remote access
+5903,udp,Remote access
+5984,tcp,Databases
+5984,udp,Databases
+5985,tcp,Remote access
+5985,udp,Remote access
+5986,tcp,Remote access
+5986,udp,Remote access
+6000,tcp,Remote access
+6000,udp,Remote access
+6001,tcp,Remote access
+6001,udp,Remote access
+6379,tcp,Databases
+6379,udp,Databases
+7001,tcp,Web
+7001,udp,Web
+7199,tcp,Databases
+7199,udp,Databases
+8000,tcp,Web
+8000,udp,Web
+8008,tcp,Web
+8008,udp,Web
+8009,tcp,Web
+8009,udp,Web
+8080,tcp,Web
+8080,udp,Web
+8081,tcp,Web
+8081,udp,Web
+8086,tcp,Databases
+8086,udp,Databases
+8088,tcp,Web
+8088,udp,Web
+8090,tcp,Web
+8090,udp,Web
+8180,tcp,Web
+8180,udp,Web
+8181,tcp,Web
+8181,udp,Web
+8443,tcp,Web
+8443,udp,Web
+8834,tcp,Web
+8834,udp,Web
+8888,tcp,Web
+8888,udp,Web
+9042,tcp,Databases
+9042,udp,Databases
+9090,tcp,Web
+9090,udp,Web
+9160,tcp,Databases
+9160,udp,Databases
+9200,tcp,Databases
+9200,udp,Databases
+9300,tcp,Databases
+9300,udp,Databases
+9443,tcp,Web
+9443,udp,Web
+10000,tcp,Web
+10000,udp,Web
+11211,tcp,Databases
+11211,udp,Databases
+20000,tcp,Industrial / OT
+20000,udp,Industrial / OT
+27017,tcp,Databases
+27017,udp,Databases
+27018,tcp,Databases
+27018,udp,Databases
+27019,tcp,Databases
+27019,udp,Databases
+28017,tcp,Databases
+28017,udp,Databases
+44818,tcp,Industrial / OT
+44818,udp,Industrial / OT
+47808,tcp,Industrial / OT
+47808,udp,Industrial / OT
+50000,tcp,Databases
+50000,udp,Databases
+51820,tcp,Network infrastructure
+51820,udp,Network infrastructure
