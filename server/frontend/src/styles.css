@@ -2097,6 +2097,23 @@ th {
   font-size: 0.8rem;
 }
 
+/* Marks a hostname or MAC the scan worked out for itself rather than
+   read from DNS or ARP. Quiet on purpose - it is a qualifier on a value,
+   not a warning about it - but always present, because a derived name
+   shown as if it were a real one is worse than no name at all. */
+.derived-marker {
+  margin-left: 0.35rem;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  cursor: help;
+  white-space: nowrap;
+}
+
 .scan-anomaly-badge {
   display: inline-flex;
   align-items: center;

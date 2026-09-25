@@ -184,6 +184,20 @@ type HostResult struct {
 	MACAddress string
 	MACVendor  string
 
+	// Filled from the host's own scan evidence when the fields above have
+	// nothing - an RDP certificate's subject, or what the machine reports
+	// over SMB/NetBIOS - see hostidentity.go. Kept separate rather than
+	// written into Hostname/MACAddress because they are a different kind
+	// of fact: a PTR record and an ARP-resolved MAC are observations,
+	// while these are a machine's own claim about itself, and the two can
+	// disagree. Source names which piece of evidence it came from; empty
+	// whenever nothing could be derived, which is the common case.
+	DerivedHostname       string
+	DerivedHostnameSource string
+	DerivedMACAddress     string
+	DerivedMACVendor      string
+	DerivedMACSource      string
+
 	Ports           []PortResult
 	Screenshots     []Screenshot
 	RDPScreenshots  []RDPScreenshot

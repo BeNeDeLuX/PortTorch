@@ -434,6 +434,11 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 	var resultsMu sync.Mutex
 	var results []HostResult
 	tracker := newHostTracker(func(host HostResult) {
+		// Runs here rather than in either completion path because this is
+		// the one point where every piece of evidence for the host has
+		// landed - the RDP certificate arrives from its own worker, long
+		// after nmap produced the script output beside it.
+		deriveHostIdentity(&host)
 		resultsMu.Lock()
 		results = append(results, host)
 		resultsMu.Unlock()

@@ -668,6 +668,14 @@ const ingestHostsSchema = z.object({
       osAccuracy: z.number().int().optional(),
       macAddress: z.string().optional(),
       macVendor: z.string().optional(),
+      // What the scanner worked out for itself when the two above had
+      // nothing - see the derived_host_identity migration. Optional, so a
+      // scanner too old to send them behaves exactly as before.
+      derivedHostname: z.string().optional(),
+      derivedHostnameSource: z.string().optional(),
+      derivedMacAddress: z.string().optional(),
+      derivedMacVendor: z.string().optional(),
+      derivedMacSource: z.string().optional(),
       ports: z.array(portObservationSchema),
       nucleiFindings: z.array(nucleiFindingSchema).optional(),
     })
@@ -796,6 +804,11 @@ export async function ingestHostPayload(
           os_accuracy: host.osAccuracy ?? null,
           mac_address: host.macAddress ?? null,
           mac_vendor: host.macVendor ?? null,
+          derived_hostname: host.derivedHostname ?? null,
+          derived_hostname_source: host.derivedHostnameSource ?? null,
+          derived_mac_address: host.derivedMacAddress ?? null,
+          derived_mac_vendor: host.derivedMacVendor ?? null,
+          derived_mac_source: host.derivedMacSource ?? null,
         })
         .onConflict((oc) =>
           oc.columns(["ip", "scanner_agent_id"]).doUpdateSet({
@@ -816,6 +829,15 @@ export async function ingestHostPayload(
             // routed target) shouldn't erase a MAC already captured.
             mac_address: sql`coalesce(excluded.mac_address, hosts.mac_address)`,
             mac_vendor: sql`coalesce(excluded.mac_vendor, hosts.mac_vendor)`,
+            // Same reasoning again: a scan that found no SMB/RDP evidence
+            // this time must not erase what an earlier one worked out.
+            // The source travels with its value so the pair can never
+            // describe different evidence.
+            derived_hostname: sql`coalesce(excluded.derived_hostname, hosts.derived_hostname)`,
+            derived_hostname_source: sql`case when excluded.derived_hostname is null then hosts.derived_hostname_source else excluded.derived_hostname_source end`,
+            derived_mac_address: sql`coalesce(excluded.derived_mac_address, hosts.derived_mac_address)`,
+            derived_mac_vendor: sql`case when excluded.derived_mac_address is null then hosts.derived_mac_vendor else excluded.derived_mac_vendor end`,
+            derived_mac_source: sql`case when excluded.derived_mac_address is null then hosts.derived_mac_source else excluded.derived_mac_source end`,
           })
         )
         // xmax = 0 is a well-known Postgres idiom for telling an insert

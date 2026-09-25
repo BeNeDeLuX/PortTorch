@@ -268,6 +268,40 @@ explanation in its `title`, and as a `confirmed of discovered` pair in the
 Hosts scanned column shown only when the two differ. `scan.anomaly` is
 logged at warn level per finding.
 
+### A derived hostname and MAC, kept apart from the real ones
+
+The scanner can work out a name and a MAC for hosts reverse DNS and ARP
+cannot reach - see `scanner/CLAUDE.md` for where the evidence comes from.
+This side is about where it lands and how it is shown.
+
+**Five columns on `hosts`, not a fallback written into
+`hostname`/`mac_address`** (migration `1746200000000_derived_host_identity.js`),
+for three reasons. `hostname` is rewritten from nmap's PTR lookup on every
+scan, *including to null* when the lookup finds nothing - anything derived
+written there would be erased by the next scan. The two can disagree, and
+that is worth seeing rather than resolving. And "this name is in DNS" and
+"this machine claims this name" are different kinds of fact; the
+`*_source` columns keep that visible, because a consumer that cannot tell
+them apart treats the weaker as the stronger.
+
+The ingest upsert coalesces, like `os_family` and `mac_address` already do
+for their own root-only/ARP-only reasons: a scan that finds no SMB or RDP
+evidence this time must not erase what an earlier one worked out. The
+source is carried with a `case` rather than its own `coalesce`, so the
+pair can never end up describing different evidence.
+
+Surfaced as a small `derived` marker beside the value - on the host list,
+the host detail header, and the MAC line - never as a bare substitution.
+`lib/derivedIdentity.ts`'s `displayHostname` always returns whether the
+name it chose was derived, so a caller cannot render one as if it came
+from DNS by omission. Where a real hostname *and* a derived one both exist
+and disagree, Host Detail says so in words: that is a finding, not a
+display problem.
+
+Both also ride the HEC host stream and the External API's enrichment
+record, in their own fields for the same reason - a SIEM correlating on a
+name needs to know where the name came from.
+
 ### Duplicate scanner coverage
 
 A host's identity is `(ip, scanner_agent_id)`, so two scanners covering

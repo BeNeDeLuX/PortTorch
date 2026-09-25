@@ -575,6 +575,11 @@ hostsRouter.get("/", asyncHandler(async (req, res) => {
       "hosts.device_type as device_type",
       "hosts.mac_address as mac_address",
       "hosts.mac_vendor as mac_vendor",
+      "hosts.derived_hostname as derived_hostname",
+      "hosts.derived_hostname_source as derived_hostname_source",
+      "hosts.derived_mac_address as derived_mac_address",
+      "hosts.derived_mac_vendor as derived_mac_vendor",
+      "hosts.derived_mac_source as derived_mac_source",
       "hosts.retired_at as retired_at",
       // A host's identity is (ip, scanner_agent_id), not ip alone - two
       // different scanners (different networks) can each have a real
@@ -671,6 +676,11 @@ hostsRouter.get("/", asyncHandler(async (req, res) => {
       "hosts.device_type",
       "hosts.mac_address",
       "hosts.mac_vendor",
+      "hosts.derived_hostname",
+      "hosts.derived_hostname_source",
+      "hosts.derived_mac_address",
+      "hosts.derived_mac_vendor",
+      "hosts.derived_mac_source",
       "hosts.scanner_agent_id",
       "scanner_agents.name",
     ])
@@ -735,6 +745,16 @@ hostsRouter.get("/export.csv", asyncHandler(async (req, res) => {
         "hosts.device_type as device_type",
         "hosts.mac_address as mac_address",
         "hosts.mac_vendor as mac_vendor",
+        "hosts.derived_hostname as derived_hostname",
+        "hosts.derived_hostname_source as derived_hostname_source",
+        "hosts.derived_mac_address as derived_mac_address",
+        "hosts.derived_mac_vendor as derived_mac_vendor",
+        "hosts.derived_mac_source as derived_mac_source",
+      "hosts.derived_hostname as derived_hostname",
+      "hosts.derived_hostname_source as derived_hostname_source",
+      "hosts.derived_mac_address as derived_mac_address",
+      "hosts.derived_mac_vendor as derived_mac_vendor",
+      "hosts.derived_mac_source as derived_mac_source",
         "current_host_ports.port as port",
         "current_host_ports.protocol as protocol",
         "current_host_ports.service_name as service_name",
@@ -793,6 +813,11 @@ hostsRouter.get("/export.csv", asyncHandler(async (req, res) => {
       "hosts.device_type as device_type",
       "hosts.mac_address as mac_address",
       "hosts.mac_vendor as mac_vendor",
+      "hosts.derived_hostname as derived_hostname",
+      "hosts.derived_hostname_source as derived_hostname_source",
+      "hosts.derived_mac_address as derived_mac_address",
+      "hosts.derived_mac_vendor as derived_mac_vendor",
+      "hosts.derived_mac_source as derived_mac_source",
       // Same reasoning as the host list above - two different scanners can
       // each have a real device at the same ip, so this needs to be in the
       // export to tell those rows apart.
@@ -810,6 +835,11 @@ hostsRouter.get("/export.csv", asyncHandler(async (req, res) => {
       "hosts.device_type",
       "hosts.mac_address",
       "hosts.mac_vendor",
+      "hosts.derived_hostname",
+      "hosts.derived_hostname_source",
+      "hosts.derived_mac_address",
+      "hosts.derived_mac_vendor",
+      "hosts.derived_mac_source",
       "scanner_agents.name",
     ])
     .orderBy("hosts.last_seen_at", "desc");
@@ -868,6 +898,11 @@ hostsRouter.get("/export.json", asyncHandler(async (req, res) => {
       "hosts.device_type as device_type",
       "hosts.mac_address as mac_address",
       "hosts.mac_vendor as mac_vendor",
+      "hosts.derived_hostname as derived_hostname",
+      "hosts.derived_hostname_source as derived_hostname_source",
+      "hosts.derived_mac_address as derived_mac_address",
+      "hosts.derived_mac_vendor as derived_mac_vendor",
+      "hosts.derived_mac_source as derived_mac_source",
       "scanner_agents.name as scanner_agent_name",
     ])
     .orderBy("hosts.last_seen_at", "desc");

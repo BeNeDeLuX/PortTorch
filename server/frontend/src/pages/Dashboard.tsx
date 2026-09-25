@@ -31,6 +31,7 @@ import {
 import PageHeader from "../components/PageHeader";
 import RescanModal from "../components/RescanModal";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
+import { displayHostname, identitySourceLabel } from "../lib/derivedIdentity";
 import ScanProgressModal from "../components/ScanProgressModal";
 import { elapsedLabel } from "../lib/elapsed";
 import { formatDateTime } from "../lib/formatDate";
@@ -198,7 +199,7 @@ function sortHosts(hosts: HostSummary[], sortKey: SortKey, direction: SortDirect
       case "ip":
         return sign * compareIp(a.ip, b.ip);
       case "hostname":
-        return sign * (a.hostname ?? "").localeCompare(b.hostname ?? "");
+        return sign * (a.hostname ?? a.derived_hostname ?? "").localeCompare(b.hostname ?? b.derived_hostname ?? "");
       case "open_port_count":
         return sign * (a.open_port_count - b.open_port_count);
       case "last_seen_at":
@@ -208,7 +209,7 @@ function sortHosts(hosts: HostSummary[], sortKey: SortKey, direction: SortDirect
       case "device":
         return sign * (a.device_type ?? a.os_family ?? "").localeCompare(b.device_type ?? b.os_family ?? "");
       case "mac":
-        return sign * (a.mac_address ?? "").localeCompare(b.mac_address ?? "");
+        return sign * (a.mac_address ?? a.derived_mac_address ?? "").localeCompare(b.mac_address ?? b.derived_mac_address ?? "");
       case "scanner":
         return sign * (a.scanner_agent_name ?? "").localeCompare(b.scanner_agent_name ?? "");
       case "risk":
@@ -1308,7 +1309,24 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                         {h.ip}
                         {h.retired_at && <span className="chip-inline">retired</span>}
                       </td>
-                      {tablePrefs.columns.includes("hostname") && <td>{h.hostname ?? "-"}</td>}
+                      {tablePrefs.columns.includes("hostname") && (
+                        <td>
+                          {(() => {
+                            const name = displayHostname(h);
+                            if (!name.name) return "-";
+                            return (
+                              <>
+                                {name.name}
+                                {name.derived && (
+                                  <span className="derived-marker" title={identitySourceLabel(name.source)}>
+                                    derived
+                                  </span>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </td>
+                      )}
                       {tablePrefs.columns.includes("open_port_count") && (
                         <td>
                           {h.open_port_count}
@@ -1351,7 +1369,14 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                         </td>
                       )}
                       {tablePrefs.columns.includes("mac") && (
-                        <td title={h.mac_vendor ?? undefined}>{h.mac_address ?? "-"}</td>
+                        <td title={(h.mac_address ? h.mac_vendor : h.derived_mac_vendor) ?? undefined}>
+                          {h.mac_address ?? h.derived_mac_address ?? "-"}
+                          {!h.mac_address && h.derived_mac_address && (
+                            <span className="derived-marker" title={identitySourceLabel(h.derived_mac_source)}>
+                              derived
+                            </span>
+                          )}
+                        </td>
                       )}
                       {tablePrefs.columns.includes("scanner") && (
                         <td onClick={(e) => e.stopPropagation()}>
@@ -1402,7 +1427,23 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                     {h.ip}
                     {h.retired_at && <span className="chip-inline">retired</span>}
                   </div>
-                  {h.hostname && <div className="host-hostname">{h.hostname}</div>}
+                  {(() => {
+                    // A derived name is shown where there is no real one,
+                    // but never as if it were one - the marker is the
+                    // point, since the two can disagree.
+                    const name = displayHostname(h);
+                    if (!name.name) return null;
+                    return (
+                      <div className="host-hostname">
+                        {name.name}
+                        {name.derived && (
+                          <span className="derived-marker" title={identitySourceLabel(name.source)}>
+                            derived
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {h.scanner_agent_name && h.scanner_agent_id && (
                     <div className="host-meta">
                       via{" "}

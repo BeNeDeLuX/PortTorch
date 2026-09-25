@@ -243,6 +243,16 @@ export interface HostSummary {
   thumbnail_kind: "http" | "rdp" | null;
   os_family: string | null;
   device_type: string | null;
+  // What the scan worked out for itself when the fields above had
+  // nothing: an RDP certificate's subject, or what the machine reports
+  // over SMB/NetBIOS. Never merged into hostname/mac_address - a PTR
+  // record and a machine's own claim are different kinds of fact, and the
+  // two can disagree. *_source says which piece of evidence it was.
+  derived_hostname: string | null;
+  derived_hostname_source: string | null;
+  derived_mac_address: string | null;
+  derived_mac_vendor: string | null;
+  derived_mac_source: string | null;
   mac_address: string | null;
   mac_vendor: string | null;
   retired_at: string | null;
@@ -356,6 +366,16 @@ export interface HostDetail {
     // hop, which is most targets in a typical internal network scan.
     mac_address: string | null;
     mac_vendor: string | null;
+    // What the scan worked out for itself when the fields above had
+    // nothing: an RDP certificate's subject, or what the machine reports
+    // over SMB/NetBIOS. Never merged into hostname/mac_address - a PTR
+    // record and a machine's own claim are different kinds of fact, and the
+    // two can disagree. *_source says which piece of evidence it was.
+    derived_hostname: string | null;
+    derived_hostname_source: string | null;
+    derived_mac_address: string | null;
+    derived_mac_vendor: string | null;
+    derived_mac_source: string | null;
     retired_at: string | null;
     scanner_agent_name: string | null;
     // Manual override - see api.setHostProbeHostname. Used by the scanner

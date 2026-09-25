@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from "react-router";
 import { api, HostDetail as HostDetailData, HostFilters, Me, NSEProfileSelection, NucleiProfileSelection, ScanPriority, TRIAGE_LABEL } from "../api";
 import { certExpiryStatus, certExpiryLabel } from "../lib/certExpiry";
 import { cveSeverityClass } from "../lib/cveSeverity";
+import { identitySourceLabel } from "../lib/derivedIdentity";
 import { isAutoTag } from "../lib/knownServiceTags";
 import PageHeader from "../components/PageHeader";
 import ScanCompare from "../components/ScanCompare";
@@ -505,7 +506,20 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
       </div>
       <div className="host-detail-header">
         <h1>
-          {data.host.ip} {data.host.hostname && <span className="host-hostname">({data.host.hostname})</span>}
+          {data.host.ip}{" "}
+          {data.host.hostname ? (
+            <span className="host-hostname">({data.host.hostname})</span>
+          ) : (
+            data.host.derived_hostname && (
+              <span className="host-hostname">
+                ({data.host.derived_hostname}
+                <span className="derived-marker" title={identitySourceLabel(data.host.derived_hostname_source)}>
+                  derived
+                </span>
+                )
+              </span>
+            )
+          )}
         </h1>
         {isAdmin && (
           <button type="button" className="btn-icon-label" onClick={handleDelete}>
@@ -537,12 +551,33 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
         {formatDateTime(data.host.last_seen_at, me.preferences)}
         {historyGroups[0]?.scannerAgentName && <> · last scanned by {historyGroups[0].scannerAgentName}</>}
       </p>
-      {data.host.mac_address && (
+      {data.host.mac_address ? (
         <p className="host-meta">
           MAC: <span className="fingerprint">{data.host.mac_address}</span>
           {data.host.mac_vendor && ` (${data.host.mac_vendor})`}
         </p>
+      ) : (
+        data.host.derived_mac_address && (
+          <p className="host-meta">
+            MAC: <span className="fingerprint">{data.host.derived_mac_address}</span>
+            {data.host.derived_mac_vendor && ` (${data.host.derived_mac_vendor})`}
+            <span className="derived-marker" title={identitySourceLabel(data.host.derived_mac_source)}>
+              derived
+            </span>
+          </p>
+        )
       )}
+      {/* Both present and disagreeing is the case worth seeing rather
+          than resolving - a machine calling itself something other than
+          what DNS says is a finding, not a display problem. */}
+      {data.host.hostname &&
+        data.host.derived_hostname &&
+        data.host.derived_hostname.toLowerCase() !== data.host.hostname.toLowerCase() && (
+          <p className="host-meta">
+            This machine reports itself as <strong>{data.host.derived_hostname}</strong> (
+            {identitySourceLabel(data.host.derived_hostname_source)}), which does not match its DNS name.
+          </p>
+        )}
       {(data.host.os_name || data.host.device_type) && (
         <p className="host-meta">
           {[data.host.device_type, data.host.os_name || data.host.os_family].filter(Boolean).join(" · ")}

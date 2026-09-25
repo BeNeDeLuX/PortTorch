@@ -5,4 +5,4 @@
 // only works against a package-level var, not a const.
 package version
 
-var Version = "0.20.0"
+var Version = "0.21.0"

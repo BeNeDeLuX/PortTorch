@@ -235,6 +235,55 @@ An empty queue still costs exactly one poll per tick, not one per free slot, so 
 
 Raising it is a resource decision, not a free speedup: `concurrency`, `gowitnessConcurrency`, `nucleiConcurrency` and the rest are **per-scan**, so two scans at once means twice the processes and twice the bandwidth.
 
+### Filling in a name and a MAC the usual way cannot reach
+
+Two gaps that look unrelated and have the same shape. A Windows host with
+no PTR record has no name anywhere in the dashboard, even though it
+announces one over RDP and SMB. And a MAC is only ever resolved by ARP, so
+a host one routed hop away never has one - even though Windows hands its
+own out over NetBIOS, which crosses routers.
+
+`pipeline/hostidentity.go`'s `deriveHostIdentity` fills
+`DerivedHostname`/`DerivedMACAddress` from evidence the pipeline already
+collects: the RDP certificate probe, and the `smb-os-discovery`/`nbstat`
+scripts that already run on every SMB port. No extra probe, no extra scan
+time - this is parsing, not scanning.
+
+**Order of preference, and why.** The RDP certificate first: Windows
+generates it with the machine's own name in the subject, frequently the
+full FQDN. Then `smb-os-discovery`, whose FQDN field is only actually an
+FQDN when the machine is domain-joined - nmap builds it from computer name
+plus domain, so on a workgroup machine it holds the short name, and a dot
+is what distinguishes the two rather than the field's name. Then `nbstat`,
+last because a NetBIOS name is always the short, uppercase form.
+
+Only `nbstat` carries a MAC. `smb-os-discovery` reports OS, computer name,
+domain and system time and no address at all - confirmed against real
+output, not assumed. It is still consulted first so that adding a source
+later is a change in one place.
+
+**Nothing is ever overwritten**, and the derived values live in their own
+fields rather than filling in `Hostname`/`MACAddress`. A PTR record and an
+ARP-resolved MAC are observations; a machine's own claim about itself is a
+claim, and the two can disagree - measured on a real fleet, a host whose
+PTR said `filer01.example.internal` answered `FILER02` over SMB. Which is
+wrong is not something a scanner can decide, so both travel and the
+dashboard shows the disagreement.
+
+`plausibleHostname` is deliberately strict, because anything it wrongly
+accepts becomes a hostname in the dashboard: no leading or trailing dot or
+hyphen, no empty labels, and nothing that parses as an IP - an RDP
+certificate on a host with no name to present carries the address instead,
+which is exactly the case there is nothing to gain from. An all-zero MAC
+is rejected for the same reason. The tests pin the parsers against the
+literal output of live hosts, including the `\x00` NetBIOS padding and
+nbstat's `<unknown> (unknown)` where Samba declines to give a MAC.
+
+Derivation runs in `RunScan`'s tracker callback rather than either
+completion path, because that is the one point where every piece of
+evidence has landed - the RDP certificate arrives from its own worker long
+after nmap produced the script output beside it.
+
 ### Reporting what discovery found, not only what survived it
 
 `ScanResult.DiscoveredHosts` is the host count the discovery stage turned

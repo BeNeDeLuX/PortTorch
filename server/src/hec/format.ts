@@ -196,6 +196,11 @@ export function hostEvent(
     os_accuracy: number | null;
     mac_address: string | null;
     mac_vendor: string | null;
+    derived_hostname: string | null;
+    derived_hostname_source: string | null;
+    derived_mac_address: string | null;
+    derived_mac_vendor: string | null;
+    derived_mac_source: string | null;
     first_seen_at: Date | string;
     last_seen_at: Date | string;
     retired_at: Date | string | null;
@@ -220,6 +225,14 @@ export function hostEvent(
       os_accuracy: row.os_accuracy,
       mac_address: row.mac_address,
       mac_vendor: row.mac_vendor,
+      // Sent alongside rather than merged into the fields above: a SIEM
+      // correlating on a name needs to know whether it came from DNS or
+      // from the machine's own claim about itself.
+      derived_hostname: row.derived_hostname,
+      derived_hostname_source: row.derived_hostname_source,
+      derived_mac_address: row.derived_mac_address,
+      derived_mac_vendor: row.derived_mac_vendor,
+      derived_mac_source: row.derived_mac_source,
       scanner_agent_name: row.scanner_agent_name,
       first_seen_at: new Date(row.first_seen_at).toISOString(),
       last_seen_at: new Date(row.last_seen_at).toISOString(),

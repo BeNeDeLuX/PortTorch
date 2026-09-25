@@ -263,6 +263,17 @@ export interface HostsTable {
   // host.disappeared and nothing else - see the
   // retired_hosts_and_new_alerts migration.
   retired_at: ColumnType<Date | null, string | null | undefined, string | null>;
+  // What the scan worked out for itself when the real fields had nothing
+  // - an RDP certificate's subject, or what the machine reports over
+  // SMB/NetBIOS. Separate from hostname/mac_address on purpose: hostname
+  // is rewritten by nmap's PTR lookup on every scan, the two can
+  // legitimately disagree, and "in DNS" is a different kind of fact from
+  // "the machine says so". *_source names which piece of evidence it was.
+  derived_hostname: ColumnType<string | null, string | null | undefined, string | null>;
+  derived_hostname_source: ColumnType<string | null, string | null | undefined, string | null>;
+  derived_mac_address: ColumnType<string | null, string | null | undefined, string | null>;
+  derived_mac_vendor: ColumnType<string | null, string | null | undefined, string | null>;
+  derived_mac_source: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export interface HostPortObservationsTable {

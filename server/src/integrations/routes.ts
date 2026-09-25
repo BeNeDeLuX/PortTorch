@@ -741,6 +741,13 @@ async function buildEnrichment(hostId: string) {
       "os_vendor",
       "device_type",
       "os_accuracy",
+      "mac_address",
+      "mac_vendor",
+      "derived_hostname",
+      "derived_hostname_source",
+      "derived_mac_address",
+      "derived_mac_vendor",
+      "derived_mac_source",
       "first_seen_at",
       "last_seen_at",
     ])
@@ -800,6 +807,16 @@ async function buildEnrichment(hostId: string) {
   return {
     ip: host.ip,
     hostname: host.hostname,
+    // Never merged into `hostname`/`mac`: a caller keying on a name has
+    // to be able to tell a PTR record from a machine's own claim.
+    derived: {
+      hostname: host.derived_hostname,
+      hostnameSource: host.derived_hostname_source,
+      macAddress: host.derived_mac_address,
+      macVendor: host.derived_mac_vendor,
+      macSource: host.derived_mac_source,
+    },
+    mac: { address: host.mac_address, vendor: host.mac_vendor },
     os: {
       name: host.os_name,
       family: host.os_family,

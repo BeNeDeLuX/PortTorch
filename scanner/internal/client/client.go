@@ -308,17 +308,25 @@ type ingestPort struct {
 }
 
 type ingestHost struct {
-	IP             string                `json:"ip"`
-	Hostname       string                `json:"hostname,omitempty"`
-	OSName         string                `json:"osName,omitempty"`
-	OSFamily       string                `json:"osFamily,omitempty"`
-	OSVendor       string                `json:"osVendor,omitempty"`
-	DeviceType     string                `json:"deviceType,omitempty"`
-	OSAccuracy     int                   `json:"osAccuracy,omitempty"`
-	MACAddress     string                `json:"macAddress,omitempty"`
-	MACVendor      string                `json:"macVendor,omitempty"`
-	Ports          []ingestPort          `json:"ports"`
-	NucleiFindings []ingestNucleiFinding `json:"nucleiFindings,omitempty"`
+	IP         string `json:"ip"`
+	Hostname   string `json:"hostname,omitempty"`
+	OSName     string `json:"osName,omitempty"`
+	OSFamily   string `json:"osFamily,omitempty"`
+	OSVendor   string `json:"osVendor,omitempty"`
+	DeviceType string `json:"deviceType,omitempty"`
+	OSAccuracy int    `json:"osAccuracy,omitempty"`
+	MACAddress string `json:"macAddress,omitempty"`
+	MACVendor  string `json:"macVendor,omitempty"`
+	// Derived from the host's own scan evidence when the fields above
+	// have nothing - see pipeline/hostidentity.go. omitempty throughout,
+	// so a scanner that derives nothing sends exactly what it always did.
+	DerivedHostname       string                `json:"derivedHostname,omitempty"`
+	DerivedHostnameSource string                `json:"derivedHostnameSource,omitempty"`
+	DerivedMACAddress     string                `json:"derivedMacAddress,omitempty"`
+	DerivedMACVendor      string                `json:"derivedMacVendor,omitempty"`
+	DerivedMACSource      string                `json:"derivedMacSource,omitempty"`
+	Ports                 []ingestPort          `json:"ports"`
+	NucleiFindings        []ingestNucleiFinding `json:"nucleiFindings,omitempty"`
 }
 
 // SubmitHosts submits the host/port results of a scan job.
@@ -376,17 +384,23 @@ func (c *Client) SubmitHosts(ctx context.Context, jobID string, hosts []pipeline
 			})
 		}
 		payloadHosts = append(payloadHosts, ingestHost{
-			IP:             h.IP,
-			Hostname:       h.Hostname,
-			OSName:         h.OSName,
-			OSFamily:       h.OSFamily,
-			OSVendor:       h.OSVendor,
-			DeviceType:     h.DeviceType,
-			OSAccuracy:     h.OSAccuracy,
-			MACAddress:     h.MACAddress,
-			MACVendor:      h.MACVendor,
-			Ports:          ports,
-			NucleiFindings: nucleiFindings,
+			IP:         h.IP,
+			Hostname:   h.Hostname,
+			OSName:     h.OSName,
+			OSFamily:   h.OSFamily,
+			OSVendor:   h.OSVendor,
+			DeviceType: h.DeviceType,
+			OSAccuracy: h.OSAccuracy,
+			MACAddress: h.MACAddress,
+			MACVendor:  h.MACVendor,
+
+			DerivedHostname:       h.DerivedHostname,
+			DerivedHostnameSource: h.DerivedHostnameSource,
+			DerivedMACAddress:     h.DerivedMACAddress,
+			DerivedMACVendor:      h.DerivedMACVendor,
+			DerivedMACSource:      h.DerivedMACSource,
+			Ports:                 ports,
+			NucleiFindings:        nucleiFindings,
 		})
 	}
 
