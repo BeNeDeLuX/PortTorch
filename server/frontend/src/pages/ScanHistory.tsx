@@ -191,7 +191,15 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
       )}
 
       {detailsJobId && (
-        <ScanProgressModal jobId={detailsJobId} live={false} onClose={() => setDetailsJobId(null)} />
+        <ScanProgressModal
+          jobId={detailsJobId}
+          live={false}
+          // The finished duration the table already shows in its own
+          // column - the modal states what the scan took rather than
+          // counting up against a clock that stopped.
+          durationMs={items.find((i) => i.id === detailsJobId)?.duration_ms ?? null}
+          onClose={() => setDetailsJobId(null)}
+        />
       )}
     </div>
   );

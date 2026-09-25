@@ -755,7 +755,13 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
         </>
       )}
 
-      {detailsJobId && <ScanProgressModal jobId={detailsJobId} onClose={() => setDetailsJobId(null)} />}
+      {detailsJobId && (
+        <ScanProgressModal
+          jobId={detailsJobId}
+          startedAt={activeScanJobs.find((j) => j.id === detailsJobId)?.started_at}
+          onClose={() => setDetailsJobId(null)}
+        />
+      )}
       {configuringAgent && (
         <ScannerConfigModal
           agent={configuringAgent}

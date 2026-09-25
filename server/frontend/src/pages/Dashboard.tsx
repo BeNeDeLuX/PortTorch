@@ -1525,7 +1525,16 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
         </main>
       </div>
 
-      {detailsJobId && <ScanProgressModal jobId={detailsJobId} onClose={() => setDetailsJobId(null)} />}
+      {detailsJobId && (
+        <ScanProgressModal
+          jobId={detailsJobId}
+          // Looked up from the list the banner already polls rather than
+          // held as its own state, so the two can never disagree about
+          // which job is on screen.
+          startedAt={activeScanJobs.find((j) => j.id === detailsJobId)?.started_at}
+          onClose={() => setDetailsJobId(null)}
+        />
+      )}
     </div>
   );
 }

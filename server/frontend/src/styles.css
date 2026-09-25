@@ -2867,8 +2867,16 @@ th {
   color: var(--accent);
 }
 
+/* The modal's footer line: what the scanner last said on the left, how
+   long the scan has been running on the right. One row so the two read as
+   a pair, wrapping rather than colliding on a narrow window. */
 .scan-progress-updated {
   margin: 0.75rem 0 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  flex-wrap: wrap;
 }
 
 .scan-progress-historical-note {

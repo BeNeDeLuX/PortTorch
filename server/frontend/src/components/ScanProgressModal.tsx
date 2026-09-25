@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ScanJobProgress } from "../api";
+import { durationLabel, elapsedLabel } from "../lib/elapsed";
 import Modal from "./Modal";
 
 // masscan/discovery are the scan's up-front port-discovery step (nmap
@@ -40,10 +41,17 @@ const CONCURRENT_STAGES: Array<{ key: string; label: string }> = [
 
 const POLL_INTERVAL_MS = 3000;
 
+// The runtime advances on its own rather than only when a poll lands: the
+// scanner pushes every few seconds, and a clock that moved in 3-second
+// jumps would read as a stuck scan rather than a running one.
+const RUNTIME_TICK_MS = 1000;
+
 export default function ScanProgressModal({
   jobId,
   onClose,
   live = true,
+  startedAt,
+  durationMs,
 }: {
   jobId: string;
   onClose: () => void;
@@ -51,6 +59,15 @@ export default function ScanProgressModal({
   // final snapshot once instead of polling every 3s forever for data that
   // can no longer change.
   live?: boolean;
+  // When the scan started, for one that is still running. Taken from the
+  // caller rather than the progress payload, which carries only what the
+  // scanner last pushed and nothing about when it began.
+  startedAt?: string;
+  // The finished runtime, for a scan that is no longer running. A
+  // separate prop rather than deriving it from startedAt, because a
+  // finished scan's duration is something the history already knows and
+  // this modal should not have to guess when it ended.
+  durationMs?: number | null;
 }) {
   const [progress, setProgress] = useState<ScanJobProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +83,10 @@ export default function ScanProgressModal({
   // we ever poll again, making it look like it never ran at all.
   const [seenStages, setSeenStages] = useState<Set<string>>(new Set());
   const logEndRef = useRef<HTMLDivElement>(null);
+  // Re-rendered once a second purely to advance the runtime. The value
+  // itself is derived from startedAt, so a missed tick costs a second of
+  // smoothness and never accuracy.
+  const [, setRuntimeTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -103,10 +124,26 @@ export default function ScanProgressModal({
   }, [jobId, live]);
 
   useEffect(() => {
+    if (!live || !startedAt) return;
+    const interval = setInterval(() => setRuntimeTick((n) => n + 1), RUNTIME_TICK_MS);
+    return () => clearInterval(interval);
+  }, [live, startedAt]);
+
+  useEffect(() => {
     logEndRef.current?.scrollIntoView({ block: "end" });
   }, [progress?.logs.length]);
 
   const phase = phaseFor(progress?.currentStage ?? null);
+
+  // A running scan counts up; a finished one shows what it took. Either
+  // may be absent, in which case the footer line simply carries no
+  // runtime rather than an empty one.
+  const runtime =
+    live && startedAt
+      ? elapsedLabel(startedAt)
+      : durationMs !== null && durationMs !== undefined
+        ? durationLabel(durationMs)
+        : null;
 
   return (
     <Modal title="Scan details" onClose={onClose}>
@@ -170,9 +207,21 @@ export default function ScanProgressModal({
             </>
           )}
 
-          {progress.updatedAt && (
+          {(progress.updatedAt || runtime) && (
             <p className="host-meta scan-progress-updated">
-              Last update from scanner: {new Date(progress.updatedAt).toLocaleTimeString()}
+              {/* Left empty rather than omitted when the scanner has not
+                  pushed yet, so the runtime stays where it belongs on the
+                  right instead of sliding across. */}
+              <span>
+                {progress.updatedAt
+                  ? `Last update from scanner: ${new Date(progress.updatedAt).toLocaleTimeString()}`
+                  : ""}
+              </span>
+              {runtime && (
+                <span>
+                  {live ? "Running for" : "Took"} {runtime}
+                </span>
+              )}
             </p>
           )}
         </>
