@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image/png"
 	"net"
@@ -52,7 +53,12 @@ func RunRDPScreenshot(ctx context.Context, cfg Config, ip string, port int) (*RD
 		fmt.Sprintf("/w:%d", cfg.RDPScreenWidth),
 		fmt.Sprintf("/h:%d", cfg.RDPScreenHeight),
 		fmt.Sprintf("/timeout:%d", cfg.RDPConnectTimeoutSeconds*1000),
-		"/log-level:OFF",
+		// ERROR rather than OFF. OFF silenced the one thing
+		// summariseRDPFailure exists to read, so a failed capture arrived
+		// with "no output from xfreerdp" as its entire explanation. ERROR
+		// still says nothing on a successful capture, so this costs
+		// nothing in the normal case.
+		"/log-level:ERROR",
 		"-wallpaper",
 		"-decorations",
 		// net.JoinHostPort brackets an IPv6 literal - FreeRDP's /v: target
@@ -90,7 +96,7 @@ func RunRDPScreenshot(ctx context.Context, cfg Config, ip string, port int) (*RD
 		exited <- err
 		return nil, fmt.Errorf(
 			"xfreerdp exited before %s:%d could be captured (%v): %s",
-			ip, port, err, summariseRDPFailure(rdpStderr.String()),
+			ip, port, err, summariseRDPFailure(rdpStderr.String(), rdpExitCode(err)),
 		)
 	case <-time.After(time.Duration(cfg.RDPScreenshotDelaySeconds) * time.Second):
 	case <-ctx.Done():
@@ -123,7 +129,9 @@ func RunRDPScreenshot(ctx context.Context, cfg Config, ip string, port int) (*RD
 		os.RemoveAll(tmpDir)
 		return nil, fmt.Errorf(
 			"rdp screenshot for %s:%d came out blank - the connection produced no graphical output (a server requiring NLA does this): %s",
-			ip, port, summariseRDPFailure(rdpStderr.String()),
+			// No exit code to translate here: xfreerdp is still running at
+			// this point, so the blankness itself is the whole finding.
+			ip, port, summariseRDPFailure(rdpStderr.String(), -1),
 		)
 	}
 
@@ -219,15 +227,73 @@ func imageIsUniform(path string) (bool, error) {
 // summariseRDPFailure turns xfreerdp's output into one line worth putting
 // in an error. Its log is verbose and mostly irrelevant; the last
 // non-empty line is where the actual reason sits.
-func summariseRDPFailure(stderr string) string {
+// FreeRDP's own exit codes, from client/X11/xfreerdp.h's XF_EXIT_CODE
+// enum. Only the ones this pipeline can actually provoke are listed -
+// everything about credentials, licensing or logon is unreachable here,
+// since the connection is deliberately made without valid credentials and
+// never gets that far.
+//
+// Worth translating because the raw number is genuinely opaque: a real
+// report read "exit status 147", which is FreeRDP for "the transport went
+// away during connect" and says something quite specific about the
+// target. Without this the operator has to go and read FreeRDP's headers
+// to learn that.
+var rdpExitCodes = map[int]string{
+	128: "xfreerdp rejected its own arguments",
+	130: "RDP protocol error",
+	131: "connection failed",
+	133: "security negotiation failed - the server refused the requested security layer",
+	136: "pre-connect stage failed",
+	138: "post-connect stage failed",
+	139: "DNS error",
+	140: "DNS name not found",
+	141: "connect failed",
+	142: "MCS connect-initial error",
+	143: "TLS connect failed",
+	145: "connect cancelled",
+	147: "transport failed during connect - the connection was dropped or reset mid-handshake",
+}
+
+func rdpExitCodeMeaning(code int) string {
+	if meaning, ok := rdpExitCodes[code]; ok {
+		return meaning
+	}
+	return ""
+}
+
+// The most useful line xfreerdp wrote, or - when it wrote nothing - what
+// its exit code means.
+//
+// It frequently writes nothing: the invocation asks for ERROR-level
+// logging, and a target that simply drops the connection produces no
+// error line at all. "no output from xfreerdp" was then the entire
+// explanation a failure came with, which is no explanation. The exit code
+// is always there, so it is the floor rather than the last resort.
+func summariseRDPFailure(stderr string, exitCode int) string {
 	lines := strings.Split(strings.TrimSpace(stderr), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		if line := strings.TrimSpace(lines[i]); line != "" {
 			if len(line) > 200 {
 				line = line[:200]
 			}
+			if meaning := rdpExitCodeMeaning(exitCode); meaning != "" {
+				return fmt.Sprintf("%s (%s)", line, meaning)
+			}
 			return line
 		}
 	}
+	if meaning := rdpExitCodeMeaning(exitCode); meaning != "" {
+		return meaning + "; xfreerdp itself logged nothing"
+	}
 	return "no output from xfreerdp"
+}
+
+// The process's exit status, or -1 when it did not exit with one (killed
+// by a signal, or never started).
+func rdpExitCode(err error) int {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return -1
 }

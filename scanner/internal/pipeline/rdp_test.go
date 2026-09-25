@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"image"
 	"image/color"
 	"image/draw"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -162,11 +164,79 @@ func TestImageIsUniform(t *testing.T) {
 
 func TestSummariseRDPFailureTakesTheLastMeaningfulLine(t *testing.T) {
 	// xfreerdp's log is verbose and the reason sits at the end.
-	got := summariseRDPFailure("[INFO] connecting\n[ERROR] SEC_E_INVALID_TOKEN\n\n")
+	got := summariseRDPFailure("[INFO] connecting\n[ERROR] SEC_E_INVALID_TOKEN\n\n", -1)
 	if got != "[ERROR] SEC_E_INVALID_TOKEN" {
 		t.Fatalf("got %q", got)
 	}
-	if summariseRDPFailure("   \n\n") != "no output from xfreerdp" {
+	if summariseRDPFailure("   \n\n", -1) != "no output from xfreerdp" {
 		t.Fatal("empty output should say so rather than producing a blank reason")
+	}
+}
+
+// The case a real report arrived as: xfreerdp exits with a code and says
+// nothing at all, leaving "no output from xfreerdp" as the entire
+// explanation. The exit code is always there, so it is the floor.
+func TestSummariseRDPFailureFallsBackToTheExitCode(t *testing.T) {
+	got := summariseRDPFailure("", 147)
+	if !strings.Contains(got, "transport failed during connect") {
+		t.Fatalf("got %q, want the meaning of exit 147", got)
+	}
+	if !strings.Contains(got, "logged nothing") {
+		t.Fatalf("got %q, want it to say xfreerdp itself was silent", got)
+	}
+}
+
+// When there is both a log line and a code, both are worth having - the
+// line says what happened, the code says how FreeRDP classified it.
+func TestSummariseRDPFailureCombinesLineAndExitCode(t *testing.T) {
+	got := summariseRDPFailure("[ERROR] transport_connect failed", 147)
+	if !strings.Contains(got, "transport_connect failed") || !strings.Contains(got, "transport failed during connect") {
+		t.Fatalf("got %q, want both the log line and the code's meaning", got)
+	}
+}
+
+// An unmapped or absent code must not invent a meaning.
+func TestSummariseRDPFailureLeavesUnknownCodesAlone(t *testing.T) {
+	if got := summariseRDPFailure("", 99); got != "no output from xfreerdp" {
+		t.Fatalf("got %q for an unmapped code", got)
+	}
+	if got := summariseRDPFailure("[ERROR] something", 99); got != "[ERROR] something" {
+		t.Fatalf("got %q, want the line unchanged for an unmapped code", got)
+	}
+}
+
+// Against FreeRDP's own client/X11/xfreerdp.h, so a typo in the table is
+// a test failure rather than a plausible-looking wrong explanation.
+func TestRDPExitCodeMeaningsMatchFreeRDP(t *testing.T) {
+	for code, want := range map[int]string{
+		133: "security negotiation",
+		143: "TLS connect",
+		147: "transport failed",
+	} {
+		if got := rdpExitCodeMeaning(code); !strings.Contains(got, want) {
+			t.Errorf("rdpExitCodeMeaning(%d) = %q, want it to mention %q", code, got, want)
+		}
+	}
+	if rdpExitCodeMeaning(0) != "" {
+		t.Error("a successful exit has no failure meaning")
+	}
+	if rdpExitCodeMeaning(-1) != "" {
+		t.Error("no exit status means no meaning to report")
+	}
+}
+
+func TestRDPExitCodeFromError(t *testing.T) {
+	// A process that genuinely exited carries its status; anything else
+	// reports -1 rather than a number that looks like one.
+	cmd := exec.Command("sh", "-c", "exit 147")
+	err := cmd.Run()
+	if got := rdpExitCode(err); got != 147 {
+		t.Errorf("rdpExitCode = %d, want 147", got)
+	}
+	if got := rdpExitCode(errors.New("context deadline exceeded")); got != -1 {
+		t.Errorf("rdpExitCode = %d, want -1 for a non-exit error", got)
+	}
+	if got := rdpExitCode(nil); got != -1 {
+		t.Errorf("rdpExitCode = %d, want -1 for no error", got)
 	}
 }
