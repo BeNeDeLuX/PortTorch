@@ -27,6 +27,7 @@ interface PreferenceColumns {
   pref_timezone: string | null;
   pref_time_format: "h12" | "h24" | null;
   pref_accent_color: "green" | "orange" | "blue" | "lila" | "pink" | "evening" | null;
+  pref_layout_width: "standard" | "wide" | null;
 }
 
 // Shared shape returned from /auth/login, /auth/login/verify-totp,
@@ -41,6 +42,7 @@ function toPreferences(row: PreferenceColumns) {
     timezone: row.pref_timezone,
     timeFormat: row.pref_time_format,
     accentColor: row.pref_accent_color,
+    layoutWidth: row.pref_layout_width,
   };
 }
 
@@ -145,6 +147,7 @@ authRouter.post("/login", asyncHandler(async (req, res) => {
       "pref_timezone",
       "pref_time_format",
       "pref_accent_color",
+      "pref_layout_width",
     ])
     .where("username", "=", username)
     .executeTakeFirst();
@@ -228,6 +231,7 @@ authRouter.post("/login/verify-totp", asyncHandler(async (req, res) => {
       "pref_timezone",
       "pref_time_format",
       "pref_accent_color",
+      "pref_layout_width",
     ])
     .where("id", "=", pendingUserId)
     .executeTakeFirst();
@@ -317,6 +321,7 @@ authRouter.get("/me", requireAuth, asyncHandler(async (req, res) => {
       "pref_timezone",
       "pref_time_format",
       "pref_accent_color",
+      "pref_layout_width",
     ])
     .where("id", "=", req.session.userId!)
     .executeTakeFirstOrThrow();
@@ -341,6 +346,10 @@ const preferencesSchema = z.object({
   // users.pref_accent_color CHECK constraint - three copies, same
   // accepted-duplication reasoning as the NSE script lists.
   accentColor: z.enum(["green", "orange", "blue", "lila", "pink", "evening"]).nullable().optional(),
+  // Kept in step with frontend/src/lib/layoutWidth.ts's LAYOUT_WIDTHS and
+  // the users.pref_layout_width CHECK constraint, same three-copy shape
+  // as the accent above.
+  layoutWidth: z.enum(["standard", "wide"]).nullable().optional(),
 });
 
 // Partial update, PATCH-style - a field absent from the request body is
@@ -381,6 +390,7 @@ authRouter.patch("/preferences", requireAuth, asyncHandler(async (req, res) => {
   if ("timezone" in req.body) updates.pref_timezone = parsed.data.timezone ?? null;
   if ("timeFormat" in req.body) updates.pref_time_format = parsed.data.timeFormat ?? null;
   if ("accentColor" in req.body) updates.pref_accent_color = parsed.data.accentColor ?? null;
+  if ("layoutWidth" in req.body) updates.pref_layout_width = parsed.data.layoutWidth ?? null;
 
   if (Object.keys(updates).length === 0) {
     res.status(400).json({ error: "no preference fields provided" });
@@ -399,6 +409,7 @@ authRouter.patch("/preferences", requireAuth, asyncHandler(async (req, res) => {
       "pref_timezone",
       "pref_time_format",
       "pref_accent_color",
+      "pref_layout_width",
     ])
     .executeTakeFirstOrThrow();
 

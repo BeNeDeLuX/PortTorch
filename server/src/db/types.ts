@@ -26,6 +26,7 @@ export interface UsersTable {
   // Which --accent CSS custom property value to use (styles.css); null
   // means "green", today's only/default color.
   pref_accent_color: "green" | "orange" | "blue" | "lila" | "pink" | "evening" | null;
+  pref_layout_width: "standard" | "wide" | null;
 }
 
 export interface ScannerAgentsTable {

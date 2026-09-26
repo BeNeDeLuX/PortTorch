@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router";
 import { api, Me } from "./api";
 import { applyTheme, hasStoredTheme } from "./lib/theme";
 import { applyAccent, hasStoredAccent } from "./lib/accent";
+import { applyLayoutWidth, hasStoredLayoutWidth } from "./lib/layoutWidth";
 import Login from "./pages/Login";
 import Account from "./pages/Account";
 import Dashboard from "./pages/Dashboard";
@@ -50,6 +51,9 @@ export default function App() {
     }
     if (!hasStoredAccent() && result.preferences.accentColor) {
       applyAccent(result.preferences.accentColor);
+    }
+    if (!hasStoredLayoutWidth() && result.preferences.layoutWidth) {
+      applyLayoutWidth(result.preferences.layoutWidth);
     }
   }
 

@@ -39,6 +39,7 @@ describe("account preferences", () => {
       timezone: null,
       timeFormat: null,
       accentColor: null,
+      layoutWidth: null,
     });
   });
 
@@ -53,6 +54,7 @@ describe("account preferences", () => {
       timezone: null,
       timeFormat: null,
       accentColor: null,
+      layoutWidth: null,
     });
   });
 
@@ -76,6 +78,7 @@ describe("account preferences", () => {
       timezone: null,
       timeFormat: null,
       accentColor: null,
+      layoutWidth: null,
     });
   });
 
@@ -168,6 +171,32 @@ describe("account preferences", () => {
   it("rejects an accent color the app does not ship", async () => {
     const res = await client.patch("/auth/preferences").send({ accentColor: "teal" });
     expect(res.status).toBe(400);
+  });
+
+  // Same three-copy trap as the accent: a value the CHECK constraint does
+  // not know passes zod and then fails as a 500 on the write, so this
+  // round-trips rather than only asserting the response.
+  it.each(["standard", "wide"])("accepts and stores the %s layout width", async (width) => {
+    const res = await client.patch("/auth/preferences").send({ layoutWidth: width });
+    expect(res.status).toBe(200);
+    expect(res.body.layoutWidth).toBe(width);
+    const reread = await client.get("/auth/me");
+    expect(reread.body.preferences.layoutWidth).toBe(width);
+  });
+
+  it("rejects a layout width the app does not ship", async () => {
+    const res = await client.patch("/auth/preferences").send({ layoutWidth: "ultrawide" });
+    expect(res.status).toBe(400);
+  });
+
+  // Null is "never chosen on any browser", which is what the frontend
+  // reads to decide whether to seed a fresh browser at all - so it has to
+  // survive as null rather than being normalised to "standard".
+  it("clears layoutWidth back to null with an explicit null", async () => {
+    await client.patch("/auth/preferences").send({ layoutWidth: "wide" });
+    const cleared = await client.patch("/auth/preferences").send({ layoutWidth: null });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.layoutWidth).toBeNull();
   });
 
   it("clears accentColor back to null with an explicit null", async () => {

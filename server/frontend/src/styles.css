@@ -63,6 +63,49 @@
   --chart-cat-6: #d1518c;
   --chart-cat-7: #4bb3c4;
   --chart-cat-8: var(--muted);
+  /* How wide a page may get. Not a theme value - it is the same in both
+     themes - but it lives here because it is the one place every wrapper
+     reads its cap from, and [data-layout="wide"] below is the override.
+     1600px is the long-standing default: wide enough for the host table,
+     narrow enough that nothing stretches to the edges of a big monitor. */
+  --layout-standard-width: 1600px;
+  --layout-max-width: var(--layout-standard-width);
+}
+
+/* An opt-in for the screens the cap was never written for - 32" and
+   ultrawide/curved workstation monitors, where 1600px leaves most of the
+   glass empty. `none` rather than a bigger number, because there is no
+   second number that is right for both a 2560px and a 3840px panel; the
+   wrappers keep their own padding, and every grid on top of this is
+   already auto-fill/minmax, so extra width becomes more columns rather
+   than wider ones. The caps that exist for readability rather than page
+   width - .settings-form's 480px input cap, .table-scroll's 20rem cell
+   cap - are deliberately untouched by this. */
+:root[data-layout="wide"] {
+  --layout-max-width: none;
+}
+
+/* Lifting the page cap alone is not enough, and a real render at 3840px
+   is what showed it: `table { width: 100% }` then spreads eight columns
+   across the whole panel, so an OS cell and the MAC beside it end up a
+   foot apart and the row stops being readable as one row. In wide mode a
+   table therefore sizes to its own content, with the familiar 1600px as
+   a floor - so it looks exactly as it always did when there is little to
+   show, and grows past that only as far as its own columns actually
+   need. min() rather than a flat floor because a narrow window in wide
+   mode must still collapse to 100%, and the floor is expressed in the
+   same token the page cap comes from so the two cannot drift. */
+/* Scoped to viewports wider than the standard cap, which makes the whole
+   preference a strict no-op on any screen the cap never constrained: an
+   account set to wide can seed a laptop without changing a thing there.
+   Without the query, a 15-column table on that laptop would switch from
+   squeezing into the window to scrolling inside .table-scroll - not
+   wrong, but not something choosing "wide" should have done. */
+@media (min-width: 1601px) {
+  :root[data-layout="wide"] .table-scroll > table {
+    width: max-content;
+    min-width: min(100%, var(--layout-standard-width));
+  }
 }
 
 :root[data-theme="light"] {
@@ -304,7 +347,7 @@ input {
 }
 
 .dashboard {
-  max-width: 1600px;
+  max-width: var(--layout-max-width);
   margin: 0 auto;
   padding: 1.5rem;
 }
@@ -1192,7 +1235,7 @@ button.export-link {
 }
 
 .host-detail {
-  max-width: 1600px;
+  max-width: var(--layout-max-width);
   margin: 0 auto;
   padding: 1.5rem;
 }

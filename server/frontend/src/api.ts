@@ -29,6 +29,11 @@ export interface UserPreferences {
   // Which --accent CSS custom property value to use (styles.css); null =
   // "orange", the default color.
   accentColor: "green" | "orange" | "blue" | "lila" | "pink" | "evening" | null;
+  // How wide a page may get (--layout-max-width, styles.css); null =
+  // "standard", the 1600px cap. Seeds a browser that has never had a
+  // choice made on it - the live value is per browser, since the screen
+  // is a property of the workstation rather than the account.
+  layoutWidth: "standard" | "wide" | null;
 }
 
 export interface Me {
