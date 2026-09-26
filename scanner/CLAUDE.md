@@ -168,6 +168,43 @@ The dashboard shows a scanner's submit-queue depth as one number, which is enoug
 
 `--since` accepts `24h`, `7d` and `2026-09-01`. The `d` suffix is handled explicitly because `time.ParseDuration` rejects it, and days are the unit anyone asking this question actually uses.
 
+### nmap is bounded, and cancelling it has to be SIGTERM
+
+Two failures from one report: nmap sat on a single address for over an
+hour with a `1-10000` port spec, producing no further output, and the scan
+could not be stopped from the dashboard. They have separate causes and
+separate fixes.
+
+**nmap was never told to give up.** The four UDP probes each carry their
+own `--host-timeout 10s`; the enrichment pass carried none, so a filtered
+host that accepts connections and never answers could hold it
+indefinitely - and `-sV` plus the NSE batch across 10 000 ports multiplies
+that. `nmapHostTimeoutSeconds` (900) and `nmapScriptTimeoutSeconds` (120)
+are now passed through as nmap's own flags, both dashboard-tunable, both
+appended only when non-zero so a config that leaves them at 0 produces the
+exact command line this stage always produced. Two rather than one because
+they are different instruments: a host timeout discards everything found
+for that host, a script timeout drops only the script that hung and keeps
+the rest.
+
+**Cancellation had to change from SIGKILL to SIGTERM, and reach the
+process group.** Go's `CommandContext` sends SIGKILL to the direct child -
+through the sudo wrapper that child is *sudo*, and SIGKILL cannot be
+caught, so sudo dies without forwarding anything and the root nmap beneath
+it is orphaned. An unprivileged scanner cannot signal that orphan at all
+(EPERM), so sudo forwarding the signal is the only route to it. Worse, the
+orphan still holds the stdout pipe this process reads, so `cmd.Wait` never
+returns and the worker goroutine is wedged for the life of the process -
+which is why the scan went silent rather than failing.
+
+Measured rather than reasoned about, in a container with a real sudoers
+entry: SIGKILL to the group left the grandchild running and blocked `Wait`
+indefinitely; SIGTERM - to sudo or to the group - was forwarded, the child
+exited, and `Wait` returned at once. So `command` sets `Setpgid`, a
+`Cancel` that sends SIGTERM to the whole group, and a `WaitDelay` as the
+backstop for anything that still refuses to go: `Wait` returns regardless
+rather than holding the worker forever.
+
 ### nmap's root-only features go through a validating sudo wrapper
 
 Two nmap features this pipeline wants are refused for anyone but uid 0:

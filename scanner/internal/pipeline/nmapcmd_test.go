@@ -1,12 +1,14 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNmapCmdCommandShape(t *testing.T) {
@@ -138,7 +140,7 @@ func equalStrings(a, b []string) bool {
 
 func TestNmapEnrichArgsPrivilegeDependentFlags(t *testing.T) {
 	base := func(elevated bool) []string {
-		return nmapEnrichArgs("22,443", "10.0.0.5", []string{"banner"}, false, true, elevated, false)
+		return nmapEnrichArgs("22,443", "10.0.0.5", []string{"banner"}, false, true, elevated, false, 0, 0)
 	}
 
 	if got := strings.Join(base(false), " "); strings.Contains(got, "-O") {
@@ -156,14 +158,103 @@ func TestNmapEnrichArgsPrivilegeDependentFlags(t *testing.T) {
 		t.Errorf("unprivileged args = %v, want %v", got, want)
 	}
 
-	udp := nmapEnrichArgs("T:80,U:53", "10.0.0.5", nil, true, true, true, false)
+	udp := nmapEnrichArgs("T:80,U:53", "10.0.0.5", nil, true, true, true, false, 0, 0)
 	joined := strings.Join(udp, " ")
 	for _, flag := range []string{"-sU", "-sS", "-O"} {
 		if !strings.Contains(joined, flag) {
 			t.Errorf("mixed UDP/TCP elevated run is missing %s: %s", flag, joined)
 		}
 	}
-	if v6 := nmapEnrichArgs("443", "2001:db8::1", nil, false, true, false, true); !strings.Contains(strings.Join(v6, " "), "-6") {
+	if v6 := nmapEnrichArgs("443", "2001:db8::1", nil, false, true, false, true, 0, 0); !strings.Contains(strings.Join(v6, " "), "-6") {
 		t.Errorf("IPv6 target must get -6: %v", v6)
+	}
+}
+
+// The flags are appended only when set, so a config that leaves them at
+// zero produces the command line this stage always produced - the same
+// guarantee the -sS/-O additions were held to.
+func TestNmapEnrichArgsOmitsTimeoutsWhenUnset(t *testing.T) {
+	args := strings.Join(nmapEnrichArgs("22", "10.0.0.5", nil, false, true, false, false, 0, 0), " ")
+	if strings.Contains(args, "--host-timeout") || strings.Contains(args, "--script-timeout") {
+		t.Fatalf("unset timeouts must add no flags, got: %s", args)
+	}
+}
+
+func TestNmapEnrichArgsAddsTimeoutsWhenSet(t *testing.T) {
+	args := strings.Join(nmapEnrichArgs("22", "10.0.0.5", nil, false, true, false, false, 900, 120), " ")
+	if !strings.Contains(args, "--host-timeout 900s") {
+		t.Errorf("missing host timeout in: %s", args)
+	}
+	if !strings.Contains(args, "--script-timeout 120s") {
+		t.Errorf("missing script timeout in: %s", args)
+	}
+	// Both belong before the target, or nmap reads them as one.
+	if strings.Index(args, "--host-timeout") > strings.Index(args, "10.0.0.5") {
+		t.Errorf("timeout flags must precede the target: %s", args)
+	}
+}
+
+// Either one on its own, since they answer different questions and an
+// operator may well want only the gentler of the two.
+func TestNmapEnrichArgsAddsEitherTimeoutAlone(t *testing.T) {
+	hostOnly := strings.Join(nmapEnrichArgs("22", "10.0.0.5", nil, false, true, false, false, 60, 0), " ")
+	if !strings.Contains(hostOnly, "--host-timeout 60s") || strings.Contains(hostOnly, "--script-timeout") {
+		t.Errorf("host timeout alone: %s", hostOnly)
+	}
+	scriptOnly := strings.Join(nmapEnrichArgs("22", "10.0.0.5", nil, false, true, false, false, 0, 30), " ")
+	if !strings.Contains(scriptOnly, "--script-timeout 30s") || strings.Contains(scriptOnly, "--host-timeout") {
+		t.Errorf("script timeout alone: %s", scriptOnly)
+	}
+}
+
+// The failure this exists for: cancelling the scan has to actually stop
+// nmap and, just as importantly, has to let Wait return. Go's default -
+// SIGKILL to the direct child - leaves a grandchild running and holding
+// the stdout pipe, and Wait then blocks for the life of the process,
+// wedging the worker and stalling the whole scan.
+//
+// Run without sudo so the test needs no privileges; the grandchild is
+// what matters, and a shell that backgrounds a sleep reproduces the same
+// shape as sudo starting nmap.
+func TestNmapCommandCancellationStopsTheWholeProcessGroup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := NmapCmd{Path: "/bin/sh"}.command(ctx, "-c", "sleep 300 & echo started; wait")
+
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Start(); err != nil {
+		t.Skipf("cannot start /bin/sh here: %v", err)
+	}
+
+	// Give the shell time to actually spawn the grandchild.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && !strings.Contains(out.String(), "started") {
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	cancel()
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case <-done:
+	case <-time.After(nmapCancelGrace + 5*time.Second):
+		t.Fatal("cmd.Wait never returned after cancellation - the worker would be wedged for the life of the process")
+	}
+}
+
+// Setpgid is what makes one signal reach sudo and whatever it started;
+// without it the group kill would hit this very test process.
+func TestNmapCommandRunsInItsOwnProcessGroup(t *testing.T) {
+	cmd := NmapCmd{Path: "/bin/true"}.command(context.Background())
+	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setpgid {
+		t.Fatal("the command must start its own process group")
+	}
+	if cmd.Cancel == nil {
+		t.Fatal("cancellation must be handled explicitly, not left to CommandContext's SIGKILL default")
+	}
+	if cmd.WaitDelay == 0 {
+		t.Fatal("a WaitDelay is what guarantees Wait returns even when the process does not go")
 	}
 }

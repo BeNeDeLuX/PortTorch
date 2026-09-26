@@ -33,6 +33,19 @@ masscanRate: 1000
 # already seen, trading a little extra scan time/traffic for materially
 # fewer "was open yesterday, not found today" false negatives.
 masscanRetries: 2
+
+# How long nmap's enrichment pass may spend on one host, and any single
+# NSE script within it - its own --host-timeout and --script-timeout.
+# Without them nmap has no instruction to ever give up: a filtered host
+# that accepts connections and never answers can hold a scan for hours,
+# and a wide port spec plus the NSE batch multiplies it. Set either to 0
+# to remove that limit again.
+#
+# The script timeout is the gentler of the two: it drops only the script
+# that hung and keeps the rest of that host's results, where the host
+# timeout discards everything found for it.
+nmapHostTimeoutSeconds: 900
+nmapScriptTimeoutSeconds: 120
 # How many hosts are enriched in parallel once masscan's (or, for IPv6,
 # nmap discovery's) initial pass has found them - this many worker
 # goroutines, each running one nmap process (-sV plus every NSE script)

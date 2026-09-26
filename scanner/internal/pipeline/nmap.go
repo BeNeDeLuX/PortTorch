@@ -264,7 +264,7 @@ func RunNmap(ctx context.Context, nmap NmapCmd, ip string, ports []PortResult, n
 	if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() == nil {
 		isIPv6 = true
 	}
-	args := nmapEnrichArgs(portSpec, ip, nseScripts, needsUDP, needsTCP, nmap.elevated(), isIPv6)
+	args := nmapEnrichArgs(portSpec, ip, nseScripts, needsUDP, needsTCP, nmap.elevated(), isIPv6, nmap.HostTimeoutSeconds, nmap.ScriptTimeoutSeconds)
 
 	run, err := runNmapAndParse(ctx, nmap, args, ip)
 	if err != nil {
@@ -281,7 +281,7 @@ func RunNmap(ctx context.Context, nmap NmapCmd, ip string, ports []PortResult, n
 // matters most for the -O flag, whose presence depends on privileges the
 // test process doesn't have and whose absence is invisible in the results
 // (a host simply has no OS, exactly as if fingerprinting had failed).
-func nmapEnrichArgs(portSpec, ip string, nseScripts []string, needsUDP, needsTCP, elevated, isIPv6 bool) []string {
+func nmapEnrichArgs(portSpec, ip string, nseScripts []string, needsUDP, needsTCP, elevated, isIPv6 bool, hostTimeoutSeconds, scriptTimeoutSeconds int) []string {
 	scripts := nseScripts
 	if len(scripts) == 0 {
 		scripts = DefaultNSEScripts
@@ -313,6 +313,18 @@ func nmapEnrichArgs(portSpec, ip string, nseScripts []string, needsUDP, needsTCP
 	// it either errors or misinterprets the argument as a hostname.
 	if isIPv6 {
 		args = append(args, "-6")
+	}
+	// Both are appended only when set, so a config that leaves them at 0
+	// produces the exact command line this stage always produced.
+	//
+	// A script timeout is the gentler of the two and is why both exist: a
+	// host timeout discards everything found for that host, while a
+	// script timeout drops only the script that hung and keeps the rest.
+	if scriptTimeoutSeconds > 0 {
+		args = append(args, "--script-timeout", fmt.Sprintf("%ds", scriptTimeoutSeconds))
+	}
+	if hostTimeoutSeconds > 0 {
+		args = append(args, "--host-timeout", fmt.Sprintf("%ds", hostTimeoutSeconds))
 	}
 	return append(args,
 		"-p", portSpec,

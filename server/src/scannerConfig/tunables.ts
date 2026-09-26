@@ -75,6 +75,22 @@ export const SCANNER_TUNABLES: ScannerTunable[] = [
     help: "Resends each probe. Higher finds more on lossy networks, at the cost of scan time.",
   },
   {
+    key: "nmapHostTimeoutSeconds",
+    defaultValue: 900,
+    label: "nmap host timeout (s)",
+    min: 0,
+    max: 86400,
+    help: "How long nmap may spend on one host before giving up on it. Without a limit a filtered host that accepts connections and never answers can hold a scan indefinitely. 0 removes the limit.",
+  },
+  {
+    key: "nmapScriptTimeoutSeconds",
+    defaultValue: 120,
+    label: "nmap script timeout (s)",
+    min: 0,
+    max: 3600,
+    help: "How long any single NSE script may run. Gentler than the host timeout: it drops only the script that hung and keeps the rest of that host's results. 0 removes the limit.",
+  },
+  {
     key: "concurrency",
     defaultValue: 5,
     label: "nmap concurrency",

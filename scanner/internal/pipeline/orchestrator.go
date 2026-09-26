@@ -25,6 +25,15 @@ type Config struct {
 	MasscanRetries int
 	Concurrency    int
 
+	// NmapHostTimeoutSeconds / NmapScriptTimeoutSeconds bound the
+	// enrichment pass, via nmap's own --host-timeout and --script-timeout.
+	// Without them nmap has no instruction to ever give up on a host - a
+	// real report had it on one address for over an hour with a 1-10000
+	// port spec, producing nothing further, and the scan around it could
+	// never finish. 0 leaves the respective flag off entirely.
+	NmapHostTimeoutSeconds   int
+	NmapScriptTimeoutSeconds int
+
 	GowitnessPath            string
 	ChromePath               string
 	ScreenshotTimeoutSeconds int

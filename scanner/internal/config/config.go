@@ -35,7 +35,29 @@ type Config struct {
 	// of whether a reply was already seen, trading a little extra time
 	// for materially fewer false negatives on lossy/slow networks.
 	MasscanRetries int `yaml:"masscanRetries"`
-	Concurrency    int `yaml:"concurrency"`
+
+	// NmapHostTimeoutSeconds bounds how long nmap's enrichment pass may
+	// spend on a single host, passed straight to its own --host-timeout.
+	//
+	// Without it nmap has no instruction to ever give up: a real report
+	// had it sitting on one address for over an hour with a 1-10000 port
+	// spec, producing no further output, while the scan it belonged to
+	// could never finish. A filtered host that accepts connections and
+	// never answers will do that indefinitely, and version detection plus
+	// the NSE batch multiplies it.
+	//
+	// 0 disables the flag entirely, restoring the old unbounded
+	// behaviour; the four UDP probes keep their own fixed 10s, which is a
+	// different question (one port, one script).
+	NmapHostTimeoutSeconds int `yaml:"nmapHostTimeoutSeconds"`
+
+	// NmapScriptTimeoutSeconds bounds any single NSE script, via nmap's
+	// --script-timeout. A host-timeout alone is a blunter instrument: it
+	// discards everything found for that host, where a script timeout
+	// drops only the script that hung and keeps the rest of the scan's
+	// results. 0 disables it.
+	NmapScriptTimeoutSeconds int `yaml:"nmapScriptTimeoutSeconds"`
+	Concurrency              int `yaml:"concurrency"`
 
 	GowitnessPath            string `yaml:"gowitnessPath"`
 	ChromePath               string `yaml:"chromePath,omitempty"`
@@ -138,10 +160,16 @@ type Config struct {
 
 func defaults() Config {
 	return Config{
-		MasscanPath:              "masscan",
-		NmapPath:                 "nmap",
-		MasscanRate:              1000,
-		MasscanRetries:           2,
+		MasscanPath:    "masscan",
+		NmapPath:       "nmap",
+		MasscanRate:    1000,
+		MasscanRetries: 2,
+		// Generous rather than tight: a 10 000-port spec with the default
+		// NSE batch is legitimately slow on a busy host, and a timeout
+		// that fires on a working scan would cost real results. What it
+		// rules out is the unbounded case.
+		NmapHostTimeoutSeconds:   900,
+		NmapScriptTimeoutSeconds: 120,
 		Concurrency:              5,
 		GowitnessPath:            "gowitness",
 		ScreenshotTimeoutSeconds: 20,
@@ -223,6 +251,8 @@ func (c *Config) Pipeline() pipeline.Config {
 		NmapSudo:                 c.NmapSudo,
 		MasscanRate:              c.MasscanRate,
 		MasscanRetries:           c.MasscanRetries,
+		NmapHostTimeoutSeconds:   c.NmapHostTimeoutSeconds,
+		NmapScriptTimeoutSeconds: c.NmapScriptTimeoutSeconds,
 		Concurrency:              c.Concurrency,
 		GowitnessPath:            c.GowitnessPath,
 		ChromePath:               c.ChromePath,

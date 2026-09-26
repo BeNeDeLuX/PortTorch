@@ -391,6 +391,8 @@ func (s *Server) baseConfigValues() map[string]int {
 		"maxConcurrentScans":       maxScans,
 		"masscanRate":              base.MasscanRate,
 		"masscanRetries":           base.MasscanRetries,
+		"nmapHostTimeoutSeconds":   base.NmapHostTimeoutSeconds,
+		"nmapScriptTimeoutSeconds": base.NmapScriptTimeoutSeconds,
 		"concurrency":              base.Concurrency,
 		"gowitnessConcurrency":     base.GowitnessConcurrency,
 		"screenshotTimeoutSeconds": base.ScreenshotTimeoutSeconds,
@@ -440,6 +442,8 @@ func applyConfigOverrides(cfg *pipeline.Config, base pipeline.Config, overrides 
 	targets := map[string]*int{
 		"masscanRate":              &cfg.MasscanRate,
 		"masscanRetries":           &cfg.MasscanRetries,
+		"nmapHostTimeoutSeconds":   &cfg.NmapHostTimeoutSeconds,
+		"nmapScriptTimeoutSeconds": &cfg.NmapScriptTimeoutSeconds,
 		"concurrency":              &cfg.Concurrency,
 		"gowitnessConcurrency":     &cfg.GowitnessConcurrency,
 		"screenshotTimeoutSeconds": &cfg.ScreenshotTimeoutSeconds,
@@ -472,6 +476,10 @@ func wasDifferent(a, b pipeline.Config, key string) bool {
 		return a.MasscanRate != b.MasscanRate
 	case "masscanRetries":
 		return a.MasscanRetries != b.MasscanRetries
+	case "nmapHostTimeoutSeconds":
+		return a.NmapHostTimeoutSeconds != b.NmapHostTimeoutSeconds
+	case "nmapScriptTimeoutSeconds":
+		return a.NmapScriptTimeoutSeconds != b.NmapScriptTimeoutSeconds
 	case "concurrency":
 		return a.Concurrency != b.Concurrency
 	case "gowitnessConcurrency":
