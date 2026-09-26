@@ -405,6 +405,8 @@ async function forwardHosts(settings: HecSettings): Promise<number> {
       "hosts.derived_mac_address as derived_mac_address",
       "hosts.derived_mac_vendor as derived_mac_vendor",
       "hosts.derived_mac_source as derived_mac_source",
+      "hosts.windows_build as windows_build",
+      "hosts.windows_build_source as windows_build_source",
       "hosts.first_seen_at as first_seen_at",
       "hosts.retired_at as retired_at",
       "scanner_agents.name as scanner_agent_name",

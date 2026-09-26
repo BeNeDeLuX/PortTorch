@@ -9,6 +9,17 @@ export const IDENTITY_SOURCE_LABEL: Record<string, string> = {
   "rdp-certificate": "from the RDP certificate",
   "smb-os-discovery": "from SMB (smb-os-discovery)",
   nbstat: "from NetBIOS (nbstat)",
+  // The eight services nmap can elicit an NTLM message from. They answer
+  // both a name and the exact Windows build (see lib/windowsBuilds.ts),
+  // so the same labels serve the hostname marker and the version badge.
+  "rdp-ntlm-info": "from NTLM over RDP (rdp-ntlm-info)",
+  "http-ntlm-info": "from NTLM over HTTP (http-ntlm-info)",
+  "smtp-ntlm-info": "from NTLM over SMTP (smtp-ntlm-info)",
+  "imap-ntlm-info": "from NTLM over IMAP (imap-ntlm-info)",
+  "pop3-ntlm-info": "from NTLM over POP3 (pop3-ntlm-info)",
+  "nntp-ntlm-info": "from NTLM over NNTP (nntp-ntlm-info)",
+  "telnet-ntlm-info": "from NTLM over Telnet (telnet-ntlm-info)",
+  "ms-sql-ntlm-info": "from NTLM over MS-SQL (ms-sql-ntlm-info)",
 };
 
 export function identitySourceLabel(source: string | null): string {

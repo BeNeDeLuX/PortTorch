@@ -325,6 +325,8 @@ type ingestHost struct {
 	DerivedMACAddress     string                `json:"derivedMacAddress,omitempty"`
 	DerivedMACVendor      string                `json:"derivedMacVendor,omitempty"`
 	DerivedMACSource      string                `json:"derivedMacSource,omitempty"`
+	WindowsBuild          string                `json:"windowsBuild,omitempty"`
+	WindowsBuildSource    string                `json:"windowsBuildSource,omitempty"`
 	Ports                 []ingestPort          `json:"ports"`
 	NucleiFindings        []ingestNucleiFinding `json:"nucleiFindings,omitempty"`
 }
@@ -399,6 +401,8 @@ func (c *Client) SubmitHosts(ctx context.Context, jobID string, hosts []pipeline
 			DerivedMACAddress:     h.DerivedMACAddress,
 			DerivedMACVendor:      h.DerivedMACVendor,
 			DerivedMACSource:      h.DerivedMACSource,
+			WindowsBuild:          h.WindowsBuild,
+			WindowsBuildSource:    h.WindowsBuildSource,
 			Ports:                 ports,
 			NucleiFindings:        nucleiFindings,
 		})

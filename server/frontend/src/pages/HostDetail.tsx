@@ -12,6 +12,7 @@ import { formatDateTime, formatDateOnly } from "../lib/formatDate";
 import Lightbox, { LightboxItem } from "../components/Lightbox";
 import HostExportModal from "../components/HostExportModal";
 import RescanModal from "../components/RescanModal";
+import WindowsBuildBadge from "../components/WindowsBuildBadge";
 import { IconDownload, IconPlus, IconRefresh, IconSave, IconTrash, IconX } from "../components/icons";
 
 // Router state Dashboard.tsx hands off when navigating to a host - see
@@ -582,6 +583,16 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
         <p className="host-meta">
           {[data.host.device_type, data.host.os_name || data.host.os_family].filter(Boolean).join(" · ")}
           {data.host.os_accuracy ? ` (${data.host.os_accuracy}% confidence)` : ""}
+        </p>
+      )}
+      {/* The exact build, kept on its own line beside nmap's -O guess
+          rather than folded into it: one is what the machine says about
+          itself, the other is a fingerprint, and -O does not run at all
+          unless the scanner is elevated. */}
+      {data.host.windows_build && (
+        <p className="host-meta host-windows-build">
+          <WindowsBuildBadge build={data.host.windows_build} source={data.host.windows_build_source} />
+          <span className="fingerprint">{data.host.windows_build}</span>
         </p>
       )}
       <details className="advanced-options">

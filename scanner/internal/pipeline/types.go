@@ -198,6 +198,15 @@ type HostResult struct {
 	DerivedMACVendor      string
 	DerivedMACSource      string
 
+	// The exact Windows build, e.g. "10.0.17763", read out of an NTLM
+	// message - see windowsversion.go. Empty for anything that is not
+	// Windows or did not answer one. What the build is *called*, and
+	// whether it is still supported, is decided webserver-side: that
+	// mapping gains entries and its dates pass, so it should not need a
+	// scanner release across the fleet to update.
+	WindowsBuild       string
+	WindowsBuildSource string
+
 	Ports           []PortResult
 	Screenshots     []Screenshot
 	RDPScreenshots  []RDPScreenshot

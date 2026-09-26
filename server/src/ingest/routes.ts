@@ -676,6 +676,8 @@ const ingestHostsSchema = z.object({
       derivedMacAddress: z.string().optional(),
       derivedMacVendor: z.string().optional(),
       derivedMacSource: z.string().optional(),
+      windowsBuild: z.string().optional(),
+      windowsBuildSource: z.string().optional(),
       ports: z.array(portObservationSchema),
       nucleiFindings: z.array(nucleiFindingSchema).optional(),
     })
@@ -809,6 +811,8 @@ export async function ingestHostPayload(
           derived_mac_address: host.derivedMacAddress ?? null,
           derived_mac_vendor: host.derivedMacVendor ?? null,
           derived_mac_source: host.derivedMacSource ?? null,
+          windows_build: host.windowsBuild ?? null,
+          windows_build_source: host.windowsBuildSource ?? null,
         })
         .onConflict((oc) =>
           oc.columns(["ip", "scanner_agent_id"]).doUpdateSet({
@@ -838,6 +842,10 @@ export async function ingestHostPayload(
             derived_mac_address: sql`coalesce(excluded.derived_mac_address, hosts.derived_mac_address)`,
             derived_mac_vendor: sql`case when excluded.derived_mac_address is null then hosts.derived_mac_vendor else excluded.derived_mac_vendor end`,
             derived_mac_source: sql`case when excluded.derived_mac_address is null then hosts.derived_mac_source else excluded.derived_mac_source end`,
+            // Same coalescing rule: a scan where no service answered with
+            // an NTLM message must not erase a build an earlier one read.
+            windows_build: sql`coalesce(excluded.windows_build, hosts.windows_build)`,
+            windows_build_source: sql`case when excluded.windows_build is null then hosts.windows_build_source else excluded.windows_build_source end`,
           })
         )
         // xmax = 0 is a well-known Postgres idiom for telling an insert

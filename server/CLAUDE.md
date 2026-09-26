@@ -370,6 +370,50 @@ it green and adds "accepted until …", it does not hide it. `HealthCard`'s
 `to` became optional for this: a card carrying a control cannot also be
 one big `<Link>`.
 
+### The Windows build is stored; what it means is derived on read
+
+The scanner reports a bare build number it read out of an NTLM message -
+`10.0.17763` - and nothing else (see `scanner/CLAUDE.md` for where it
+comes from). `hosts.windows_build`/`windows_build_source` (migration
+`1746300000000_windows_build.js`) are the two columns, upserted with the
+same `coalesce` the derived hostname and MAC already use, and for the
+same reason: a rescan that reaches no NTLM-capable service - a firewall
+change, or a narrower port spec - must not erase what an earlier one
+established. The source is carried with a `case` so it can never end up
+describing a different script's answer than the build beside it.
+
+**What the build is called, and whether it is still supported, is
+`frontend/src/lib/windowsBuilds.ts` and is deliberately not in the
+database.** That table gains releases and its support dates pass, so
+deriving it on read means a new name or a lapsed date reaches every
+existing host on the next deploy instead of only the hosts scanned
+afterwards. Nothing is backfilled and nothing goes stale.
+
+Two properties of that table carry the feature:
+
+- **A build does not say whether a machine is client or server.**
+  `10.0.17763` is Windows 10 1809 *and* Windows Server 2019, and the NTLM
+  message cannot tell them apart. Both names are shown, and a build is
+  only called out of support once **every** edition sharing it has ended
+  - which is why 17763 is not flagged although the client half ended in
+  2020. Flagging it would be a claim the data does not carry.
+- **An unknown build shows its number rather than a guess.** That is
+  still the precise answer the scan found; an invented name would be
+  worse than none.
+
+`WindowsBuildBadge` is the one place either is rendered - the host list
+(card and table) and the Host Detail header - and it always names the
+script that answered in its tooltip, the same reasoning as the derived
+hostname's own source marker. It is in the host list's condition
+alongside `device_type`/`os_family` deliberately: `-O` is root-only, so on
+a scanner without the sudo wrapper this is the *only* OS information a
+Windows host has at all.
+
+It rides the HEC host stream and the External API's enrichment record
+like the derived identity fields, and the JSON export. **Not the CSV
+exports**: that header is a positional contract callers parse by index,
+and this is not worth moving it.
+
 ### The Settings page is a grouped card grid, one component per setting
 
 `Settings.tsx` had reached 1149 lines, 11 sections, 10 forms and 67 `useState` calls in one component, all in a flat column with no grouping - so host retention, scan-log retention and storage, which all answer "how long do we keep things and what does that cost", had two unrelated scan thresholds wedged between them. It is now a ~100-line layout shell over `pages/settings/*`, one component per setting, each owning its own state next to the markup that uses it.

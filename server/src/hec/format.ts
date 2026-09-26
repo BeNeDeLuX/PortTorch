@@ -201,6 +201,8 @@ export function hostEvent(
     derived_mac_address: string | null;
     derived_mac_vendor: string | null;
     derived_mac_source: string | null;
+    windows_build: string | null;
+    windows_build_source: string | null;
     first_seen_at: Date | string;
     last_seen_at: Date | string;
     retired_at: Date | string | null;
@@ -233,6 +235,10 @@ export function hostEvent(
       derived_mac_address: row.derived_mac_address,
       derived_mac_vendor: row.derived_mac_vendor,
       derived_mac_source: row.derived_mac_source,
+      // The build, not a release name: what it is called is decided on
+      // read, and a SIEM correlating on an exact build wants the number.
+      windows_build: row.windows_build,
+      windows_build_source: row.windows_build_source,
       scanner_agent_name: row.scanner_agent_name,
       first_seen_at: new Date(row.first_seen_at).toISOString(),
       last_seen_at: new Date(row.last_seen_at).toISOString(),

@@ -31,6 +31,7 @@ import {
 import PageHeader from "../components/PageHeader";
 import RescanModal from "../components/RescanModal";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
+import WindowsBuildBadge from "../components/WindowsBuildBadge";
 import { displayHostname, identitySourceLabel } from "../lib/derivedIdentity";
 import ScanProgressModal from "../components/ScanProgressModal";
 import { elapsedLabel } from "../lib/elapsed";
@@ -1339,7 +1340,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                       {tablePrefs.columns.includes("screenshot") && <td>{h.thumbnail_kind ?? "-"}</td>}
                       {tablePrefs.columns.includes("device") && (
                         <td onClick={(e) => e.stopPropagation()}>
-                          {h.device_type || h.os_family ? (
+                          {h.device_type || h.os_family || h.windows_build ? (
                             <>
                               {h.device_type && (
                                 <button
@@ -1362,6 +1363,8 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                                   {h.os_family}
                                 </button>
                               )}
+                              {h.windows_build && (h.device_type || h.os_family) && " · "}
+                              <WindowsBuildBadge build={h.windows_build} source={h.windows_build_source} />
                             </>
                           ) : (
                             "-"
@@ -1461,7 +1464,11 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                       </button>
                     </div>
                   )}
-                  {(h.device_type || h.os_family) && (
+                  {/* windows_build belongs in this condition, not only in
+                      the body: -O is root-only, so a non-elevated scanner
+                      leaves os_family null and the NTLM build is then the
+                      only version information this host has at all. */}
+                  {(h.device_type || h.os_family || h.windows_build) && (
                     <div className="tech-badges">
                       {h.device_type && (
                         <button
@@ -1491,6 +1498,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                           {h.os_family}
                         </button>
                       )}
+                      <WindowsBuildBadge build={h.windows_build} source={h.windows_build_source} />
                     </div>
                   )}
                   {h.cve_count > 0 && (

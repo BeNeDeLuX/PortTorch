@@ -580,6 +580,8 @@ hostsRouter.get("/", asyncHandler(async (req, res) => {
       "hosts.derived_mac_address as derived_mac_address",
       "hosts.derived_mac_vendor as derived_mac_vendor",
       "hosts.derived_mac_source as derived_mac_source",
+      "hosts.windows_build as windows_build",
+      "hosts.windows_build_source as windows_build_source",
       "hosts.retired_at as retired_at",
       // A host's identity is (ip, scanner_agent_id), not ip alone - two
       // different scanners (different networks) can each have a real
@@ -681,6 +683,8 @@ hostsRouter.get("/", asyncHandler(async (req, res) => {
       "hosts.derived_mac_address",
       "hosts.derived_mac_vendor",
       "hosts.derived_mac_source",
+      "hosts.windows_build",
+      "hosts.windows_build_source",
       "hosts.scanner_agent_id",
       "scanner_agents.name",
     ])
@@ -750,11 +754,6 @@ hostsRouter.get("/export.csv", asyncHandler(async (req, res) => {
         "hosts.derived_mac_address as derived_mac_address",
         "hosts.derived_mac_vendor as derived_mac_vendor",
         "hosts.derived_mac_source as derived_mac_source",
-      "hosts.derived_hostname as derived_hostname",
-      "hosts.derived_hostname_source as derived_hostname_source",
-      "hosts.derived_mac_address as derived_mac_address",
-      "hosts.derived_mac_vendor as derived_mac_vendor",
-      "hosts.derived_mac_source as derived_mac_source",
         "current_host_ports.port as port",
         "current_host_ports.protocol as protocol",
         "current_host_ports.service_name as service_name",
@@ -903,6 +902,8 @@ hostsRouter.get("/export.json", asyncHandler(async (req, res) => {
       "hosts.derived_mac_address as derived_mac_address",
       "hosts.derived_mac_vendor as derived_mac_vendor",
       "hosts.derived_mac_source as derived_mac_source",
+      "hosts.windows_build as windows_build",
+      "hosts.windows_build_source as windows_build_source",
       "scanner_agents.name as scanner_agent_name",
     ])
     .orderBy("hosts.last_seen_at", "desc");
@@ -938,6 +939,12 @@ hostsRouter.get("/export.json", asyncHandler(async (req, res) => {
     deviceType: h.device_type,
     macAddress: h.mac_address,
     macVendor: h.mac_vendor,
+    // The exact Windows build and which NTLM script reported it - an
+    // asset inventory's most specific answer to "which version is this",
+    // where os_family only ever says "Windows". Not in the CSV shapes:
+    // that header is a positional contract callers parse by index.
+    windowsBuild: h.windows_build,
+    windowsBuildSource: h.windows_build_source,
     lastSeenAt: h.last_seen_at,
     openPorts: (portsByHostId.get(h.id) ?? []).map((p) => ({
       port: p.port,

@@ -748,6 +748,8 @@ async function buildEnrichment(hostId: string) {
       "derived_mac_address",
       "derived_mac_vendor",
       "derived_mac_source",
+      "windows_build",
+      "windows_build_source",
       "first_seen_at",
       "last_seen_at",
     ])
@@ -815,6 +817,9 @@ async function buildEnrichment(hostId: string) {
       macAddress: host.derived_mac_address,
       macVendor: host.derived_mac_vendor,
       macSource: host.derived_mac_source,
+      // The exact Windows build from an NTLM message, e.g. "10.0.17763".
+      windowsBuild: host.windows_build,
+      windowsBuildSource: host.windows_build_source,
     },
     mac: { address: host.mac_address, vendor: host.mac_vendor },
     os: {

@@ -274,6 +274,12 @@ export interface HostsTable {
   derived_mac_address: ColumnType<string | null, string | null | undefined, string | null>;
   derived_mac_vendor: ColumnType<string | null, string | null | undefined, string | null>;
   derived_mac_source: ColumnType<string | null, string | null | undefined, string | null>;
+  // The exact Windows build from an NTLM message, e.g. "10.0.17763".
+  // Only the build - what it is called and whether it is supported is
+  // derived on read, so a new release name or a lapsed support date
+  // reaches every existing host on the next deploy.
+  windows_build: ColumnType<string | null, string | null | undefined, string | null>;
+  windows_build_source: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export interface HostPortObservationsTable {

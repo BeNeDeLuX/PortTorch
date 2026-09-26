@@ -16,4 +16,17 @@ var DefaultNSEScripts = []string{
 	"http-methods", "http-auth", "http-git",
 	"rdp-ntlm-info", "rdp-enum-encryption", "ssh2-enum-algos", "sshv1",
 	"rpcinfo", "msrpc-enum",
+	// The other seven services nmap can elicit an NTLM message from.
+	// rdp-ntlm-info above has been here all along; these extend the same
+	// trick to a Windows host that has no RDP exposed but does serve IIS,
+	// Exchange or MSSQL - the message carries the exact build and the
+	// machine's FQDN, which nothing else on this list reports as
+	// precisely (see windowsversion.go).
+	//
+	// Every name checked against a real nmap 7.95 with --script-help
+	// before being added. A name that does not resolve is fatal to the
+	// whole invocation, for every host in the scan - the http-elasticsearch
+	// incident, which is why this list is never extended from memory.
+	"http-ntlm-info", "smtp-ntlm-info", "imap-ntlm-info", "pop3-ntlm-info",
+	"nntp-ntlm-info", "telnet-ntlm-info", "ms-sql-ntlm-info",
 }

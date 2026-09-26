@@ -323,6 +323,43 @@ completion path, because that is the one point where every piece of
 evidence has landed - the RDP certificate arrives from its own worker long
 after nmap produced the script output beside it.
 
+### The exact Windows version, out of an NTLM message
+
+nmap's `-O` fingerprint cannot answer "which Windows is this": for
+Windows it reports a family spanning a decade of releases, and it only
+runs at all when the scanner is elevated (see the sudo-wrapper section
+above). So on a normally installed scanner the version question had no
+answer anywhere.
+
+NTLM has one. An incomplete authentication attempt with null credentials
+makes Windows answer with an NTLMSSP message carrying its own
+`Product_Version` - `10.0.17763` - which identifies the release exactly,
+plus the machine's DNS name. nmap ships eight scripts that elicit it from
+eight different services; `rdp-ntlm-info` was already in the Default
+profile, and `pipeline/windowsversion.go` added the other seven
+(`http`/`smtp`/`imap`/`pop3`/`nntp`/`telnet`/`ms-sql`). **Every name was
+checked against a real nmap 7.95 with `--script-help` before being
+added** - a name that does not resolve aborts nmap for every host in the
+scan, which this file documents a real incident for. The Default profile
+is 38 scripts now rather than 31, and `nse_safe_scripts_test.go` pins that
+number so the next change to the list is a deliberate one.
+
+`deriveWindowsBuild` tries the scripts in a fixed order rather than
+"first output wins", so a host answering on several services reports a
+stable source rather than one that moves with port ordering. The same
+message's `DNS_Computer_Name` also joins the hostname chain from
+`hostidentity.go`, **above `smb-os-discovery`**: a domain-joined machine
+reports its full name there even when SMB1 is off and smb-os-discovery
+returns nothing at all.
+
+**Only the build number is reported.** What `10.0.17763` is *called*, and
+whether it is still supported, is deliberately not decided here: that
+table gains entries and its support dates pass with time, so it lives on
+the webserver, where a correction is a deploy rather than a scanner
+rollout across the fleet. The scanner reports the fact; the webserver
+interprets it. This costs no scan time either - the scripts were already
+running or are part of the same pass, and this is parsing, not probing.
+
 ### Reporting what discovery found, not only what survived it
 
 `ScanResult.DiscoveredHosts` is the host count the discovery stage turned

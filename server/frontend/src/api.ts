@@ -253,6 +253,11 @@ export interface HostSummary {
   derived_mac_address: string | null;
   derived_mac_vendor: string | null;
   derived_mac_source: string | null;
+  // The exact Windows build from an NTLM message, e.g. "10.0.17763", and
+  // which nmap script produced it. What it is called and whether it is
+  // supported is derived on read - see lib/windowsBuilds.ts.
+  windows_build: string | null;
+  windows_build_source: string | null;
   mac_address: string | null;
   mac_vendor: string | null;
   retired_at: string | null;
@@ -376,6 +381,11 @@ export interface HostDetail {
     derived_mac_address: string | null;
     derived_mac_vendor: string | null;
     derived_mac_source: string | null;
+    // The exact Windows build from an NTLM message, e.g. "10.0.17763",
+    // and which nmap script produced it. What it is called and whether it
+    // is supported is derived on read - see lib/windowsBuilds.ts.
+    windows_build: string | null;
+    windows_build_source: string | null;
     retired_at: string | null;
     scanner_agent_name: string | null;
     // Manual override - see api.setHostProbeHostname. Used by the scanner

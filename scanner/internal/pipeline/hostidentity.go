@@ -97,20 +97,35 @@ func deriveHostIdentity(host *HostResult) {
 			host.DerivedMACSource = source
 		}
 	}
+	// Unconditional, unlike the two above: there is no "real" Windows
+	// build field for this to defer to. nmap's -O fingerprint reports a
+	// family spanning several releases, which is a different and much
+	// vaguer statement - see windowsversion.go.
+	if build, source := deriveWindowsBuild(host); build != "" {
+		host.WindowsBuild = build
+		host.WindowsBuildSource = source
+	}
 }
 
 // Order of preference, most to least trustworthy about the *DNS* name:
 //
 //  1. The RDP certificate. Windows generates it with the machine's own
 //     name in the subject CN, frequently the full FQDN.
-//  2. smb-os-discovery, which reports an FQDN field - though it falls
+//  2. The NTLM message an *-ntlm-info script elicited, whose
+//     DNS_Computer_Name is the full FQDN - and which a domain-joined
+//     machine answers even with SMB1 disabled, where smb-os-discovery
+//     below returns nothing at all.
+//  3. smb-os-discovery, which reports an FQDN field - though it falls
 //     back to the short name when the machine is not domain-joined, so a
 //     dot is what distinguishes the two.
-//  3. nbstat's NetBIOS name, which is always the short name and always
+//  4. nbstat's NetBIOS name, which is always the short name and always
 //     uppercase. Last because it is the least specific.
 func deriveHostname(host *HostResult) (string, string) {
 	if name := hostnameFromRDPCertificate(host); name != "" {
 		return name, IdentitySourceRDPCertificate
+	}
+	if name, source := hostnameFromNTLM(host); name != "" {
+		return name, source
 	}
 	for _, script := range hostScripts(host, "smb-os-discovery") {
 		if name := hostnameFromSMBOSDiscovery(script); name != "" {

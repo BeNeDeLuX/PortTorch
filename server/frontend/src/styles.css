@@ -2078,6 +2078,47 @@ th {
   border: 1px solid var(--danger);
 }
 
+/* The exact-build line on Host Detail: a release-name pill (plus an
+   end-of-life badge when applicable) and the raw build number, which is
+   the fact the scan actually reported and the only thing shown for a
+   build the table does not know. */
+.host-windows-build {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* The version pill and its end-of-life marker travel as one box - see
+   the component for why. inline-flex so it also sits inline in a table
+   cell, between the device-type and OS-family buttons. */
+.windows-build-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  vertical-align: middle;
+}
+
+/* An out-of-support Windows build, beside the version badge that carries
+   the release name. Danger-coloured rather than warning, unlike
+   .stale-badge: a machine running an OS that stops receiving patches is a
+   standing exposure, not a question about how to read a number. Only shown
+   once every edition sharing that build has ended - see
+   lib/windowsBuilds.ts for why 10.0.17763 is not one of them. */
+.eol-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  color: #fff;
+  background: var(--danger);
+  border: 1px solid var(--danger);
+  white-space: nowrap;
+  cursor: help;
+}
+
 /* A scan-quality finding on a Scan History row. Warning-coloured rather
    than danger: the scan itself worked, what is in question is how to read
    its numbers. Inline with the target rather than its own column, since
