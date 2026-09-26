@@ -28,7 +28,7 @@ export interface UserPreferences {
   timeFormat: "h12" | "h24" | null;
   // Which --accent CSS custom property value to use (styles.css); null =
   // "orange", the default color.
-  accentColor: "green" | "orange" | "blue" | null;
+  accentColor: "green" | "orange" | "blue" | "lila" | "pink" | "evening" | null;
 }
 
 export interface Me {

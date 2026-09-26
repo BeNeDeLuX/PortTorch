@@ -25,7 +25,7 @@ export interface UsersTable {
   pref_time_format: "h12" | "h24" | null;
   // Which --accent CSS custom property value to use (styles.css); null
   // means "green", today's only/default color.
-  pref_accent_color: "green" | "orange" | "blue" | null;
+  pref_accent_color: "green" | "orange" | "blue" | "lila" | "pink" | "evening" | null;
 }
 
 export interface ScannerAgentsTable {

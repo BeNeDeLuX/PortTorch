@@ -153,8 +153,20 @@ describe("account preferences", () => {
     expect(res.body.accentColor).toBe("blue");
   });
 
-  it("rejects an accent color outside green/orange/blue", async () => {
-    const res = await client.patch("/auth/preferences").send({ accentColor: "purple" });
+  // The value has to clear both the zod enum and the CHECK constraint on
+  // users.pref_accent_color, and those are separate copies of the same
+  // list - a colour missing from the constraint passes validation and
+  // then fails as a 500 on the write, so a round trip is what pins it.
+  it.each(["green", "lila", "pink", "evening"])("accepts and stores the %s accent color", async (accent) => {
+    const res = await client.patch("/auth/preferences").send({ accentColor: accent });
+    expect(res.status).toBe(200);
+    expect(res.body.accentColor).toBe(accent);
+    const reread = await client.get("/auth/me");
+    expect(reread.body.preferences.accentColor).toBe(accent);
+  });
+
+  it("rejects an accent color the app does not ship", async () => {
+    const res = await client.patch("/auth/preferences").send({ accentColor: "teal" });
     expect(res.status).toBe(400);
   });
 

@@ -10,8 +10,8 @@
   --warning: #f0b429;
   /* Fixed green for "everything is fine" indicators (Fleet Health's
      all-clear banner) - deliberately NOT --accent, which is user-
-     selectable (orange/green/blue, see Account preferences) and reads as
-     a caution color for the ~2/3 of users who haven't picked green,
+     selectable (orange/green/blue/lila/pink/evening, see Account
+     preferences) and reads as a caution color for the ~2/3 of users who haven't picked green,
      confirmed a real point of confusion. Same green already validated
      for [data-accent="green"] below, reused here as a status color fixed
      regardless of the user's own accent choice. */
@@ -30,7 +30,7 @@
   --chart-series-3: #199e70;
   --chart-series-4: #c98500;
   /* Single-series "headline" charts (Trends' Total hosts) deliberately do
-     NOT use --accent: --accent is user-selectable (orange/green/blue, see
+     NOT use --accent: --accent is user-selectable (six colors, see
      Account preferences) and orange/blue both collide with chart-series-2/1
      above - a blue-accent user would see "Total hosts" and "New hosts"
      rendered in the exact same hue across two unrelated charts, coincidental
@@ -105,18 +105,36 @@
 }
 
 /* Orange is the default (baked into the two :root blocks above, no
-   override needed) - green and blue are the two selectable alternatives.
+   override needed) - every other choice is an override block below.
    Same specificity as the data-theme rules above (one :root + one
    attribute selector each) - placed after both so the accent choice
    wins in either theme, rather than being overridden back to orange when
    the light theme block also matches.
-   Green keeps the two theme-tuned shades it had when it was the default
-   (a darker, more saturated green for light backgrounds) - the plain
-   [data-accent="green"] rule covers dark mode, and the compound
-   [data-theme="light"][data-accent="green"] rule (two attribute
-   selectors on :root, higher specificity than the plain one) wins in
-   light mode. Orange/blue never needed this distinction - both are a
-   single flat value in either theme, unchanged from before. */
+   Green and evening keep two theme-tuned shades each - the plain
+   [data-accent="..."] rule covers dark mode, and the compound
+   [data-theme="light"][data-accent="..."] rule (two attribute selectors
+   on :root, higher specificity than the plain one) wins in light mode.
+   Orange, blue, lila and pink need no such split: each is a single flat
+   value that measures acceptably in either theme.
+
+   What every accent has to satisfy, because --accent is used both ways:
+   as a button/chip *background* under near-black #04150b text, and as
+   link/emphasis *text* on --bg/--panel. The shipped three resolve that
+   tension towards the button (light-mode orange is 6.61:1 as a button
+   but only 2.63:1 as text on the page), so the additions match that
+   balance rather than inventing a stricter one - each was measured
+   against this app's real surfaces in both themes:
+
+     lila    #a855f7  button 4.75  on light bg 3.65  on dark bg 4.86
+     pink    #ec4899  button 5.33  on light bg 3.26  on dark bg 5.45
+     evening #ff80ff  button 8.76  on dark bg 8.95
+             #e640e6  button 5.59  on light bg 3.11
+
+   All six are at least 26.8 dE apart pairwise in both themes, so no two
+   read as the same colour in the picker. Pink lands 13.4 dE from
+   --chart-cat-6, which is the same distance the already-shipped blue
+   accent sits from --chart-series-1 - accepted on that precedent, and
+   harmless because --accent is deliberately never used inside a chart. */
 :root[data-accent="green"] {
   --accent: #35d07f;
 }
@@ -127,6 +145,33 @@
 
 :root[data-accent="blue"] {
   --accent: #3b82f6;
+}
+
+:root[data-accent="lila"] {
+  --accent: #a855f7;
+}
+
+:root[data-accent="pink"] {
+  --accent: #ec4899;
+}
+
+/* Vim's own `evening` colorscheme, read out of
+   /usr/share/vim/vim91/colors/evening.vim rather than remembered: its
+   signature highlight hue is the magenta #ff80ff it gives PreProc,
+   Title, PmenuMatch and SpellRare, over a grey20 background. That exact
+   value is what dark mode uses.
+
+   Light mode cannot: #ff80ff on a white page is 1.3:1, unreadable as
+   link text. So it takes the midpoint of evening's own two magentas -
+   #ff80ff and the #cd00cd it names x_darkmagenta - which is the same
+   hue one step darker, and measures better as a button than the shipped
+   blue does. */
+:root[data-accent="evening"] {
+  --accent: #ff80ff;
+}
+
+:root[data-theme="light"][data-accent="evening"] {
+  --accent: #e640e6;
 }
 
 * {

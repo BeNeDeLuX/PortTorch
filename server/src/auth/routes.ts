@@ -26,7 +26,7 @@ interface PreferenceColumns {
   pref_default_scanner_agent_id: string | null;
   pref_timezone: string | null;
   pref_time_format: "h12" | "h24" | null;
-  pref_accent_color: "green" | "orange" | "blue" | null;
+  pref_accent_color: "green" | "orange" | "blue" | "lila" | "pink" | "evening" | null;
 }
 
 // Shared shape returned from /auth/login, /auth/login/verify-totp,
@@ -337,7 +337,10 @@ const preferencesSchema = z.object({
   defaultScannerAgentId: z.string().uuid().nullable().optional(),
   timezone: z.string().nullable().optional(),
   timeFormat: z.enum(["h12", "h24"]).nullable().optional(),
-  accentColor: z.enum(["green", "orange", "blue"]).nullable().optional(),
+  // Kept in step with frontend/src/lib/accent.ts's ACCENT_COLORS and the
+  // users.pref_accent_color CHECK constraint - three copies, same
+  // accepted-duplication reasoning as the NSE script lists.
+  accentColor: z.enum(["green", "orange", "blue", "lila", "pink", "evening"]).nullable().optional(),
 });
 
 // Partial update, PATCH-style - a field absent from the request body is

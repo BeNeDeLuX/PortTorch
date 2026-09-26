@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { Me, UserPreferences, api } from "../../api";
 import { IconSave } from "../../components/icons";
 import SettingsCard, { SaveState } from "../../components/SettingsCard";
-import { applyAccent } from "../../lib/accent";
+import { AccentColor, applyAccent } from "../../lib/accent";
 import { applyTheme } from "../../lib/theme";
 
 export default function AppearanceCard({ me, onSaved }: { me: Me; onSaved: (p: UserPreferences) => void }) {
@@ -28,7 +28,7 @@ export default function AppearanceCard({ me, onSaved }: { me: Me; onSaved: (p: U
     setError(null);
     setSaved(false);
     const nextTheme = theme ? (theme as "dark" | "light") : null;
-    const nextAccent = accent ? (accent as "green" | "orange" | "blue") : null;
+    const nextAccent = accent ? (accent as AccentColor) : null;
     try {
       // Only this card's two fields are sent. PATCH /auth/preferences
       // decides per field on `"field" in body`, so everything else keeps
@@ -73,6 +73,12 @@ export default function AppearanceCard({ me, onSaved }: { me: Me; onSaved: (p: U
             <option value="">Orange (default)</option>
             <option value="green">Green</option>
             <option value="blue">Blue</option>
+            <option value="lila">Lila</option>
+            <option value="pink">Pink</option>
+            {/* Vim's own colorscheme, named after it rather than after
+                the hue, since that is what someone picking it is asking
+                for - see styles.css for where the value comes from. */}
+            <option value="evening">Evening (Vim)</option>
           </select>
         </label>
         <div className="inline-actions settings-form-actions">
