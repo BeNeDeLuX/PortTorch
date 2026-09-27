@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { targetSpecSchema } from "../lib/targetSpec";
 import { sql } from "kysely";
 import { db } from "../db";
 import { asyncHandler } from "../lib/asyncHandler";
@@ -368,7 +369,7 @@ integrationsRouter.post("/hosts/cancel-scan", requireTokenWrite, asyncHandler(as
 
 export const adhocScanSchema = z.object({
   scannerAgent: z.string().min(1),
-  targetSpec: z.string().trim().min(1),
+  targetSpec: targetSpecSchema,
   portSpec: z.string().trim().min(1),
   profile: z.string().min(1).optional(),
   nucleiProfile: z.string().min(1).optional(),

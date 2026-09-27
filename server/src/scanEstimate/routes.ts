@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { targetSpecSchema } from "../lib/targetSpec";
 import { db } from "../db";
 import { requireAuth } from "../auth/middleware";
 import { getAllowedScannerAgentIds } from "../auth/scannerScope";
@@ -10,7 +11,7 @@ export const scanEstimateRouter = Router();
 scanEstimateRouter.use(requireAuth);
 
 const estimateSchema = z.object({
-  targetSpec: z.string().trim().min(1),
+  targetSpec: targetSpecSchema,
   portSpec: z.string().trim().min(1),
   scannerAgentId: z.string().uuid().optional(),
   // The per-scan rate override, if the form has one filled in - so the

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { targetSpecSchema } from "../lib/targetSpec";
 import { db } from "../db";
 import { requireAuth, requireAdmin } from "../auth/middleware";
 import { getAllowedScannerAgentIds } from "../auth/scannerScope";
@@ -91,7 +92,7 @@ const nucleiProfileSelectionSchema = z.discriminatedUnion("kind", [
 
 const baseScheduleFields = {
   scannerAgentId: z.string().uuid(),
-  targetSpec: z.string().min(1),
+  targetSpec: targetSpecSchema,
   portSpec: z.string().min(1),
   // Omitted = Default, same as every scan-profile picker elsewhere.
   profile: nseProfileSelectionSchema.optional(),
@@ -238,7 +239,7 @@ const updateScheduleSchema = z.object({
   // (see the intervalMinutes/cronExpression type-guards below) - matches
   // this route's existing "converting between types isn't supported"
   // stance.
-  targetSpec: z.string().min(1).optional(),
+  targetSpec: targetSpecSchema.optional(),
   portSpec: z.string().min(1).optional(),
   scannerAgentId: z.string().uuid().optional(),
   runAt: z.string().datetime().optional(),

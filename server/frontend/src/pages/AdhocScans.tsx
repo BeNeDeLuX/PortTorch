@@ -9,6 +9,7 @@ import NucleiProfilePicker from "../components/NucleiProfilePicker";
 import ScanPriorityPicker from "../components/ScanPriorityPicker";
 import ScanRateSupportNote from "../components/ScanRateSupportNote";
 import PortSpecHint from "../components/PortSpecHint";
+import { MAX_TARGET_SPEC_LENGTH, parseTargetList } from "../lib/targetList";
 import { formatDateTime } from "../lib/formatDate";
 
 // A one-shot "scan this right now" page - Schedule Scans minus all the
@@ -22,6 +23,11 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
 
   const [scannerAgentId, setScannerAgentId] = useState("");
   const [targetSpec, setTargetSpec] = useState("");
+  // What the last uploaded file produced, shown under the field - a spec
+  // of a few thousand addresses is not something anyone reads back out of
+  // an input, so the count is what tells them it worked.
+  const [listSummary, setListSummary] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
   const [portSpec, setPortSpec] = useState("");
   const [profile, setProfile] = useState<NSEProfileSelection>({ kind: "default" });
   const [nucleiProfile, setNucleiProfile] = useState<NucleiProfileSelection>({ kind: "off" });
@@ -56,6 +62,47 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
     }
   }
 
+  // The file never leaves the browser: it is parsed here into exactly the
+  // comma-separated spec someone could have typed, so everything else on
+  // this page - Estimate time, the profile pickers, priority - keeps
+  // working without knowing a file was involved.
+  async function handleTargetFile(file: File) {
+    setListError(null);
+    setListSummary(null);
+    const result = parseTargetList(await file.text());
+
+    // Fail closed rather than loading the readable half: a file that is
+    // partly junk usually means the wrong column or the wrong file, and
+    // half a target list submitted silently is worse than none.
+    if (result.errors.length > 0) {
+      const shown = result.errors
+        .slice(0, 3)
+        .map((e) => `line ${e.line}: "${e.value}"`)
+        .join(", ");
+      const more = result.errors.length > 3 ? ` (and ${result.errors.length - 3} more)` : "";
+      const n = result.errors.length;
+      setListError(
+        `${file.name} has ${n === 1 ? "an entry that is" : `${n} entries that are`} not an address, CIDR, range or qualified hostname - ${shown}${more}. Nothing was loaded.`
+      );
+      return;
+    }
+    if (result.entries.length === 0) {
+      setListError(`${file.name} contains no addresses.`);
+      return;
+    }
+    // The scanner passes the whole spec to masscan as one argument, and
+    // Linux caps a single argument - see MAX_TARGET_SPEC_LENGTH. Caught
+    // here rather than as an unexplained scan failure an hour later.
+    if (result.spec.length > MAX_TARGET_SPEC_LENGTH) {
+      setListError(`${file.name} is too long for one scan: ${result.entries.length} addresses come to ${Math.round(result.spec.length / 1024)} KB, and the limit is ${MAX_TARGET_SPEC_LENGTH / 1024} KB. Split it, or use CIDRs where the list covers whole subnets.`);
+      return;
+    }
+
+    setTargetSpec(result.spec);
+    const dupes = result.duplicates > 0 ? `, ${result.duplicates} duplicate${result.duplicates === 1 ? "" : "s"} dropped` : "";
+    setListSummary(`${result.entries.length} address${result.entries.length === 1 ? "" : "es"} loaded from ${file.name}${dupes}.`);
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!scannerAgentId || !targetSpec.trim() || !portSpec.trim()) return;
@@ -75,6 +122,8 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
       });
       setLastResult(result);
       setTargetSpec("");
+      setListSummary(null);
+      setListError(null);
       setPortSpec("");
       setProfile({ kind: "default" });
       setNucleiProfile({ kind: "off" });
@@ -118,14 +167,55 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
             <input
               placeholder="192.168.1.0/24, 2001:db8::1, web1.internal, or a mix"
               value={targetSpec}
-              onChange={(e) => setTargetSpec(e.target.value)}
+              onChange={(e) => {
+                setTargetSpec(e.target.value);
+                // Typing over a loaded list makes the summary a
+                // statement about something that is no longer there.
+                setListSummary(null);
+                setListError(null);
+              }}
             />
           </label>
+          {/* Same plain labelled file input as Import Scan and the
+              settings cards, rather than a styled button - nothing here
+              needs a new control. */}
+          <label>
+            Or load a list from a file
+            <input
+              type="file"
+              accept=".txt,.csv,.lst,text/plain,text/csv"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                // Clearing the input is what lets the same file be picked
+                // again after an error - otherwise change never fires.
+                e.target.value = "";
+                if (file) void handleTargetFile(file);
+              }}
+            />
+          </label>
+          {listSummary && (
+            <p className="empty">
+              {listSummary}{" "}
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => {
+                  setTargetSpec("");
+                  setListSummary(null);
+                }}
+              >
+                Clear
+              </button>
+            </p>
+          )}
+          {listError && <p className="callout-warning">{listError}</p>}
           <p className="empty">
             DNS hostnames are resolved by the scanner itself, and can be mixed freely with IPs, CIDRs and ranges in
             one comma-separated list. Each resolved name also becomes that host's TLS SNI / screenshot hostname, the
             same effect as setting its "probe hostname" by hand. A name that does not resolve fails the scan rather
-            than being skipped.
+            than being skipped. A file can hold one entry per line or a comma-separated list, with <code>#</code>{" "}
+            comments - it is read here in the browser and becomes exactly the target you see in the field, so you can
+            still edit it before starting.
           </p>
           <label>
             Ports

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { targetSpecSchema } from "../lib/targetSpec";
 import { db } from "../db";
 import { requireAuth, requireOperator } from "../auth/middleware";
 import { getAllowedScannerAgentIds } from "../auth/scannerScope";
@@ -36,7 +37,7 @@ const nucleiProfileSelectionSchema = z.discriminatedUnion("kind", [
 
 const createAdhocScanSchema = z.object({
   scannerAgentId: z.string().uuid(),
-  targetSpec: z.string().trim().min(1),
+  targetSpec: targetSpecSchema,
   // No format validation beyond non-empty - unlike scan_excludes (which
   // the webserver itself enforces against), a scan target is only ever
   // interpreted by the scanner. That includes a plain DNS hostname now.

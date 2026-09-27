@@ -82,6 +82,39 @@ describe("ad-hoc scans", () => {
     expect(row.status).toBe("pending");
   });
 
+  // The shape the Ad-hoc page's file upload produces: many addresses in
+  // one comma-separated spec, stored and handed to the scanner verbatim.
+  it("accepts a long comma-separated list of addresses as one target", async () => {
+    const addresses = Array.from({ length: 500 }, (_, i) => `240.9.${Math.floor(i / 256)}.${i % 256}`);
+    const res = await client.post("/api/adhoc-scans").send({
+      scannerAgentId: agent.id,
+      targetSpec: addresses.join(","),
+      portSpec: "443",
+    });
+    expect(res.status).toBe(201);
+    createdScanRequestIds.push(res.body.id);
+
+    const row = await db
+      .selectFrom("scan_requests")
+      .select(["target_spec"])
+      .where("id", "=", res.body.id)
+      .executeTakeFirstOrThrow();
+    expect(row.target_spec).toBe(addresses.join(","));
+  });
+
+  // masscan takes the whole spec as one argv entry and Linux caps one
+  // argument at 131072 bytes - measured, see lib/targetSpec.ts. Without
+  // this the request is accepted, queued, claimed, and only then fails on
+  // the scanner with "Argument list too long" and no mention of why.
+  it("rejects a target list too long to survive masscan's command line", async () => {
+    const res = await client.post("/api/adhoc-scans").send({
+      scannerAgentId: agent.id,
+      targetSpec: Array.from({ length: 20000 }, (_, i) => `10.${Math.floor(i / 65536) % 256}.${Math.floor(i / 256) % 256}.${i % 256}`).join(","),
+      portSpec: "443",
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("defaults to Default/Off profiles when neither is specified", async () => {
     const res = await client.post("/api/adhoc-scans").send({
       scannerAgentId: agent.id,
