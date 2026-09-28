@@ -27,14 +27,25 @@
 # service running "porttorch serve" so rescans and recurring schedules
 # work without a human keeping a terminal open.
 #
-# Usage: sudo ./install.sh   (run from inside the scanner/ checkout)
-#        sudo ./install.sh --rebuild-only   (after a "git pull" - just
+# Usage: sudo -E ./install.sh   (run from inside the scanner/ checkout)
+#        sudo -E ./install.sh --rebuild-only   (after a "git pull" - just
 #          rebuilds the porttorch binary from the current checkout and
 #          restarts the service, skipping the package-install/gowitness/config steps.
 #          Requires a prior full install to already exist.)
-#        sudo ./install.sh --from-source   (skip the prebuilt-binary download
+#        sudo -E ./install.sh --from-source   (skip the prebuilt-binary download
 #          below even if the checkout is exactly at a released tag, and
 #          always build from source instead. Flags can be combined.)
+#
+# The "-E" matters on a host that needs a proxy: apt-get/dnf, curl, git and
+# go all read http_proxy/https_proxy/no_proxy straight from the process
+# environment and route through it correctly - confirmed by testing all
+# four against a real proxy, not assumed. Plain "sudo" without "-E" does
+# not reach them at all: sudo's own default env_reset strips every
+# variable an operator exported first, proxy included, before this script
+# or anything it execs ever sees it - confirmed the same way, and the
+# proxy summary logged right after the root check below exists specifically
+# so that silent gap is visible immediately rather than showing up later
+# as an inexplicable download timeout.
 #
 # When this checkout's current commit is exactly a "scanner-vX.Y.Z" tag, the
 # porttorch binary is downloaded from that tag's GitHub Release instead of
@@ -73,8 +84,39 @@ log()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
-[[ $EUID -eq 0 ]] || die "run as root (sudo ./install.sh)"
+[[ $EUID -eq 0 ]] || die "run as root (sudo -E ./install.sh)"
 [[ -f go.mod ]] || die "run this from inside the scanner/ checkout (go.mod not found here)"
+
+# apt-get/dnf, curl, git and go all pick http_proxy/https_proxy/no_proxy up
+# from the environment on their own and route through it correctly -
+# confirmed by testing each one against a real proxy, not assumed. So the
+# only thing actually worth doing here is saying what this script can see,
+# right before anything tries to reach the network: a host that genuinely
+# needs no proxy and one where "sudo" (without "-E") just silently reset
+# the environment look identical from here on, and the second one would
+# otherwise only surface as an unexplained download timeout several
+# minutes into the install.
+redact_proxy_url() {
+  # Strips any userinfo before it ever reaches a log line - same
+  # discipline as the webserver's own outbound-proxy feature: credentials
+  # belong in the URL and are never logged, only the host.
+  if [[ "$1" =~ ^([a-zA-Z][a-zA-Z0-9+.-]*://)([^/@]*@)?(.*)$ ]]; then
+    printf '%s%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}"
+  else
+    printf '%s' "$1"
+  fi
+}
+proxy_summary=""
+for var in https_proxy HTTPS_PROXY http_proxy HTTP_PROXY; do
+  if [[ -n "${!var:-}" ]]; then
+    proxy_summary+="${proxy_summary:+, }$var=$(redact_proxy_url "${!var}")"
+  fi
+done
+if [[ -n "$proxy_summary" ]]; then
+  log "Proxy visible to this install: $proxy_summary"
+else
+  log "No proxy environment variable visible to this install - downloads will go direct. If this host needs one, re-run as 'sudo -E ./install.sh' (plain 'sudo' resets the environment and silently drops an exported proxy)."
+fi
 
 # Detected unconditionally (not just in the full-install branch below) -
 # grant_bin_dir_access further down needs pkg_install even on
