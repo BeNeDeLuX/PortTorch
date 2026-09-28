@@ -90,6 +90,17 @@ func TestNmapWrapperArgumentAllowlist(t *testing.T) {
 		"ipv6 discovery":  {"-6", "-Pn", "--privileged", "-sS", "-p", "1-1000", "-oX", "-", "2001:db8::1", "2001:db8::2"},
 		"snmp probe":      {"-Pn", "-R", "--privileged", "-sU", "-p", "161", "--script=snmp-info,snmp-sysdescr", "--host-timeout", "10s", "-oX", "-", "10.0.0.5"},
 		"script wildcard": {"-Pn", "--privileged", "--script=http-*", "-p", "80", "-oX", "-", "10.0.0.5"},
+		// Built from nmapEnrichArgs itself, at the config defaults
+		// (config.go's 900/120), rather than hand-written - this is the
+		// case that actually broke: --script-timeout shipped alongside
+		// --host-timeout in nmap.go, but only the second one was added to
+		// this wrapper's own allowlist, so every elevated enrichment call
+		// failed on every host the moment those defaults went non-zero.
+		// A hand-written case here would have missed exactly that, the
+		// same way the addition itself did.
+		"elevated with default timeouts": nmapEnrichArgs(
+			"22,443", "10.0.0.5", []string{"banner"}, false, true, true, false, 900, 120,
+		),
 	}
 	for name, args := range allowed {
 		if out, err := run(args...); err != nil {

@@ -32,6 +32,19 @@
 # Exits 64 (EX_USAGE) on a rejected argument, deliberately distinct from
 # nmap's own exit codes, and prints what it rejected so a pipeline change
 # that adds a flag fails loudly here instead of silently losing a feature.
+# That is exactly what happened once already: nmap.go grew --script-timeout
+# alongside --host-timeout, and this wrapper's allowlist was only updated
+# for the second one - so every elevated scan (the wrapper is what -O and
+# any UDP scan require) failed its nmap enrichment stage outright, on
+# every single host, the moment that config shipped with both timeouts
+# non-zero by default. masscan discovery still worked (it never goes
+# through this wrapper), which is what made a total failure look
+# host-specific in the log instead. Confirmed against a real report
+# showing exactly that shape: a host discovered fine, then "exit status
+# 64 ... --script-timeout (not in this wrapper's allowlist)" on every
+# subsequent host. The allowlist test now runs the actual default
+# enrichment command line (both timeouts set, as they are out of the box)
+# through this script, not just each flag in isolation.
 
 set -euo pipefail
 
@@ -47,7 +60,7 @@ reject() {
 # Flags taking no value.
 BOOL_FLAGS=(-Pn -R -6 -sV -sU -sS -sT -O --privileged --version-light)
 # Flags taking exactly one value, validated per flag below.
-VALUE_FLAGS=(-p -oX --host-timeout --max-retries --min-rate --scan-delay)
+VALUE_FLAGS=(-p -oX --host-timeout --script-timeout --max-retries --min-rate --scan-delay)
 
 is_in() {
   local needle="$1"; shift
@@ -99,7 +112,7 @@ while [[ $# -gt 0 ]]; do
           # script would then be writing as root.
           -oX) [[ "$value" == "-" ]] || reject "-oX $value (stdout only)" ;;
           -p)  [[ "$value" =~ ^[TU]?:?[0-9,:TU-]+$ ]] || reject "-p $value" ;;
-          --host-timeout|--scan-delay) [[ "$value" =~ ^[0-9]+(ms|s|m|h)?$ ]] || reject "$arg $value" ;;
+          --host-timeout|--script-timeout|--scan-delay) [[ "$value" =~ ^[0-9]+(ms|s|m|h)?$ ]] || reject "$arg $value" ;;
           --max-retries|--min-rate) [[ "$value" =~ ^[0-9]+$ ]] || reject "$arg $value" ;;
         esac
         args+=("$arg" "$value")

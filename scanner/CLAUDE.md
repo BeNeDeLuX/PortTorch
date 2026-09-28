@@ -260,6 +260,32 @@ against a stand-in for nmap): every "allow" case is a real argument list
 this package builds, and every "reject" case is a way of turning nmap
 into arbitrary root code execution.
 
+**A real, production-confirmed incident: the allowlist can be updated for
+one new flag and not its sibling, and the failure that produces is total
+rather than partial.** `--script-timeout` was added to `nmapEnrichArgs`
+alongside `--host-timeout` (see "nmap is bounded" above), but only made
+it into this wrapper's `VALUE_FLAGS` for the second one - so the moment
+`nmapScriptTimeoutSeconds`'s non-zero default (120) shipped, every
+elevated enrichment call (the wrapper is what `-O` and any UDP scan
+require) exited 64 against every single host, on every scan, on any
+scanner running the sudo wrapper. Confirmed against a real report
+matching that shape exactly: masscan discovery found the host fine (it
+never goes through this wrapper), then nmap failed immediately with
+`porttorch-nmap: refusing to run: --script-timeout (not in this
+wrapper's allowlist)` - which reads like one host's problem in the log,
+not a total one, since nothing else about the scan looked wrong.
+
+The gap in the test suite that let this ship is as informative as the
+bug: every existing "allow" case in `TestNmapWrapperArgumentAllowlist`
+was hand-written, and `TestNmapEnrichArgsPrivilegeDependentFlags` always
+called `nmapEnrichArgs` with the timeouts at `0, 0` - so nothing ever ran
+the *actual default* enrichment command line (both timeouts set, as they
+are out of the box) through the real wrapper script. The fix adds exactly
+that case, built by calling `nmapEnrichArgs` itself rather than
+hand-writing the argument list a second time - confirmed to actually
+catch the regression by reverting the wrapper fix and watching that case
+fail with the identical message the report showed, before restoring it.
+
 ### The queue loop runs several scans at once (`maxConcurrentScans`)
 
 `StartPolling` used to call `pollOnce` inline, so the loop blocked for the entire duration of a queue-triggered scan: a `/16` or a wide UDP sweep held the queue for hours, and the webserver's scan priority could only decide *who's next*, never *who gets in now*. `config.yaml`'s `maxConcurrentScans` (default **1** - byte-for-byte the old behaviour) caps how many queued requests this process works on at once, and the ticker branch keeps claiming until the slots are full or the queue is empty.
