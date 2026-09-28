@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import { api, Me, ScanHistoryResult } from "../api";
-import { IconInfo, IconWarning, IconSearch } from "../components/icons";
+import { IconInfo, IconWarning, IconSearch, IconRefresh } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScanProgressModal from "../components/ScanProgressModal";
 import { formatDateTime } from "../lib/formatDate";
@@ -24,6 +25,11 @@ type SortKey =
 type SortDirection = "asc" | "desc";
 
 export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => void }) {
+  const navigate = useNavigate();
+  // Same tier as creating an ad-hoc scan itself (requireOperator on the
+  // API side) - a read-only user can see history but not queue work from
+  // it, so the button is hidden rather than shown-disabled.
+  const canRescan = me.role === "admin" || me.role === "operator";
   const [queryInput, setQueryInput] = useState("");
   const [query, setQuery] = useState("");
   const [statuses, setStatuses] = useState<Set<string>>(new Set(STATUSES));
@@ -164,9 +170,32 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
                   <td>{s.screenshots + s.rdp_screenshots}</td>
                   <td>{s.tls_certificates}</td>
                   <td>
-                    <button className="btn-icon-label" onClick={() => setDetailsJobId(s.id)}>
-                      <IconInfo /> Details
-                    </button>
+                    <div className="actions-cell">
+                      <button className="btn-icon-label" onClick={() => setDetailsJobId(s.id)}>
+                        <IconInfo /> Details
+                      </button>
+                      {canRescan && (
+                        <button
+                          className="btn-icon-label"
+                          title={
+                            s.scanner_agent_id
+                              ? "Queue this exact target and ports again"
+                              : "The scanner that ran this is gone - pick one on the next page"
+                          }
+                          onClick={() =>
+                            navigate("/adhoc-scans", {
+                              state: {
+                                targetSpec: s.target_spec,
+                                portSpec: s.port_spec,
+                                ...(s.scanner_agent_id ? { scannerAgentId: s.scanner_agent_id } : {}),
+                              },
+                            })
+                          }
+                        >
+                          <IconRefresh /> Rescan
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

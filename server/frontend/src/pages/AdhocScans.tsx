@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Link } from "react-router";
+import { Link, useLocation } from "react-router";
 import { AdhocScanResult, api, Me, NSEProfileSelection, NucleiProfileSelection, ScanPriority, ScannerAgent } from "../api";
 import { IconPlay } from "../components/icons";
 import PageHeader from "../components/PageHeader";
@@ -13,23 +13,41 @@ import { MAX_TARGET_SPEC_LENGTH, parseTargetList } from "../lib/targetList";
 import { parseTagList } from "../lib/scanTags";
 import { formatDateTime } from "../lib/formatDate";
 
+// Router state Scan History hands off when the operator clicks its own
+// "Rescan" button - see that page for why only these three fields travel
+// (profile/nuclei/tags/priority are deliberately picked fresh here rather
+// than replayed, the same as every other Rescan trigger point in this
+// app: RescanModal always shows its own picker rather than reproducing a
+// host's last-used profile).
+interface RescanNavState {
+  targetSpec?: string;
+  portSpec?: string;
+  scannerAgentId?: string;
+}
+
 // A one-shot "scan this right now" page - Schedule Scans minus all the
 // interval/cron/run-at machinery, since an ad-hoc scan has no schedule at
 // all: submitting fires a single scan_requests row that the chosen
 // scanner picks up on its very next poll. Not admin-gated (requireOperator
 // on the API side too), same access tier as the Rescan button.
 export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => void }) {
+  const location = useLocation();
+  // Read once, on mount - a plain useState initializer, matching how
+  // HostDetail reads its own router-state hand-off. Re-visiting this page
+  // later (a fresh navigation with no state) starts blank as normal.
+  const navState = (location.state ?? null) as RescanNavState | null;
+
   const [agents, setAgents] = useState<ScannerAgent[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [scannerAgentId, setScannerAgentId] = useState("");
-  const [targetSpec, setTargetSpec] = useState("");
+  const [scannerAgentId, setScannerAgentId] = useState(navState?.scannerAgentId ?? "");
+  const [targetSpec, setTargetSpec] = useState(navState?.targetSpec ?? "");
   // What the last uploaded file produced, shown under the field - a spec
   // of a few thousand addresses is not something anyone reads back out of
   // an input, so the count is what tells them it worked.
   const [listSummary, setListSummary] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
-  const [portSpec, setPortSpec] = useState("");
+  const [portSpec, setPortSpec] = useState(navState?.portSpec ?? "");
   const [profile, setProfile] = useState<NSEProfileSelection>({ kind: "default" });
   const [nucleiProfile, setNucleiProfile] = useState<NucleiProfileSelection>({ kind: "off" });
   const [masscanRate, setMasscanRate] = useState("");
@@ -56,7 +74,12 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
       const agentList = await api.agents();
       const activeAgents = agentList.filter((a) => !a.revoked_at);
       setAgents(activeAgents);
-      if (activeAgents.length > 0 && !scannerAgentId) {
+      // Also re-defaults when a pre-filled scanner (from a Rescan hand-off)
+      // no longer exists among the active agents - deleted or revoked
+      // since that scan ran - rather than leaving the <select> pointed at
+      // an id with no matching option.
+      const stillValid = scannerAgentId !== "" && activeAgents.some((a) => a.id === scannerAgentId);
+      if (activeAgents.length > 0 && !stillValid) {
         setScannerAgentId(activeAgents[0].id);
       }
     } finally {
@@ -149,6 +172,12 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
         Fire a single scan right now - no schedule, no recurrence. Picked up by the chosen scanner on its very next
         poll.
       </p>
+      {navState && (
+        <p className="callout-success">
+          Target, ports and scanner pre-filled from Scan History - the scan profile, nuclei profile, tags and
+          priority are left for you to pick fresh, same as any other rescan.
+        </p>
+      )}
 
       {agents.length === 0 && !loading ? (
         <p className="empty">

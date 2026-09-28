@@ -115,6 +115,13 @@ scanJobsRouter.get("/history", asyncHandler(async (req, res) => {
       "scan_jobs.finished_at as finished_at",
       "scan_jobs.discovered_hosts as discovered_hosts",
       "scan_jobs.anomalies as anomalies",
+      // Not just the name: the Rescan button needs the actual id to
+      // pre-select this scanner on the Ad-hoc Scans form, and unlike
+      // Active/most other views this doesn't already have it from
+      // anywhere else on the page. Nullable for the same reason the name
+      // can be "?" - a deleted scanner leaves its history rows in place
+      // with the reference cleared (ON DELETE SET NULL).
+      "scan_jobs.scanner_agent_id as scanner_agent_id",
       "scanner_agents.name as scanner_agent_name",
       sql<number>`(select count(distinct host_id) from host_port_observations where scan_job_id = scan_jobs.id)`.as(
         "hosts_scanned"

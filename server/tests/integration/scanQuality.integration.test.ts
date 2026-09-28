@@ -202,6 +202,16 @@ describe("scan quality", () => {
     expect(withDiscovery).toBeDefined();
     expect(Array.isArray(withDiscovery.anomalies)).toBe(true);
   });
+
+  // The actual id, not just the display name - Scan History's own Rescan
+  // button needs it to pre-select this scanner on the Ad-hoc Scans form,
+  // which the name alone can't do.
+  it("includes the scanner agent's id, not just its name", async () => {
+    const res = await client.get("/api/scan-jobs/history?pageSize=200");
+    expect(res.status).toBe(200);
+    const mine = res.body.items.find((i: { scanner_agent_name: string }) => i.scanner_agent_name === agent.name);
+    expect(mine.scanner_agent_id).toBe(agent.id);
+  });
 });
 
 describe("scanner coverage overlap", () => {

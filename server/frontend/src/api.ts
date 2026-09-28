@@ -1215,6 +1215,7 @@ export interface ScanHistoryEntry {
   started_at: string;
   finished_at: string | null;
   duration_ms: number | null;
+  scanner_agent_id: string | null;
   scanner_agent_name: string | null;
   hosts_scanned: number;
   open_ports_found: number;
