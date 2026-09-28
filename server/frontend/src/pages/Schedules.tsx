@@ -10,6 +10,7 @@ import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanRateSupportNote from "../components/ScanRateSupportNote";
 import PortSpecHint from "../components/PortSpecHint";
 import { formatDateTime } from "../lib/formatDate";
+import { parseTagList } from "../lib/scanTags";
 import {
   resolveTimezone,
   shiftWeekday,
@@ -216,6 +217,12 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
   // of something editable elsewhere, so handleEdit can just pre-select the
   // stored value with no risk of silently reverting anything.
   const [priority, setPriority] = useState<ScanPriority>("normal");
+  // Comma-separated, parsed just before submit (lib/scanTags.ts) - same
+  // representation as priority above, not the profile pickers': a
+  // schedule's tags are a plain stored array with no live-reference
+  // ambiguity, so handleEdit can pre-fill the real value directly and
+  // this needs no "touched" tracking to avoid silently reverting anything.
+  const [tags, setTags] = useState("");
   // The run window is off unless explicitly enabled: all-null is what
   // every existing schedule carries and what "no restriction" means, so
   // the form must never silently impose one.
@@ -311,6 +318,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     setEditingNucleiProfileLabel(null);
     setMasscanRate("");
     setPriority("normal");
+    setTags("");
     setWindowEnabled(false);
     setWindowStart("22:00");
     setWindowEnd("06:00");
@@ -348,6 +356,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     setEditingNucleiProfileLabel(s.nuclei_profile_label);
     setMasscanRate(s.masscan_rate != null ? String(s.masscan_rate) : "");
     setPriority(s.priority);
+    setTags(s.tags && s.tags.length > 0 ? s.tags.join(", ") : "");
     const hasWindow = s.window_start_minute !== null || (s.window_days !== null && s.window_days.length > 0);
     setWindowEnabled(hasWindow);
     setWindowStart(minutesToTime(s.window_start_minute ?? 22 * 60));
@@ -407,6 +416,11 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         ...(nucleiProfileTouched ? { nucleiProfile } : {}),
         ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
         priority,
+        // Unlike the create-time fields above, this always sends a value
+        // rather than being omitted when blank - the field is pre-filled
+        // from the stored tags on edit, so an admin who clears it is
+        // deliberately clearing them, and null is what does that.
+        tags: tags.trim() ? parseTagList(tags) : null,
         ...windowPayload,
       };
       if (scheduleType === "interval") {
@@ -436,6 +450,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         nucleiProfile,
         ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
         priority,
+        ...(tags.trim() ? { tags: parseTagList(tags) } : {}),
         ...windowPayload,
       });
     } else if (scheduleType === "once") {
@@ -456,6 +471,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         nucleiProfile,
         ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
         priority,
+        ...(tags.trim() ? { tags: parseTagList(tags) } : {}),
         ...windowPayload,
       });
     } else {
@@ -471,6 +487,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         nucleiProfile,
         ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
         priority,
+        ...(tags.trim() ? { tags: parseTagList(tags) } : {}),
         ...windowPayload,
       });
     }
@@ -483,6 +500,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     setNucleiProfileTouched(false);
     setMasscanRate("");
     setPriority("normal");
+    setTags("");
     setWindowEnabled(false);
     await load();
   }
@@ -546,6 +564,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
             </>
           )}
           {describeWindow(s) && <div className="host-meta">only {describeWindow(s)}</div>}
+          {s.tags && s.tags.length > 0 && <div className="host-meta">tags: {s.tags.join(", ")}</div>}
         </td>
         <td>{s.scanner_agent_name ?? "?"}</td>
         <td>
@@ -673,6 +692,14 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
             Queue priority
             <ScanPriorityPicker value={priority} onChange={setPriority} />
           </label>
+          <label>
+            Tags (optional)
+            <input placeholder="Q3-Audit, external-range" value={tags} onChange={(e) => setTags(e.target.value)} />
+          </label>
+          <p className="empty">
+            Comma-separated. Applied to every host each run of this schedule actually finds, so "find exactly what
+            this schedule found" is a tag filter on the Dashboard afterwards.
+          </p>
           <label className="hide-empty-toggle window-toggle">
             <input type="checkbox" checked={windowEnabled} onChange={(e) => setWindowEnabled(e.target.checked)} />
             Only run inside a time window

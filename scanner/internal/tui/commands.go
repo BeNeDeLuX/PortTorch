@@ -91,7 +91,9 @@ func runScanCmd(c *client.Client, pcfg pipeline.Config, queueDir string, auditLo
 
 				submitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 				defer cancel()
-				err := c.SubmitHostResult(submitCtx, jobID, host, func(kind string, port int, err error) {
+				// nil tags: same reasoning as the one-shot scan CLI - the
+				// TUI has no scan_requests row behind it either.
+				err := c.SubmitHostResult(submitCtx, jobID, host, nil, func(kind string, port int, err error) {
 					tallyMu.Lock()
 					screenshotErrors++
 					tallyMu.Unlock()
@@ -110,7 +112,7 @@ func runScanCmd(c *client.Client, pcfg pipeline.Config, queueDir string, auditLo
 						tracker.Progress("submit", msg)
 						return
 					}
-					if queueErr := submitqueue.Enqueue(queueDir, jobID, host); queueErr != nil {
+					if queueErr := submitqueue.Enqueue(queueDir, jobID, host, nil); queueErr != nil {
 						msg := fmt.Sprintf("host submission for %s failed and could not be queued for retry, result lost: %v", host.IP, queueErr)
 						progressCh <- progressMsg{stage: "submit", message: msg}
 						tracker.Progress("submit", msg)

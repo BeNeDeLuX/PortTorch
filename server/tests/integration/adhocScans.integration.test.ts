@@ -201,4 +201,45 @@ describe("ad-hoc scans", () => {
     await deleteTestUser(restricted.id);
     await deleteTestAgent(otherAgent.id);
   });
+
+  // The ingest-side application of these tags to real hosts is covered
+  // end-to-end in scanRequestTags.integration.test.ts - this just pins
+  // that creation stores and echoes them correctly.
+  it("stores and echoes back optional tags", async () => {
+    const res = await client.post("/api/adhoc-scans").send({
+      scannerAgentId: agent.id,
+      targetSpec: "240.9.6.5",
+      portSpec: "80",
+      tags: ["Q3-Audit", "external-range", "Q3-Audit"],
+    });
+    expect(res.status).toBe(201);
+    createdScanRequestIds.push(res.body.id);
+    // Deduped, first spelling kept.
+    expect(res.body.tags).toEqual(["Q3-Audit", "external-range"]);
+
+    const row = await db.selectFrom("scan_requests").select(["tags"]).where("id", "=", res.body.id).executeTakeFirstOrThrow();
+    expect(row.tags).toEqual(["Q3-Audit", "external-range"]);
+  });
+
+  it("stores null tags when none are given", async () => {
+    const res = await client.post("/api/adhoc-scans").send({
+      scannerAgentId: agent.id,
+      targetSpec: "240.9.6.6",
+      portSpec: "80",
+    });
+    expect(res.status).toBe(201);
+    createdScanRequestIds.push(res.body.id);
+    expect(res.body.tags).toBeNull();
+  });
+
+  it("rejects more tags than the cap", async () => {
+    const tooMany = Array.from({ length: 21 }, (_, i) => `tag-${i}`);
+    const res = await client.post("/api/adhoc-scans").send({
+      scannerAgentId: agent.id,
+      targetSpec: "240.9.6.7",
+      portSpec: "80",
+      tags: tooMany,
+    });
+    expect(res.status).toBe(400);
+  });
 });

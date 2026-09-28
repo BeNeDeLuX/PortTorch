@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { targetSpecSchema } from "../lib/targetSpec";
+import { normalizeScanTags, scanTagsSchema } from "../lib/scanTags";
 import { sql } from "kysely";
 import { db } from "../db";
 import { asyncHandler } from "../lib/asyncHandler";
@@ -380,6 +381,9 @@ export const adhocScanSchema = z.object({
   // "high" | "normal" | "low" - where this lands in the target scanner's
   // claim order. Omitted keeps the pre-priority behavior ('normal').
   priority: scanPrioritySchema.optional(),
+  // Applied to every host this scan actually touches - see lib/scanTags.ts
+  // and the dashboard's own Ad-hoc Scans page, which this mirrors.
+  tags: scanTagsSchema,
 });
 
 // Ad-hoc Scans' External API counterpart - the one route in this router
@@ -458,8 +462,9 @@ integrationsRouter.post("/scans/adhoc", requireTokenWrite, asyncHandler(async (r
       nuclei_profile_label: nucleiResolution.nucleiProfileLabel,
       masscan_rate: parsed.data.masscanRate ?? null,
       priority: parsed.data.priority ?? DEFAULT_SCAN_PRIORITY,
+      tags: normalizeScanTags(parsed.data.tags),
     })
-    .returning(["id", "status", "created_at"])
+    .returning(["id", "status", "created_at", "tags"])
     .executeTakeFirstOrThrow();
 
   logger.info({
@@ -469,6 +474,7 @@ integrationsRouter.post("/scans/adhoc", requireTokenWrite, asyncHandler(async (r
     scanner_agent_name: agent.name,
     target_spec: parsed.data.targetSpec,
     port_spec: parsed.data.portSpec,
+    tags: request.tags,
     requested_by: requestedBy,
     api_token_id: req.apiTokenId,
     source_ip: req.ip,
@@ -479,6 +485,7 @@ integrationsRouter.post("/scans/adhoc", requireTokenWrite, asyncHandler(async (r
     scanner_agent_name: agent.name,
     target_spec: parsed.data.targetSpec,
     port_spec: parsed.data.portSpec,
+    tags: request.tags,
     api_token_id: req.apiTokenId,
   });
 
@@ -489,6 +496,7 @@ integrationsRouter.post("/scans/adhoc", requireTokenWrite, asyncHandler(async (r
     scannerAgentName: agent.name,
     profile: nseResolution.nseProfileLabel,
     nucleiProfile: nucleiResolution.nucleiProfileLabel,
+    tags: request.tags,
   });
 }));
 

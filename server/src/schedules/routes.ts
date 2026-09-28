@@ -12,6 +12,7 @@ import { ScanProfileNotFoundError, resolveNSEProfile } from "../scanProfiles/res
 import { NucleiProfileNotFoundError, resolveNucleiProfile } from "../nucleiProfiles/resolve";
 import { DEFAULT_SCAN_PRIORITY, scanPrioritySchema } from "../scanPriority";
 import { isWithinScanWindow } from "../lib/scanWindow";
+import { normalizeScanTags, scanTagsSchema } from "../lib/scanTags";
 
 export const schedulesRouter = Router();
 schedulesRouter.use(requireAuth);
@@ -47,6 +48,7 @@ schedulesRouter.get("/", asyncHandler(async (req, res) => {
       "scan_schedules.window_end_minute as window_end_minute",
       "scan_schedules.window_days as window_days",
       "scan_schedules.window_timezone as window_timezone",
+      "scan_schedules.tags as tags",
       "scanner_agents.name as scanner_agent_name",
     ]);
 
@@ -110,6 +112,10 @@ const baseScheduleFields = {
   windowEndMinute: z.number().int().min(0).max(1439).nullable().optional(),
   windowDays: z.array(z.number().int().min(0).max(6)).nullable().optional(),
   windowTimezone: z.string().min(1).nullable().optional(),
+  // Copied onto every scan_requests row this schedule spawns
+  // (scheduler.ts's tick()) and applied to every host that run actually
+  // touches - see lib/scanTags.ts.
+  tags: scanTagsSchema,
 };
 
 const createScheduleSchema = z.discriminatedUnion("scheduleType", [
@@ -198,6 +204,7 @@ schedulesRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
       window_end_minute: parsed.data.windowEndMinute ?? null,
       window_days: parsed.data.windowDays ?? null,
       window_timezone: parsed.data.windowTimezone ?? null,
+      tags: normalizeScanTags(parsed.data.tags),
       created_by: req.session.username ?? null,
     })
     .returning(["id"])
@@ -214,6 +221,7 @@ schedulesRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
     interval_minutes: parsed.data.scheduleType === "interval" ? parsed.data.intervalMinutes : undefined,
     cron_expression: parsed.data.scheduleType === "cron" ? parsed.data.cronExpression : undefined,
     run_at: parsed.data.scheduleType === "once" ? parsed.data.runAt : undefined,
+    tags: normalizeScanTags(parsed.data.tags),
     created_by: req.session.username,
     source_ip: req.ip,
   });
@@ -259,6 +267,9 @@ const updateScheduleSchema = z.object({
   windowEndMinute: z.number().int().min(0).max(1439).nullable().optional(),
   windowDays: z.array(z.number().int().min(0).max(6)).nullable().optional(),
   windowTimezone: z.string().min(1).nullable().optional(),
+  // Nullable (unlike the create-time field), so an existing schedule's
+  // tags can be explicitly cleared back to none, not just replaced.
+  tags: scanTagsSchema.nullable(),
 });
 
 schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
@@ -271,17 +282,18 @@ schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  if (
-    parsed.data.enabled === undefined &&
-    parsed.data.intervalMinutes === undefined &&
-    parsed.data.cronExpression === undefined &&
-    parsed.data.targetSpec === undefined &&
-    parsed.data.portSpec === undefined &&
-    parsed.data.scannerAgentId === undefined &&
-    parsed.data.runAt === undefined &&
-    parsed.data.profile === undefined &&
-    parsed.data.nucleiProfile === undefined
-  ) {
+  // Every field on this schema is optional, so a real HTTP request (JSON
+  // has no "undefined" literal - a body parsed by express.json() can only
+  // omit a key or set it null) leaves a key out of `parsed.data` entirely
+  // when it wasn't sent, and zod's own object parsing confirms that
+  // directly: `Object.keys` on the parsed result matches exactly what was
+  // present. This replaced a hand-enumerated list of fields that had to
+  // be kept in sync by hand and wasn't - masscanRate, priority and the
+  // four window fields were never added to it, so a PATCH containing only
+  // one of those silently 400'd as "nothing to update" despite being
+  // otherwise fully supported below. Found while adding `tags`, which
+  // would have repeated the identical mistake.
+  if (Object.keys(parsed.data).length === 0) {
     res.status(400).json({ error: "nothing to update" });
     return;
   }
@@ -437,6 +449,7 @@ schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
       ...(parsed.data.windowEndMinute !== undefined ? { window_end_minute: parsed.data.windowEndMinute } : {}),
       ...(parsed.data.windowDays !== undefined ? { window_days: parsed.data.windowDays } : {}),
       ...(parsed.data.windowTimezone !== undefined ? { window_timezone: parsed.data.windowTimezone } : {}),
+      ...(parsed.data.tags !== undefined ? { tags: normalizeScanTags(parsed.data.tags) } : {}),
     })
     .where("id", "=", req.params.id)
     .executeTakeFirst();

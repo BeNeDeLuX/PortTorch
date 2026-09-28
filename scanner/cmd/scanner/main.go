@@ -432,7 +432,11 @@ func runScan(configPath, target, ports string, nseScripts []string, nucleiProfil
 
 			submitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			err := c.SubmitHostResult(submitCtx, jobID, host, func(kind string, port int, err error) {
+			// nil tags: the one-shot CLI has no scan_requests row behind
+			// it to carry any (see the webserver's lib/scanTags.ts) - only
+			// the queue-triggered path in internal/api/server.go resolves
+			// a real value, same as nseScripts/nucleiProfile above it.
+			err := c.SubmitHostResult(submitCtx, jobID, host, nil, func(kind string, port int, err error) {
 				log.Warn(kind+" submission failed", "event", "scan."+kind+"_submit_failed", "scan_job_id", jobID, "target_ip", host.IP, "port", port, "error", err.Error())
 				tracker.Progress(kind, fmt.Sprintf("submission for %s failed: %v", host.IP, err))
 			})
@@ -446,7 +450,7 @@ func runScan(configPath, target, ports string, nseScripts []string, nucleiProfil
 				} else {
 					log.Warn("host submission failed, queuing for retry", "event", "scan.host_submit_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", err.Error())
 					tracker.Progress("submit", fmt.Sprintf("host submission for %s failed, queued for retry: %v", host.IP, err))
-					if queueErr := submitqueue.Enqueue(cfg.SubmitQueueDir, jobID, host); queueErr != nil {
+					if queueErr := submitqueue.Enqueue(cfg.SubmitQueueDir, jobID, host, nil); queueErr != nil {
 						log.Error("queuing failed host submission for retry also failed, result lost", "event", "submitqueue.enqueue_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", queueErr.Error())
 					} else {
 						c.SetSubmitQueuePending(submitqueue.CountPending(cfg.SubmitQueueDir))

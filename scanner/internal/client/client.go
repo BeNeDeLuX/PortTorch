@@ -331,8 +331,11 @@ type ingestHost struct {
 	NucleiFindings        []ingestNucleiFinding `json:"nucleiFindings,omitempty"`
 }
 
-// SubmitHosts submits the host/port results of a scan job.
-func (c *Client) SubmitHosts(ctx context.Context, jobID string, hosts []pipeline.HostResult) error {
+// SubmitHosts submits the host/port results of a scan job. tags are the
+// scan's own requested tags (client.ScanRequest.Tags, from Ad-hoc Scans or
+// a schedule) - applied by ingest to every host in this call, exactly as
+// if added by hand; nil/empty means none were requested.
+func (c *Client) SubmitHosts(ctx context.Context, jobID string, hosts []pipeline.HostResult, tags []string) error {
 	if len(hosts) == 0 {
 		return nil
 	}
@@ -412,6 +415,13 @@ func (c *Client) SubmitHosts(ctx context.Context, jobID string, hosts []pipeline
 		"scanJobId": jobID,
 		"hosts":     payloadHosts,
 	}
+	// Omitted entirely rather than sent as an empty list - keeps the
+	// request body byte-identical to before this existed for every call
+	// that has no tags to apply, matching how masscanRate's own per-scan
+	// override is threaded.
+	if len(tags) > 0 {
+		body["tags"] = tags
+	}
 	return c.doJSON(ctx, http.MethodPost, "/api/ingest/hosts", body, nil)
 }
 
@@ -428,8 +438,8 @@ func (c *Client) SubmitHosts(ctx context.Context, jobID string, hosts []pipeline
 // "tls_certificate") - those are a supplement to the host/port data
 // that's already been persisted by that point, not a reason to treat the
 // whole host as failed.
-func (c *Client) SubmitHostResult(ctx context.Context, jobID string, host pipeline.HostResult, onSubItemError func(kind string, port int, err error)) error {
-	if err := c.SubmitHosts(ctx, jobID, []pipeline.HostResult{host}); err != nil {
+func (c *Client) SubmitHostResult(ctx context.Context, jobID string, host pipeline.HostResult, tags []string, onSubItemError func(kind string, port int, err error)) error {
+	if err := c.SubmitHosts(ctx, jobID, []pipeline.HostResult{host}, tags); err != nil {
 		return err
 	}
 	hosts := []pipeline.HostResult{host}
@@ -649,6 +659,11 @@ type ScanRequest struct {
 	// rather than an int so "not set" is distinguishable from a literal 0,
 	// which would otherwise silently look like a request for rate 0.
 	MasscanRate *int
+	// Tags to apply to every host this scan touches - see the webserver's
+	// lib/scanTags.ts. Echoed back verbatim on every SubmitHosts call for
+	// this scan_job so ingest can write them without needing to look this
+	// request back up; nil means none were requested.
+	Tags []string
 }
 
 // PollNextScanRequest asks the webserver for the next pending scan request
@@ -684,6 +699,7 @@ func (c *Client) PollNextScanRequest(ctx context.Context) (*ScanRequest, error) 
 		NucleiProfile string   `json:"nucleiProfile"`
 		NucleiTags    []string `json:"nucleiTags"`
 		MasscanRate   *int     `json:"masscanRate"`
+		Tags          []string `json:"tags"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, fmt.Errorf("decoding scan request: %w", err)
@@ -692,7 +708,7 @@ func (c *Client) PollNextScanRequest(ctx context.Context) (*ScanRequest, error) 
 		ID: out.ID, TargetSpec: out.TargetSpec, PortSpec: out.PortSpec,
 		NSEProfile: out.NSEProfile, NSEScripts: out.NSEScripts,
 		NucleiProfile: out.NucleiProfile, NucleiTags: out.NucleiTags,
-		MasscanRate: out.MasscanRate,
+		MasscanRate: out.MasscanRate, Tags: out.Tags,
 	}, nil
 }
 

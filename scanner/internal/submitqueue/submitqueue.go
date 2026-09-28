@@ -62,10 +62,15 @@ func IsPermanentFailure(err error) bool {
 }
 
 type queuedItem struct {
-	JobID    string              `json:"jobId"`
-	Host     pipeline.HostResult `json:"host"`
-	QueuedAt time.Time           `json:"queuedAt"`
-	Attempts int                 `json:"attempts"`
+	JobID string              `json:"jobId"`
+	Host  pipeline.HostResult `json:"host"`
+	// The scan's own requested tags (see client.ScanRequest.Tags), carried
+	// through the queue so a retry applies exactly what the original
+	// submission would have - without this a host whose first submission
+	// attempt failed would come back untagged once retried.
+	Tags     []string  `json:"tags,omitempty"`
+	QueuedAt time.Time `json:"queuedAt"`
+	Attempts int       `json:"attempts"`
 }
 
 // Enqueue durably persists host (which failed to submit under jobID) into
@@ -74,7 +79,7 @@ type queuedItem struct {
 // the host result is lost entirely, both the live submission and the
 // durable copy having failed, which the caller should log clearly rather
 // than treating as an ordinary "will retry" outcome.
-func Enqueue(queueDir, jobID string, host pipeline.HostResult) error {
+func Enqueue(queueDir, jobID string, host pipeline.HostResult, tags []string) error {
 	if err := os.MkdirAll(queueDir, 0o755); err != nil {
 		return fmt.Errorf("creating submit queue directory: %w", err)
 	}
@@ -112,7 +117,7 @@ func Enqueue(queueDir, jobID string, host pipeline.HostResult) error {
 		}
 	}
 
-	data, err := json.Marshal(queuedItem{JobID: jobID, Host: queued, QueuedAt: time.Now()})
+	data, err := json.Marshal(queuedItem{JobID: jobID, Host: queued, Tags: tags, QueuedAt: time.Now()})
 	if err != nil {
 		os.RemoveAll(entryDir)
 		return fmt.Errorf("encoding queued item: %w", err)
@@ -324,7 +329,7 @@ func drainEntry(ctx context.Context, entryDir string, c *client.Client, result *
 
 	submitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	submitErr := c.SubmitHostResult(submitCtx, item.JobID, item.Host, func(kind string, port int, err error) {
+	submitErr := c.SubmitHostResult(submitCtx, item.JobID, item.Host, item.Tags, func(kind string, port int, err error) {
 		// Individual screenshot/RDP/TLS-certificate sub-item failures
 		// during a retry are the same "supplement, not primary data"
 		// case SubmitHostResult already documents - not a reason to

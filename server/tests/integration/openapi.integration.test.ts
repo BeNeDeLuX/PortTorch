@@ -43,12 +43,16 @@ describe("External API OpenAPI document", () => {
     // here automatically, which is the point of generating rather than
     // hand-writing this half.
     expect(Object.keys(adhocProps).sort()).toEqual(
-      ["masscanRate", "nucleiProfile", "portSpec", "priority", "profile", "scannerAgent", "targetSpec"].sort()
+      ["masscanRate", "nucleiProfile", "portSpec", "priority", "profile", "scannerAgent", "tags", "targetSpec"].sort()
     );
     // And the constraints come along too, not just the field names - both
     // a numeric bound and an enum's allowed values.
     expect(adhocProps.masscanRate).toMatchObject({ type: "integer", minimum: 1 });
     expect(adhocProps.priority).toMatchObject({ enum: ["high", "normal", "low"] });
+    // `tags` is the newest addition (scanTagsSchema) - same "the cap comes
+    // along automatically" point, for an array field this time rather
+    // than a number or an enum.
+    expect(adhocProps.tags).toMatchObject({ type: "array", maxItems: 20, items: { type: "string" } });
   });
 
   it("turns the lookup endpoint's schema into query parameters, not a body", async () => {

@@ -10,6 +10,7 @@ import ScanPriorityPicker from "../components/ScanPriorityPicker";
 import ScanRateSupportNote from "../components/ScanRateSupportNote";
 import PortSpecHint from "../components/PortSpecHint";
 import { MAX_TARGET_SPEC_LENGTH, parseTargetList } from "../lib/targetList";
+import { parseTagList } from "../lib/scanTags";
 import { formatDateTime } from "../lib/formatDate";
 
 // A one-shot "scan this right now" page - Schedule Scans minus all the
@@ -39,6 +40,7 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
   // The API itself still defaults to 'normal' when the field is omitted,
   // keeping the External API's own ad-hoc endpoint unchanged.
   const [priority, setPriority] = useState<ScanPriority>("high");
+  const [tags, setTags] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -119,6 +121,7 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
         nucleiProfile,
         priority,
         ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
+        ...(tags.trim() ? { tags: parseTagList(tags) } : {}),
       });
       setLastResult(result);
       setTargetSpec("");
@@ -129,6 +132,7 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
       setNucleiProfile({ kind: "off" });
       setPriority("high");
       setMasscanRate("");
+      setTags("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to queue scan");
     } finally {
@@ -249,6 +253,15 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
             Packets per second for the masscan discovery pass. Leave blank to use whatever the chosen scanner has
             configured (default 1000). Lower it for fragile or sensitive network segments; only affects this scan.
           </p>
+          <label>
+            Tags (optional)
+            <input placeholder="Q3-Audit, external-range" value={tags} onChange={(e) => setTags(e.target.value)} />
+          </label>
+          <p className="empty">
+            Comma-separated. Applied to every host this scan actually finds, so "find exactly what this scan found"
+            is a tag filter on the Dashboard afterwards - filterable, removable, and shown alongside any tag added by
+            hand.
+          </p>
 
           <div className="inline-actions">
             <button type="submit" className="btn-icon-label" disabled={submitting}>
@@ -271,7 +284,8 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
           Scan queued for {lastResult.scannerAgentName} at {formatDateTime(lastResult.created_at, me.preferences)}.
           Profile: {lastResult.nse_profile_label ?? "Default"}
           {lastResult.nuclei_profile_label ? `, Nuclei: ${lastResult.nuclei_profile_label}` : ""}, priority:{" "}
-          {lastResult.priority}.
+          {lastResult.priority}
+          {lastResult.tags && lastResult.tags.length > 0 ? `, tags: ${lastResult.tags.join(", ")}` : ""}.
         </p>
       )}
     </div>

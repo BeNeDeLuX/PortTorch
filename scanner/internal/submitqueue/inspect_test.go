@@ -25,7 +25,7 @@ func TestListAndDiscardPending(t *testing.T) {
 		}},
 		{IP: "10.0.0.2", Ports: []pipeline.PortResult{{Port: 443, Protocol: "tcp", State: "open"}}},
 	} {
-		if err := Enqueue(dir, "job-1", h); err != nil {
+		if err := Enqueue(dir, "job-1", h, nil); err != nil {
 			t.Fatalf("Enqueue: %v", err)
 		}
 	}

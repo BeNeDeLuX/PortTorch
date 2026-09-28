@@ -657,6 +657,14 @@ const nucleiFindingSchema = z.object({
 
 const ingestHostsSchema = z.object({
   scanJobId: z.string().uuid(),
+  // The scan_requests row this batch came from already validated/deduped
+  // these at creation time (see lib/scanTags.ts) - this is the scanner
+  // echoing them straight back on every submission for this scan_job, not
+  // a second place they're authored, so no re-validation beyond "an
+  // array of strings" is needed here. Absent for anything that didn't go
+  // through the queue (the one-shot CLI, the local REST API, an nmap XML
+  // import) or requested none - both mean the same thing: nothing to add.
+  tags: z.array(z.string()).optional(),
   hosts: z.array(
     z.object({
       ip: zIp(),
@@ -723,6 +731,11 @@ export async function ingestHostPayload(
   const portOpenedEvents: Array<{ hostId: string; ip: string; hostname: string | null; port: number; serviceName: string | null }> = [];
   const nucleiFindingEvents: Array<{ hostId: string; ip: string; hostname: string | null; templateId: string; name: string; severity: string }> = [];
   const autoTagEvents: Array<{ hostId: string; ip: string; tag: string }> = [];
+  // Same shape, kept separate from autoTagEvents so the audit trail can
+  // tell "the scan found this service" apart from "whoever created this
+  // scan asked for this tag" - see the added_by values in the two logging
+  // loops below.
+  const requestedTagEvents: Array<{ hostId: string; ip: string; tag: string }> = [];
   const portClosedEvents: Array<{
     hostId: string;
     ip: string;
@@ -975,6 +988,28 @@ export async function ingestHostPayload(
         }
       }
 
+      // Tags requested for this scan itself (Ad-hoc Scans / Schedule
+      // Scans, see lib/scanTags.ts) - applied to every host it actually
+      // touches, so "find exactly what this scan found" is a tag filter
+      // afterwards instead of re-deriving it from the target spec by
+      // hand. Same idempotent onConflict-doNothing insert as the
+      // service-derived tags above, and the same never-removed-
+      // automatically reasoning: a host that later drops out of this
+      // scan's range keeps the tag from when it was in it, which is the
+      // point - this is a record of what a scan found, not a live view
+      // of what it currently would.
+      if (payload.tags && payload.tags.length > 0) {
+        const insertedRequestedTags = await trx
+          .insertInto("host_tags")
+          .values(payload.tags.map((tag) => ({ host_id: upserted.id, tag })))
+          .onConflict((oc) => oc.columns(["host_id", "tag"]).doNothing())
+          .returning(["tag"])
+          .execute();
+        for (const t of insertedRequestedTags) {
+          requestedTagEvents.push({ hostId: upserted.id, ip: host.ip, tag: t.tag });
+        }
+      }
+
       const sshHostKeyRows = host.ports.flatMap((p) =>
         (p.sshHostKeys ?? []).map((k) => ({
           host_id: upserted.id,
@@ -1126,6 +1161,16 @@ export async function ingestHostPayload(
   for (const e of autoTagEvents) {
     logger.info({ event: "host.tag_added", host_id: e.hostId, tag: e.tag, added_by: "auto-tag" });
     recordAudit("host.tag_added", "auto-tag", undefined, { host_id: e.hostId, tag: e.tag, ip: e.ip });
+  }
+  // Distinct added_by from the service-derived tags above, so the audit
+  // trail can tell "this scan found the service" apart from "whoever
+  // created this scan asked for this tag" - both land in the same
+  // host_tags row shape (no manual/auto/requested column there), which is
+  // deliberate: once applied, a scan-requested tag is an ordinary tag,
+  // filterable and removable exactly like any other.
+  for (const e of requestedTagEvents) {
+    logger.info({ event: "host.tag_added", host_id: e.hostId, tag: e.tag, added_by: "scan-tag" });
+    recordAudit("host.tag_added", "scan-tag", undefined, { host_id: e.hostId, tag: e.tag, ip: e.ip });
   }
 
   return { ok: true };
@@ -1347,6 +1392,7 @@ ingestRouter.get("/scan-requests/next", asyncHandler(async (req, res) => {
     nuclei_tags: string[] | null;
     masscan_rate: number | null;
     priority: string;
+    tags: string[] | null;
   }>`
     UPDATE scan_requests
     SET status = 'claimed', claimed_at = now()
@@ -1357,7 +1403,7 @@ ingestRouter.get("/scan-requests/next", asyncHandler(async (req, res) => {
       FOR UPDATE SKIP LOCKED
       LIMIT 1
     )
-    RETURNING id, target_spec, port_spec, nse_profile, nse_scripts, nuclei_profile, nuclei_tags, masscan_rate, priority
+    RETURNING id, target_spec, port_spec, nse_profile, nse_scripts, nuclei_profile, nuclei_tags, masscan_rate, priority, tags
   `.execute(db);
 
   const next = claimed.rows[0];
@@ -1374,6 +1420,7 @@ ingestRouter.get("/scan-requests/next", asyncHandler(async (req, res) => {
     target_spec: next.target_spec,
     port_spec: next.port_spec,
     priority: next.priority,
+    tags: next.tags,
   });
 
   // nse_profile_label/nuclei_profile_label are display-only and never
@@ -1388,6 +1435,10 @@ ingestRouter.get("/scan-requests/next", asyncHandler(async (req, res) => {
     nucleiTags: next.nuclei_tags,
     // null = the scanner keeps using its own configured masscanRate.
     masscanRate: next.masscan_rate,
+    // Applied to every host this scan touches, in the same per-host
+    // submission this scanner will make - see ingestHostPayload below.
+    // null/absent means none were requested.
+    tags: next.tags,
   });
 }));
 

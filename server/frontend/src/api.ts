@@ -1192,6 +1192,9 @@ export interface Schedule {
   // queued - almost always a scanner that stopped polling.
   skipped_runs: number;
   last_skipped_at: string | null;
+  // Applied to every host this schedule's runs actually touch - see
+  // lib/scanTags.ts. null = none requested.
+  tags: string[] | null;
 }
 
 export interface AdhocScanResult {
@@ -1201,6 +1204,7 @@ export interface AdhocScanResult {
   nuclei_profile_label: string | null;
   priority: ScanPriority;
   scannerAgentName: string;
+  tags: string[] | null;
 }
 
 export interface ScanHistoryEntry {
@@ -1538,6 +1542,7 @@ export const api = {
       windowEndMinute?: number | null;
       windowDays?: number[] | null;
       windowTimezone?: string | null;
+      tags?: string[];
     }
   ) => request<{ id: string }>("/api/schedules", { method: "POST", body: JSON.stringify(input) }),
   setScheduleEnabled: (id: string, enabled: boolean) =>
@@ -1559,6 +1564,8 @@ export const api = {
       windowEndMinute?: number | null;
       windowDays?: number[] | null;
       windowTimezone?: string | null;
+      // Nullable here (unlike creation) so it can be explicitly cleared.
+      tags?: string[] | null;
     }
   ) => request<void>(`/api/schedules/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteSchedule: (id: string) => request<void>(`/api/schedules/${id}`, { method: "DELETE" }),
@@ -1572,6 +1579,7 @@ export const api = {
     // Omitted = the target scanner keeps using its own configured rate.
     masscanRate?: number;
     priority?: ScanPriority;
+    tags?: string[];
   }) => request<AdhocScanResult>("/api/adhoc-scans", { method: "POST", body: JSON.stringify(input) }),
 
   scanProfiles: () => request<ScanProfile[]>("/api/scan-profiles"),

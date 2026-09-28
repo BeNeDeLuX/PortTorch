@@ -131,6 +131,10 @@ async function tick(injectedNow?: Date): Promise<void> {
           // Snapshotted from the schedule, not re-read live - same reason
           // the profile columns above are (see the root CLAUDE.md).
           priority: schedule.priority,
+          // Same snapshot-copy idiom - applied to every host this run
+          // touches (ingest/routes.ts's ingestHostPayload), so an admin
+          // editing the schedule's tags only changes future runs.
+          tags: schedule.tags,
         })
         .execute();
 

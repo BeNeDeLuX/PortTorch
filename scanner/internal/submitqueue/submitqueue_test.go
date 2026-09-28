@@ -2,6 +2,7 @@ package submitqueue
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -61,7 +62,7 @@ func TestEnqueueThenDrainSucceeds(t *testing.T) {
 	host := testHost(t, true)
 	originalImagePath := host.Screenshots[0].ImagePath
 
-	if err := Enqueue(queueDir, "job-1", host); err != nil {
+	if err := Enqueue(queueDir, "job-1", host, nil); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 
@@ -95,6 +96,35 @@ func TestEnqueueThenDrainSucceeds(t *testing.T) {
 	}
 }
 
+// A queued entry carries the scan's own requested tags through to a
+// retried submission - without this, a host whose first attempt failed
+// would come back untagged once Drain finally got it through, silently
+// dropping exactly the data this feature exists to attach.
+func TestEnqueuePreservesTagsThroughDrain(t *testing.T) {
+	var gotBody map[string]any
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/ingest/hosts" {
+			_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	queueDir := t.TempDir()
+	if err := Enqueue(queueDir, "job-1", testHost(t, false), []string{"Q3-Audit", "external-range"}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	result := Drain(context.Background(), queueDir, c)
+	if result.Succeeded != 1 {
+		t.Fatalf("unexpected drain result: %+v", result)
+	}
+
+	gotTags, _ := gotBody["tags"].([]any)
+	if len(gotTags) != 2 || gotTags[0] != "Q3-Audit" || gotTags[1] != "external-range" {
+		t.Errorf("tags did not survive the queue: got %v", gotBody["tags"])
+	}
+}
+
 // A submission the webserver keeps rejecting must not be retried forever
 // - after maxAttempts failed Drain calls, the entry is dropped rather
 // than accumulating on disk indefinitely.
@@ -104,7 +134,7 @@ func TestDrainGivesUpAfterMaxAttempts(t *testing.T) {
 	})
 
 	queueDir := t.TempDir()
-	if err := Enqueue(queueDir, "job-1", testHost(t, false)); err != nil {
+	if err := Enqueue(queueDir, "job-1", testHost(t, false), nil); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 
@@ -150,10 +180,10 @@ func TestCountPendingMissingDir(t *testing.T) {
 
 func TestCountPendingCountsQueuedEntries(t *testing.T) {
 	queueDir := t.TempDir()
-	if err := Enqueue(queueDir, "job-1", testHost(t, false)); err != nil {
+	if err := Enqueue(queueDir, "job-1", testHost(t, false), nil); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	if err := Enqueue(queueDir, "job-1", testHost(t, false)); err != nil {
+	if err := Enqueue(queueDir, "job-1", testHost(t, false), nil); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 	if got := CountPending(queueDir); got != 2 {
@@ -201,7 +231,7 @@ func TestDrainRejectsPermanentFailureImmediately(t *testing.T) {
 	})
 
 	queueDir := t.TempDir()
-	if err := Enqueue(queueDir, "job-1", testHost(t, false)); err != nil {
+	if err := Enqueue(queueDir, "job-1", testHost(t, false), nil); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 
@@ -227,7 +257,7 @@ func TestDrainRetriesServerErrorNormally(t *testing.T) {
 	})
 
 	queueDir := t.TempDir()
-	if err := Enqueue(queueDir, "job-1", testHost(t, false)); err != nil {
+	if err := Enqueue(queueDir, "job-1", testHost(t, false), nil); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 

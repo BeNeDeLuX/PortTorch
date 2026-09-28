@@ -215,4 +215,97 @@ describe("scan schedules - editing", () => {
     const res = await client.patch(`/api/schedules/${createRes.body.id}`).send({});
     expect(res.status).toBe(400);
   });
+
+  // Real, pre-existing bug found while adding `tags`: the "nothing to
+  // update" guard hand-enumerated a field list that masscanRate/priority
+  // were never added to, so a PATCH containing only one of those silently
+  // 400'd despite being otherwise fully supported. Fixed by deriving the
+  // check from Object.keys(parsed.data) instead - these two pin exactly
+  // the case that was broken, for the two fields that exposed it.
+  it("accepts a patch containing only priority", async () => {
+    const createRes = await client.post("/api/schedules").send({
+      scheduleType: "interval",
+      scannerAgentId: agentA.id,
+      targetSpec: "10.0.0.5",
+      portSpec: "80",
+      intervalMinutes: 60,
+    });
+    createdIds.push(createRes.body.id);
+
+    const res = await client.patch(`/api/schedules/${createRes.body.id}`).send({ priority: "high" });
+    expect(res.status).toBe(204);
+
+    const list = await client.get("/api/schedules");
+    const updated = list.body.find((s: { id: string }) => s.id === createRes.body.id);
+    expect(updated.priority).toBe("high");
+  });
+
+  it("accepts a patch containing only masscanRate", async () => {
+    const createRes = await client.post("/api/schedules").send({
+      scheduleType: "interval",
+      scannerAgentId: agentA.id,
+      targetSpec: "10.0.0.5",
+      portSpec: "80",
+      intervalMinutes: 60,
+    });
+    createdIds.push(createRes.body.id);
+
+    const res = await client.patch(`/api/schedules/${createRes.body.id}`).send({ masscanRate: 500 });
+    expect(res.status).toBe(204);
+
+    const list = await client.get("/api/schedules");
+    const updated = list.body.find((s: { id: string }) => s.id === createRes.body.id);
+    expect(updated.masscan_rate).toBe(500);
+  });
+
+  it("stores tags at creation and applies them to every host a run touches - see scanRequestTags.integration.test.ts for the ingest half", async () => {
+    const createRes = await client.post("/api/schedules").send({
+      scheduleType: "interval",
+      scannerAgentId: agentA.id,
+      targetSpec: "10.0.0.5",
+      portSpec: "80",
+      intervalMinutes: 60,
+      tags: ["Q3-Audit", "external-range"],
+    });
+    expect(createRes.status).toBe(201);
+    createdIds.push(createRes.body.id);
+
+    const list = await client.get("/api/schedules");
+    const created = list.body.find((s: { id: string }) => s.id === createRes.body.id);
+    expect(created.tags).toEqual(["Q3-Audit", "external-range"]);
+  });
+
+  it("updates tags with a patch containing only tags, and clears them with an explicit null", async () => {
+    const createRes = await client.post("/api/schedules").send({
+      scheduleType: "interval",
+      scannerAgentId: agentA.id,
+      targetSpec: "10.0.0.5",
+      portSpec: "80",
+      intervalMinutes: 60,
+    });
+    createdIds.push(createRes.body.id);
+
+    const patchRes = await client.patch(`/api/schedules/${createRes.body.id}`).send({ tags: ["pci"] });
+    expect(patchRes.status).toBe(204);
+    let list = await client.get("/api/schedules");
+    expect(list.body.find((s: { id: string }) => s.id === createRes.body.id).tags).toEqual(["pci"]);
+
+    const clearRes = await client.patch(`/api/schedules/${createRes.body.id}`).send({ tags: null });
+    expect(clearRes.status).toBe(204);
+    list = await client.get("/api/schedules");
+    expect(list.body.find((s: { id: string }) => s.id === createRes.body.id).tags).toBeNull();
+  });
+
+  it("rejects more tags than the cap", async () => {
+    const tooMany = Array.from({ length: 21 }, (_, i) => `tag-${i}`);
+    const res = await client.post("/api/schedules").send({
+      scheduleType: "interval",
+      scannerAgentId: agentA.id,
+      targetSpec: "10.0.0.5",
+      portSpec: "80",
+      intervalMinutes: 60,
+      tags: tooMany,
+    });
+    expect(res.status).toBe(400);
+  });
 });

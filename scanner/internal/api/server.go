@@ -219,7 +219,7 @@ func (s *Server) handleCreateScan(c echo.Context) error {
 	s.reserveScanSlot()
 	go func() {
 		defer s.releaseScanSlot()
-		s.runScan(jobID, req.Target, req.Ports, nil, nil, nil, state)
+		s.runScan(jobID, req.Target, req.Ports, nil, nil, nil, nil, state)
 	}()
 
 	return c.JSON(http.StatusAccepted, map[string]string{"id": jobID, "status": "running"})
@@ -697,7 +697,7 @@ func (s *Server) pollOnce(ctx context.Context) bool {
 	go func() {
 		defer s.releaseScanSlot()
 
-		s.runScan(jobID, scanReq.TargetSpec, scanReq.PortSpec, resolveNSEScripts(scanReq.NSEProfile, scanReq.NSEScripts), resolveNucleiProfile(scanReq.NucleiProfile, scanReq.NucleiTags), scanReq.MasscanRate, state)
+		s.runScan(jobID, scanReq.TargetSpec, scanReq.PortSpec, resolveNSEScripts(scanReq.NSEProfile, scanReq.NSEScripts), resolveNucleiProfile(scanReq.NucleiProfile, scanReq.NucleiTags), scanReq.MasscanRate, scanReq.Tags, state)
 
 		snapshot := state.snapshot()
 		// context.Background(), not ctx: the scan is over either way and
@@ -740,7 +740,7 @@ func resolveNucleiProfile(profile string, tags []string) *pipeline.NucleiProfile
 // cancellable=true (handleCreateScan, pollOnce) - callers that don't
 // (main.go, tui/commands.go) never register anything here, but registering
 // unconditionally is harmless and keeps this function the same for both.
-func (s *Server) runScan(jobID, target, ports string, nseScripts []string, nucleiProfile *pipeline.NucleiProfile, masscanRate *int, state *scanState) {
+func (s *Server) runScan(jobID, target, ports string, nseScripts []string, nucleiProfile *pipeline.NucleiProfile, masscanRate *int, tags []string, state *scanState) {
 	// Both entry points (the queue loop's goroutine and the local REST
 	// API) funnel through here, so this is the one place that knows a
 	// scan is genuinely under way rather than merely accounted for.
@@ -827,7 +827,7 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, nucle
 
 			submitCtx, cancel := context.WithTimeout(context.Background(), timeoutSubmit)
 			defer cancel()
-			err := s.client.SubmitHostResult(submitCtx, jobID, host, func(kind string, port int, err error) {
+			err := s.client.SubmitHostResult(submitCtx, jobID, host, tags, func(kind string, port int, err error) {
 				state.appendLog(fmt.Sprintf("[%s] submission for %s failed", kind, host.IP))
 				s.logger.Warn(kind+" submission failed", "event", "scan."+kind+"_submit_failed", "scan_job_id", jobID, "target_ip", host.IP, "port", port, "error", err.Error())
 				tracker.Progress(kind, fmt.Sprintf("submission for %s failed: %v", host.IP, err))
@@ -844,7 +844,7 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, nucle
 					state.appendLog("host submission for " + host.IP + " failed, queued for retry")
 					s.logger.Warn("host submission failed, queuing for retry", "event", "scan.host_submit_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", err.Error())
 					tracker.Progress("submit", fmt.Sprintf("host submission for %s failed, queued for retry: %v", host.IP, err))
-					if queueErr := submitqueue.Enqueue(s.queueDir, jobID, host); queueErr != nil {
+					if queueErr := submitqueue.Enqueue(s.queueDir, jobID, host, tags); queueErr != nil {
 						s.logger.Error("queuing failed host submission for retry also failed, result lost", "event", "submitqueue.enqueue_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", queueErr.Error())
 					} else {
 						s.client.SetSubmitQueuePending(submitqueue.CountPending(s.queueDir))

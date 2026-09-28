@@ -407,6 +407,11 @@ export interface ScanSchedulesTable {
   window_end_minute: number | null;
   window_days: number[] | null;
   window_timezone: string | null;
+  // Tags this schedule's own spawned scan_requests rows carry - see
+  // lib/scanTags.ts and the scan_request_tags migration. Copied onto each
+  // run by scheduler.ts's tick(), same snapshot idiom as the profile
+  // columns above.
+  tags: string[] | null;
   // How many times a due run was skipped because the previous one was
   // still queued, and when that last happened. Counted rather than only
   // logged so "this schedule has produced nothing for two days" is
@@ -452,6 +457,11 @@ export interface ScanRequestsTable {
   // waiting?" check, which is what stops an hourly schedule stacking up
   // 24 requests a day against a scanner that has stopped polling.
   schedule_id: string | null;
+  // Tags to apply to every host this scan actually touches - see
+  // lib/scanTags.ts and ingest/routes.ts's ingestHostPayload. NULL means
+  // none requested, which is what every row before this column existed
+  // already means.
+  tags: string[] | null;
 }
 
 export interface ScanProfilesTable {

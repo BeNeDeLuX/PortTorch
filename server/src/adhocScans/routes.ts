@@ -10,6 +10,7 @@ import { recordAudit } from "../audit/log";
 import { ScanProfileNotFoundError, resolveNSEProfile } from "../scanProfiles/resolve";
 import { NucleiProfileNotFoundError, resolveNucleiProfile } from "../nucleiProfiles/resolve";
 import { DEFAULT_SCAN_PRIORITY, scanPrioritySchema } from "../scanPriority";
+import { normalizeScanTags, scanTagsSchema } from "../lib/scanTags";
 
 // A one-shot scan against an arbitrary target - the same NSE/nuclei
 // profile choice Schedule Scans offers, minus all scheduling (no
@@ -60,6 +61,11 @@ const createAdhocScanSchema = z.object({
   // existed - the dashboard's form is what pre-selects 'high', since an
   // operator typing a target into it is by definition waiting on it.
   priority: scanPrioritySchema.optional(),
+  // Optional - applied to every host this scan actually touches once
+  // ingest sees it (ingest/routes.ts's ingestHostPayload), so "find
+  // exactly what this scan found" is a tag filter afterwards rather than
+  // re-deriving it from the target spec. See lib/scanTags.ts.
+  tags: scanTagsSchema,
 });
 
 adhocScansRouter.post(
@@ -132,8 +138,9 @@ adhocScansRouter.post(
         nuclei_profile_label: resolvedNucleiProfile.nucleiProfileLabel,
         masscan_rate: parsed.data.masscanRate ?? null,
         priority: parsed.data.priority ?? DEFAULT_SCAN_PRIORITY,
+        tags: normalizeScanTags(parsed.data.tags),
       })
-      .returning(["id", "created_at", "nse_profile_label", "nuclei_profile_label", "priority"])
+      .returning(["id", "created_at", "nse_profile_label", "nuclei_profile_label", "priority", "tags"])
       .executeTakeFirstOrThrow();
 
     logger.info({
@@ -144,6 +151,7 @@ adhocScansRouter.post(
       target_spec: parsed.data.targetSpec,
       port_spec: parsed.data.portSpec,
       priority: request.priority,
+      tags: request.tags,
       requested_by: req.session.username,
       source_ip: req.ip,
     });
@@ -153,6 +161,7 @@ adhocScansRouter.post(
       scanner_agent_name: agent.name,
       target_spec: parsed.data.targetSpec,
       port_spec: parsed.data.portSpec,
+      tags: request.tags,
     });
 
     res.status(201).json({ ...request, scannerAgentName: agent.name });
