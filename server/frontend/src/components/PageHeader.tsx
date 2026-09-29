@@ -1,9 +1,11 @@
 import { Link, NavLink } from "react-router";
 import { api, Me } from "../api";
 import Brand from "./Brand";
-import { IconLogOut } from "./icons";
+import { IconLogOut, IconSearch } from "./icons";
 import NavGroup from "./NavGroup";
 import ThemeToggle from "./ThemeToggle";
+import { navEntries } from "../lib/navigation";
+import { openQuickSearch, quickSearchShortcut } from "../lib/quickSearch";
 
 export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => void }) {
   return (
@@ -13,6 +15,15 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
           <Brand />
         </h1>
         <div className="user-bar">
+          <button
+            className="quicksearch-trigger"
+            onClick={openQuickSearch}
+            title="Search hosts, CVEs and pages"
+            aria-label="Search"
+            aria-keyshortcuts="Control+K Meta+K"
+          >
+            <IconSearch /> <span className="quicksearch-trigger-label">Search</span> <kbd>{quickSearchShortcut()}</kbd>
+          </button>
           <ThemeToggle />
           <Link to="/account">
             {me.username} ({me.role})
@@ -30,53 +41,14 @@ export default function PageHeader({ me, onLogout }: { me: Me; onLogout: () => v
       </header>
 
       <nav className="main-nav">
-        <NavLink to="/" end>Scan Results</NavLink>
-        <NavGroup
-          label="Scanning"
-          items={[
-            { to: "/adhoc-scans", label: "Ad-hoc Scans" },
-            { to: "/schedules", label: "Schedule Scans" },
-            { to: "/agents", label: "Scanner Agents" },
-            { to: "/scan-history", label: "Scan History" },
-            { to: "/networks", label: "Network Coverage" },
-            { to: "/import", label: "Import Scan" },
-            { to: "/saved-searches", label: "Saved Searches" },
-            ...(me.role === "admin"
-              ? [
-                  { to: "/scan-profiles", label: "Scan Profiles" },
-                  { to: "/nuclei-profiles", label: "Nuclei Profiles" },
-                  { to: "/excludes", label: "Excludes" },
-                ]
-              : []),
-          ]}
-        />
-        <NavLink to="/screenshots">Screenshots</NavLink>
-        <NavLink to="/certificates">Certificates</NavLink>
-        <NavLink to="/ssh-keys">SSH Keys</NavLink>
-        <NavLink to="/software">Software</NavLink>
-        <NavLink to="/vulnerabilities">Vulnerabilities</NavLink>
-        <NavLink to="/web-findings">Web Findings</NavLink>
-        <NavLink to="/digest">Digest</NavLink>
-        <NavGroup
-          label="Statistics"
-          items={[
-            { to: "/trends", label: "Trends" },
-            { to: "/scan-stats", label: "Scan Stats" },
-          ]}
-        />
-        <NavLink to="/health">Health</NavLink>
-        {me.role === "admin" && (
-          <NavGroup
-            label="Admin"
-            items={[
-              { to: "/webhooks", label: "Webhooks" },
-              { to: "/triage-rules", label: "Triage Rules" },
-              { to: "/users", label: "Users" },
-              { to: "/audit", label: "Audit" },
-              { to: "/api-tokens", label: "API Tokens" },
-              { to: "/settings", label: "Settings" },
-            ]}
-          />
+        {navEntries(me.role).map((entry) =>
+          entry.kind === "link" ? (
+            <NavLink key={entry.item.to} to={entry.item.to} end={entry.item.to === "/"}>
+              {entry.item.label}
+            </NavLink>
+          ) : (
+            <NavGroup key={entry.label} label={entry.label} items={entry.items.map(({ to, label }) => ({ to, label }))} />
+          )
         )}
       </nav>
     </>

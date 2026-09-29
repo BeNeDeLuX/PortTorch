@@ -214,7 +214,15 @@ func (c *Client) CreateScanJob(ctx context.Context, targetSpec, portSpec string,
 // treats an absent discoveredHosts as "unknown", which is deliberately
 // not the same as zero.
 func (c *Client) CompleteScanJob(ctx context.Context, jobID, status string) error {
-	return c.completeScanJob(ctx, jobID, status, nil)
+	return c.completeScanJob(ctx, jobID, status, nil, "")
+}
+
+// CompleteScanJobWithRemainder ends a scan that stopped early - cancelled
+// or failed - and says which part of its target was never finished (see
+// pipeline.ScanCoverage). The webserver offers that as a resume; an empty
+// remainder is sent as nothing at all, so there is nothing to offer.
+func (c *Client) CompleteScanJobWithRemainder(ctx context.Context, jobID, status, remaining string) error {
+	return c.completeScanJob(ctx, jobID, status, nil, remaining)
 }
 
 // CompleteScanJobWithDiscovery is the same call plus what the discovery
@@ -223,13 +231,16 @@ func (c *Client) CompleteScanJob(ctx context.Context, jobID, status string) erro
 // between the two - which on a network where one device answers for a
 // whole range is most of the scan - was invisible to it.
 func (c *Client) CompleteScanJobWithDiscovery(ctx context.Context, jobID, status string, discoveredHosts int) error {
-	return c.completeScanJob(ctx, jobID, status, &discoveredHosts)
+	return c.completeScanJob(ctx, jobID, status, &discoveredHosts, "")
 }
 
-func (c *Client) completeScanJob(ctx context.Context, jobID, status string, discoveredHosts *int) error {
+func (c *Client) completeScanJob(ctx context.Context, jobID, status string, discoveredHosts *int, remaining string) error {
 	body := map[string]any{"status": status}
 	if discoveredHosts != nil {
 		body["discoveredHosts"] = *discoveredHosts
+	}
+	if remaining != "" {
+		body["remainingTargetSpec"] = remaining
 	}
 	return c.doJSON(ctx, http.MethodPatch, "/api/ingest/scan-jobs/"+jobID, body, nil)
 }

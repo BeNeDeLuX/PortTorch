@@ -345,7 +345,10 @@ func resolveHostnamesInTargetSpec(
 	return strings.Join(rebuilt, ","), resolved, nil
 }
 
-func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, excludes Excludes, probeHostnames map[string]string, nseScripts []string, nucleiProfile *NucleiProfile, onProgress ProgressFunc, onHostComplete HostCompleteFunc) (*ScanResult, error) {
+// coverage, if non-nil, records which parts of the target were actually
+// finished, so a scan that stops early can be resumed with only the rest -
+// see ScanCoverage. nil is fine for a caller with no use for it.
+func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, excludes Excludes, probeHostnames map[string]string, nseScripts []string, nucleiProfile *NucleiProfile, onProgress ProgressFunc, onHostComplete HostCompleteFunc, coverage *ScanCoverage) (*ScanResult, error) {
 	cfg = cfg.withDefaults()
 	if onProgress == nil {
 		onProgress = noopProgress
@@ -386,9 +389,16 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 	for ip, hostname := range resolvedNames {
 		probeHostnames = withProbeHostname(probeHostnames, ip, hostname)
 	}
+	originalTarget := targetSpec
 	targetSpec = resolvedSpec
 
-	var discovered map[string][]PortResult
+	// Discovery is a list of steps rather than one call, so a large IPv4
+	// target can be discovered block by block (see chunks.go) while nmap
+	// already works through what the earlier blocks found. Every other
+	// target is exactly one step, doing exactly what it always did.
+	type discoveryStep func() (map[string][]PortResult, error)
+	var steps []discoveryStep
+	var coverageBlocks [][]ipv4Range
 	if strings.Contains(targetSpec, ":") {
 		// masscan has no IPv6 scanning capability at all, so a colon in
 		// targetSpec (never present in an IPv4 address/CIDR/range) routes
@@ -413,32 +423,48 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 			return &ScanResult{TargetSpec: targetSpec, PortSpec: portSpec}, nil
 		}
 
-		onProgress("nmap", fmt.Sprintf("scanning %s (ports %s) via nmap discovery (IPv6, masscan unsupported)", strings.Join(survivors, ","), effectivePortSpec))
-		discovered, err = RunNmapDiscovery(ctx, cfg.nmapCmd(), effectivePortSpec, survivors)
-		if err != nil {
-			return nil, fmt.Errorf("nmap discovery stage: %w", err)
-		}
-		onProgress("nmap", fmt.Sprintf("found %d host(s) with open ports", len(discovered)))
+		steps = []discoveryStep{func() (map[string][]PortResult, error) {
+			onProgress("nmap", fmt.Sprintf("scanning %s (ports %s) via nmap discovery (IPv6, masscan unsupported)", strings.Join(survivors, ","), effectivePortSpec))
+			found, err := RunNmapDiscovery(ctx, cfg.nmapCmd(), effectivePortSpec, survivors)
+			if err != nil {
+				return nil, fmt.Errorf("nmap discovery stage: %w", err)
+			}
+			onProgress("nmap", fmt.Sprintf("found %d host(s) with open ports", len(found)))
+			return found, nil
+		}}
 	} else {
-		onProgress("masscan", fmt.Sprintf("scanning %s (ports %s)", targetSpec, effectivePortSpec))
-		var err error
-		discovered, err = RunMasscan(ctx, cfg.MasscanPath, targetSpec, effectivePortSpec, excludes.IPs, cfg.MasscanRate, cfg.MasscanRetries)
-		if err != nil {
-			return nil, fmt.Errorf("masscan stage: %w", err)
+		portCount := CountPorts(effectivePortSpec)
+		plan := planIPv4Chunks(targetSpec, excludes.IPs, portCount, cfg.MasscanRate)
+		if plan == nil {
+			spec := targetSpec
+			steps = []discoveryStep{func() (map[string][]PortResult, error) {
+				onProgress("masscan", fmt.Sprintf("scanning %s (ports %s)", spec, effectivePortSpec))
+				found, err := RunMasscan(ctx, cfg.MasscanPath, spec, effectivePortSpec, excludes.IPs, cfg.MasscanRate, cfg.MasscanRetries)
+				if err != nil {
+					return nil, fmt.Errorf("masscan stage: %w", err)
+				}
+				onProgress("masscan", fmt.Sprintf("found %d host(s) with open ports", len(found)))
+				return found, nil
+			}}
+		} else {
+			onProgress("masscan", plan.describe(portCount, cfg.MasscanRate))
+			coverageBlocks = plan.blocks
+			total := len(plan.blocks)
+			for i, block := range plan.blocks {
+				n, spec := i+1, formatRanges(block)
+				steps = append(steps, func() (map[string][]PortResult, error) {
+					onProgress("masscan", fmt.Sprintf("block %d/%d: scanning %s (ports %s)", n, total, truncateForLog(spec), effectivePortSpec))
+					found, err := RunMasscan(ctx, cfg.MasscanPath, spec, effectivePortSpec, excludes.IPs, cfg.MasscanRate, cfg.MasscanRetries)
+					if err != nil {
+						return nil, fmt.Errorf("masscan stage (block %d/%d): %w", n, total, err)
+					}
+					onProgress("masscan", fmt.Sprintf("block %d/%d: found %d host(s) with open ports", n, total, len(found)))
+					return found, nil
+				})
+			}
 		}
-		onProgress("masscan", fmt.Sprintf("found %d host(s) with open ports", len(discovered)))
 	}
-
-	if len(excludes.IPPorts) > 0 {
-		if removed := filterIPPortExcludes(discovered, excludes.IPPorts); removed > 0 {
-			onProgress("discovery", fmt.Sprintf("ip+port excludes applied: removed %d result(s)", removed))
-		}
-	}
-
-	discoveredHosts := len(discovered)
-	if discoveredHosts == 0 {
-		return &ScanResult{TargetSpec: targetSpec, PortSpec: portSpec}, nil
-	}
+	coverage.plan(originalTarget, resolvedNames, coverageBlocks)
 
 	var resultsMu sync.Mutex
 	var results []HostResult
@@ -451,6 +477,12 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 		resultsMu.Lock()
 		results = append(results, host)
 		resultsMu.Unlock()
+		// A host finishing after cancellation may have had a screenshot
+		// or certificate probe cut short, so it stays in what a resume
+		// scans again rather than being left with a partial record.
+		if ctx.Err() == nil {
+			coverage.hostDone(host.IP)
+		}
 		onHostComplete(host)
 	})
 
@@ -492,11 +524,46 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 		ip    string
 		ports []PortResult
 	}
-	nmapJobs := make(chan nmapJob, len(discovered))
-	for ip, ports := range discovered {
-		nmapJobs <- nmapJob{ip: ip, ports: ports}
-	}
-	close(nmapJobs)
+	// Bounded, and fed by a producer running discovery step by step: a
+	// block's hosts go to nmap as soon as that block is done, and the next
+	// masscan pass starts once they have all been handed over - so masscan
+	// and nmap overlap by at most one block's tail, never by a whole scan.
+	nmapJobs := make(chan nmapJob, cfg.Concurrency)
+	var discoveryErr error
+	var discoveredHosts int
+	producerDone := make(chan struct{})
+	go func() {
+		defer close(producerDone)
+		defer close(nmapJobs)
+		for i, step := range steps {
+			if ctx.Err() != nil {
+				return
+			}
+			found, err := step()
+			if err != nil {
+				discoveryErr = err
+				return
+			}
+			if len(excludes.IPPorts) > 0 {
+				if removed := filterIPPortExcludes(found, excludes.IPPorts); removed > 0 {
+					onProgress("discovery", fmt.Sprintf("ip+port excludes applied: removed %d result(s)", removed))
+				}
+			}
+			ips := make([]string, 0, len(found))
+			for ip := range found {
+				ips = append(ips, ip)
+			}
+			coverage.blockDiscovered(i, ips)
+			discoveredHosts += len(found)
+			for ip, ports := range found {
+				select {
+				case nmapJobs <- nmapJob{ip: ip, ports: ports}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
 
 	var nmapWG sync.WaitGroup
 	var nmapOK, nmapFailed int
@@ -669,6 +736,7 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 		}()
 	}
 	nmapWG.Wait()
+	<-producerDone
 	// Only the nmap workers ever enqueue onto these six channels, and
 	// they've all finished now - safe to close so the sub-task worker
 	// pools can drain and exit.
@@ -684,6 +752,13 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 	}
 	subWG.Wait()
 
+	// Reported after the hosts earlier blocks found have been processed
+	// and submitted, not instead of them: a failure in block 7 of 40
+	// leaves blocks 1-6 genuinely scanned, and ScanCoverage lets the
+	// failed scan be resumed from where it stopped.
+	if discoveryErr != nil {
+		return nil, discoveryErr
+	}
 	if nmapOK == 0 && nmapFailed > 0 {
 		return nil, fmt.Errorf("nmap stage: all %d host(s) failed", nmapFailed)
 	}

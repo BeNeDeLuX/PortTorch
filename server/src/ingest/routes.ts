@@ -70,6 +70,12 @@ const updateScanJobSchema = z.object({
   // not send it - absent means "unknown", deliberately not the same as 0,
   // which is why the column is nullable rather than defaulted.
   discoveredHosts: z.number().int().min(0).optional(),
+  // What a scan that stopped early never finished - see
+  // migration 1746700000000. Deliberately not capped at targetSpecSchema's
+  // 64 KB the way a caller-typed target is: this reports work a scanner
+  // already did, and refusing the report would lose the scan's outcome.
+  // The cap applies when it is resumed, the moment it becomes a target.
+  remainingTargetSpec: z.string().trim().min(1).optional(),
 });
 
 ingestRouter.patch("/scan-jobs/:id", asyncHandler(async (req, res) => {
@@ -89,6 +95,11 @@ ingestRouter.patch("/scan-jobs/:id", asyncHandler(async (req, res) => {
       status: parsed.data.status,
       finished_at: finishedAt,
       ...(parsed.data.discoveredHosts === undefined ? {} : { discovered_hosts: parsed.data.discoveredHosts }),
+      // A completed scan has nothing left by definition, whatever a
+      // confused payload says.
+      ...(parsed.data.remainingTargetSpec !== undefined && parsed.data.status !== "completed"
+        ? { remaining_target_spec: parsed.data.remainingTargetSpec }
+        : {}),
     })
     .where("id", "=", req.params.id)
     .where("scanner_agent_id", "=", req.scannerAgentId!)
@@ -154,6 +165,7 @@ ingestRouter.patch("/scan-jobs/:id", asyncHandler(async (req, res) => {
     port_spec: updated.port_spec,
     duration_ms: finishedAt.getTime() - updated.started_at.getTime(),
     discovered_hosts: parsed.data.discoveredHosts ?? null,
+    remaining_target_spec: parsed.data.status === "completed" ? null : (parsed.data.remainingTargetSpec ?? null),
     hosts_scanned: Number(hostsAndPorts.hosts_scanned),
     open_ports_found: Number(hostsAndPorts.open_ports_found),
     anomalies: anomalies.length,

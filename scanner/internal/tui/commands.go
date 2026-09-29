@@ -129,6 +129,7 @@ func runScanCmd(c *client.Client, pcfg pipeline.Config, queueDir string, auditLo
 				progressCh <- progressMsg{stage: "submit", message: submittedMsg}
 				tracker.Progress("submit", submittedMsg)
 			},
+			nil,
 		)
 
 		status := "completed"

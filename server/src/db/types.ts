@@ -193,6 +193,12 @@ export interface ScanJobsTable {
   // job predates the check or never completed; [] means it was checked
   // and looked fine.
   anomalies: ColumnType<unknown[] | null, string | null | undefined, string | null>;
+  // What a cancelled or failed scan never finished, in target-spec
+  // grammar, as reported by the scanner (see pipeline.ScanCoverage). Null
+  // when there is nothing to resume.
+  remaining_target_spec: ColumnType<string | null, string | null | undefined, string | null>;
+  resumed_at: ColumnType<Date | null, string | null | undefined, string | null>;
+  resumed_scan_request_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 // Live-ish progress pushed by the scanner itself while a scan runs (see

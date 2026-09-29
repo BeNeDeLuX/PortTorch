@@ -476,6 +476,9 @@ func runScan(configPath, target, ports string, nseScripts []string, nucleiProfil
 				log.Warn("writing scan audit log entry failed", "event", "auditlog.write_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", writeErr.Error())
 			}
 		},
+		// nil: a one-shot CLI scan cannot be cancelled from the dashboard,
+		// so it never stops with a remainder worth offering to resume.
+		nil,
 	)
 
 	if scanErr != nil {

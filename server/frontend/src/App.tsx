@@ -24,6 +24,8 @@ import Users from "./pages/Users";
 import Digest from "./pages/Digest";
 import Trends from "./pages/Trends";
 import ScanStats from "./pages/ScanStats";
+import Subnets from "./pages/Subnets";
+import QuickSearch from "./components/QuickSearch";
 import Webhooks from "./pages/Webhooks";
 import Audit from "./pages/Audit";
 import Excludes from "./pages/Excludes";
@@ -172,6 +174,10 @@ export default function App() {
         element={routeElement(false, (m) => <ScanStats me={m} onLogout={() => setMe(null)} />)}
       />
       <Route
+        path="/subnets"
+        element={routeElement(false, (m) => <Subnets me={m} onLogout={() => setMe(null)} />)}
+      />
+      <Route
         path="/webhooks"
         element={routeElement(false, (m) => <Webhooks me={m} onLogout={() => setMe(null)} />)}
       />
@@ -215,6 +221,9 @@ export default function App() {
           covering the content, and then it has to be the last thing on
           the page rather than the first. */}
       {me && <div className="version-badge">v{me.version}</div>}
+      {/* Not while 2FA setup is pending: every route but /account
+          redirects then, so a jump elsewhere would only bounce back. */}
+      {me && !me.totpSetupRequired && <QuickSearch me={me} />}
     </>
   );
 }

@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { api, Me, ScanHistoryResult } from "../api";
-import { IconInfo, IconWarning, IconSearch, IconRefresh } from "../components/icons";
+import { api, Me, ScanHistoryEntry, ScanHistoryResult } from "../api";
+import { IconInfo, IconWarning, IconSearch, IconRefresh, IconPlay } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScanProgressModal from "../components/ScanProgressModal";
 import { formatDateTime } from "../lib/formatDate";
@@ -39,6 +39,31 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
   const [result, setResult] = useState<ScanHistoryResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailsJobId, setDetailsJobId] = useState<string | null>(null);
+  const [resumeNotice, setResumeNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [resumingId, setResumingId] = useState<string | null>(null);
+
+  async function resume(s: ScanHistoryEntry) {
+    const remaining = s.remaining_target_spec ?? "";
+    const shown = remaining.length > 300 ? `${remaining.slice(0, 300)}...` : remaining;
+    if (
+      !window.confirm(
+        `Queue the part of this scan that never finished?\n\nTarget: ${shown}\nPorts: ${s.port_spec}\nScanner: ${s.scanner_agent_name ?? "?"}\n\nIt runs with the same scan profile, nuclei profile, rate, priority and tags as the original.`
+      )
+    ) {
+      return;
+    }
+    setResumingId(s.id);
+    setResumeNotice(null);
+    try {
+      const res = await api.resumeScanJob(s.id);
+      setResumeNotice({ ok: true, text: `Queued the rest of the scan (${res.targetSpec.length > 120 ? `${res.targetSpec.slice(0, 120)}...` : res.targetSpec}). It waits in the queue on the Scanner Agents page until the scanner picks it up.` });
+      await load();
+    } catch (err) {
+      setResumeNotice({ ok: false, text: err instanceof Error ? err.message : "Failed to resume the scan" });
+    } finally {
+      setResumingId(null);
+    }
+  }
 
   useEffect(() => {
     load();
@@ -116,6 +141,8 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
         ))}
       </div>
 
+      {resumeNotice && <p className={resumeNotice.ok ? "callout-success" : "callout-danger"}>{resumeNotice.text}</p>}
+
       {loading ? (
         <p>Loading...</p>
       ) : items.length === 0 ? (
@@ -153,6 +180,11 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
                   <td>{s.scanner_agent_name ?? "?"}</td>
                   <td>
                     <span className={`scan-status scan-status-${s.status}`}>{s.status}</span>
+                    {s.remaining_target_spec && (
+                      <span className="host-meta" title={`Not finished: ${s.remaining_target_spec}`}>
+                        {s.resumed_at ? " · rest queued" : " · partly done"}
+                      </span>
+                    )}
                   </td>
                   <td>{formatDateTime(s.started_at, me.preferences)}</td>
                   <td>{s.duration_ms !== null ? durationLabel(s.duration_ms) : "-"}</td>
@@ -193,6 +225,18 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
                           }
                         >
                           <IconRefresh /> Rescan
+                        </button>
+                      )}
+                      {canRescan && s.remaining_target_spec && !s.resumed_at && s.scanner_agent_id && (
+                        <button
+                          className="btn-icon-label"
+                          title={`Scan only what this ${s.status} scan never finished: ${
+                            s.remaining_target_spec.length > 200 ? `${s.remaining_target_spec.slice(0, 200)}...` : s.remaining_target_spec
+                          }`}
+                          disabled={resumingId === s.id}
+                          onClick={() => resume(s)}
+                        >
+                          <IconPlay /> Resume
                         </button>
                       )}
                     </div>

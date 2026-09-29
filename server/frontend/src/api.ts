@@ -1230,6 +1230,31 @@ export interface ScanHistoryEntry {
   // predates the check or never completed; [] means it was checked and
   // looked fine.
   anomalies: ScanAnomaly[] | null;
+  // What a cancelled or failed scan never finished, as reported by the
+  // scanner. null when there is nothing to resume - a finished scan, one
+  // from a scanner too old to report it, or one that stopped before
+  // covering anything.
+  remaining_target_spec: string | null;
+  resumed_at: string | null;
+}
+
+// One subnet that holds at least one known host - see the webserver's
+// subnets/routes.ts. IPv4 at the requested prefix, IPv6 always per /64.
+export interface SubnetEntry {
+  subnet: string;
+  family: number;
+  hosts: number;
+  openPorts: number;
+  hostsWithCves: number;
+  criticalHosts: number;
+  kevHosts: number;
+  maxCvss: number | null;
+  lastSeenAt: string | null;
+}
+
+export interface SubnetsResult {
+  prefix: number;
+  subnets: SubnetEntry[];
 }
 
 export type ScanAnomaly =
@@ -1425,6 +1450,14 @@ export const api = {
   vulnerabilities: () => request<LimitedResult<FleetVulnerability>>("/api/vulnerabilities"),
   digest: (from: string, to: string) =>
     request<DigestResult>(`/api/digest?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+  subnets: (prefix: number, scannerAgentIds: string[] = [], hideRetired = false) =>
+    request<SubnetsResult>(
+      `/api/subnets?${new URLSearchParams({
+        prefix: String(prefix),
+        ...(scannerAgentIds.length ? { scannerAgentId: scannerAgentIds.join(",") } : {}),
+        ...(hideRetired ? { hideRetired: "1" } : {}),
+      }).toString()}`
+    ),
   scanStats: (scannerAgentIds: string[] = [], hideRetired = false, compareDays: number | null = null) =>
     request<ScanStatsResult>(
       `/api/scan-stats?${new URLSearchParams({
@@ -1486,6 +1519,8 @@ export const api = {
   scanQueueThreshold: () => request<{ warningThreshold: number }>("/api/scan-jobs/queue-threshold"),
   dismissScanJob: (id: string) => request<void>(`/api/scan-jobs/${id}/dismiss`, { method: "POST" }),
   cancelScanJob: (id: string) => request<void>(`/api/scan-jobs/${id}/cancel`, { method: "POST" }),
+  resumeScanJob: (id: string) =>
+    request<{ scanRequestId: string; targetSpec: string; portSpec: string }>(`/api/scan-jobs/${id}/resume`, { method: "POST" }),
   cancelQueuedScanRequest: (id: string) => request<void>(`/api/scan-jobs/queue/${id}/cancel`, { method: "POST" }),
   scanHistory: (
     q: string,

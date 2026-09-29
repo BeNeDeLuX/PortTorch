@@ -816,6 +816,7 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, nucle
 		scanCfg.MasscanRate = *masscanRate
 	}
 
+	coverage := &pipeline.ScanCoverage{}
 	result, err := pipeline.RunScan(scanCtx, scanCfg, target, ports, excludes, probeHostnames, nseScripts, nucleiProfile,
 		func(stage, message string) {
 			state.appendLog("[" + stage + "] " + message)
@@ -870,7 +871,9 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, nucle
 				s.logger.Warn("writing scan audit log entry failed", "event", "auditlog.write_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", writeErr.Error())
 			}
 		},
+		coverage,
 	)
+	remaining := coverage.Remaining()
 	// Checked unconditionally, regardless of whether RunScan itself
 	// returned an error: with streaming, a cancelled scan isn't
 	// necessarily an all-or-nothing failure anymore - some hosts may
@@ -886,15 +889,15 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, nucle
 	if scanCtx.Err() != nil {
 		state.setCancelled()
 		s.recordScanResult("cancelled")
-		s.logger.Info("scan cancelled", "event", "scan.cancelled", "scan_job_id", jobID, "hosts_submitted", hostsSubmitted, "duration_ms", time.Since(start).Milliseconds())
-		_ = s.client.CompleteScanJob(context.Background(), jobID, "cancelled")
+		s.logger.Info("scan cancelled", "event", "scan.cancelled", "scan_job_id", jobID, "hosts_submitted", hostsSubmitted, "remaining_target", remaining, "duration_ms", time.Since(start).Milliseconds())
+		_ = s.client.CompleteScanJobWithRemainder(context.Background(), jobID, "cancelled", remaining)
 		return
 	}
 	if err != nil {
 		state.setFailed(err)
 		s.recordScanResult("failed")
-		s.logger.Error("scan failed", "event", "scan.failed", "scan_job_id", jobID, "error", err.Error(), "duration_ms", time.Since(start).Milliseconds())
-		_ = s.client.CompleteScanJob(context.Background(), jobID, "failed")
+		s.logger.Error("scan failed", "event", "scan.failed", "scan_job_id", jobID, "error", err.Error(), "remaining_target", remaining, "duration_ms", time.Since(start).Milliseconds())
+		_ = s.client.CompleteScanJobWithRemainder(context.Background(), jobID, "failed", remaining)
 		return
 	}
 

@@ -41,6 +41,7 @@ func TestRunScanIPv6LoopbackAgainstRealTarget(t *testing.T) {
 		nil,
 		func(stage, msg string) { t.Logf("[%s] %s", stage, msg) },
 		func(h HostResult) { completed = append(completed, h) },
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("RunScan failed: %v", err)

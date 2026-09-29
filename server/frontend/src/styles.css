@@ -432,6 +432,120 @@ header h1 {
   background: var(--panel);
 }
 
+/* Quick search (components/QuickSearch.tsx). The trigger styles itself
+   like the theme toggle beside it rather than as an accent button, since
+   it is navigation, not an action. */
+.quicksearch-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+.quicksearch-trigger:hover {
+  background: var(--panel);
+  color: var(--text);
+}
+
+kbd {
+  font-family: inherit;
+  font-size: 0.75em;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  padding: 0 0.3em;
+  color: var(--muted);
+}
+
+/* Anchored near the top rather than centred like other modals: the list
+   below the input grows and shrinks as you type, and a centred box would
+   move the input under the cursor on every keystroke. */
+.quicksearch-backdrop {
+  align-items: flex-start;
+  padding: 12vh 16px 16px;
+}
+
+.quicksearch {
+  width: min(640px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.quicksearch-input {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.quicksearch-input input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font-size: 1rem;
+  padding: 0.2rem 0;
+  outline: none;
+  color: var(--text);
+}
+
+.quicksearch-results {
+  list-style: none;
+  margin: 0;
+  padding: 0.3rem 0;
+  max-height: min(60vh, 28rem);
+  overflow-y: auto;
+}
+
+.quicksearch-group {
+  padding: 0.5rem 0.9rem 0.2rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.quicksearch-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.45rem 0.9rem;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.quicksearch-item > span:first-child {
+  overflow-wrap: anywhere;
+}
+
+.quicksearch-item > .host-meta {
+  flex-shrink: 0;
+}
+
+.quicksearch-item.active {
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.quicksearch-footer {
+  display: flex;
+  gap: 1rem;
+  padding: 0.45rem 0.9rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+}
+
 .search-bar {
   display: flex;
   gap: 0.5rem;
@@ -2595,6 +2709,160 @@ th {
   font-weight: 600;
 }
 
+/* Subnets page (src/pages/Subnets.tsx) - one 16x16 grid per /16, one
+   square per /24. Colours come from the theme tokens so both themes and
+   every accent work unchanged; --accent itself is deliberately unused, as
+   in every other chart here, so a user's accent never reads as data. KEV
+   and critical share the danger red, so KEV also carries a dot - the two
+   must stay tellable apart without relying on hue alone. */
+.subnet-map-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.subnet-map-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.8rem 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.subnet-map-card h3 {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+}
+
+.subnet-grid {
+  display: grid;
+  grid-template-columns: repeat(16, 1fr);
+  gap: 2px;
+}
+
+.subnet-cell {
+  position: relative;
+  display: block;
+  aspect-ratio: 1;
+  min-width: 0.6rem;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--chart-series-1) 60%, var(--panel));
+}
+
+a.subnet-cell:hover,
+a.subnet-cell:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+  z-index: 1;
+}
+
+.subnet-cell-empty {
+  background: var(--bg);
+  border-color: color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+.subnet-risk-kev,
+.subnet-risk-critical {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.subnet-risk-kev::after {
+  content: "";
+  position: absolute;
+  inset: 30%;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.subnet-risk-high {
+  background: color-mix(in srgb, var(--danger) 55%, var(--panel));
+}
+
+.subnet-risk-medium {
+  background: var(--warning);
+  border-color: var(--warning);
+}
+
+.subnet-risk-low {
+  background: color-mix(in srgb, var(--warning) 30%, var(--panel));
+}
+
+.subnet-risk-none {
+  background: color-mix(in srgb, var(--muted) 30%, var(--panel));
+}
+
+.subnet-chip-risk-kev,
+.subnet-chip-risk-critical,
+.subnet-chip-risk-high {
+  border-color: var(--danger);
+}
+
+.subnet-chip-risk-medium {
+  border-color: var(--warning);
+}
+
+.subnet-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.2rem;
+  margin: 0 0 1rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.subnet-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.subnet-legend-item .subnet-cell {
+  width: 0.9rem;
+  min-width: 0.9rem;
+}
+
+.subnet-legend-ramp {
+  display: inline-block;
+  width: 6rem;
+  height: 0.7rem;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--chart-series-1) 20%, var(--panel)),
+    var(--chart-series-1)
+  );
+}
+
+.subnet-bar-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.subnet-bar-cell > span:first-child {
+  min-width: 2.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.subnet-bar {
+  display: inline-block;
+  width: 6rem;
+  height: 0.45rem;
+  border-radius: 2px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.subnet-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--chart-series-1);
+}
+
 /* Scan Stats page (src/pages/ScanStats.tsx) - summary tiles, donut
    charts and the per-scanner bars. Same no-chart-library approach as the
    Trends line chart above. */
@@ -3217,6 +3485,19 @@ th {
   .health-grid,
   .cert-grid {
     grid-template-columns: 1fr;
+  }
+
+  /* A phone has no keyboard to press the shortcut on, and the header has
+     no room for the word beside the icon - it pushed the account name
+     onto two lines. */
+  .quicksearch-trigger kbd,
+  .quicksearch-trigger-label,
+  .quicksearch-footer {
+    display: none;
+  }
+
+  .user-bar {
+    gap: 0.5rem;
   }
 }
 
