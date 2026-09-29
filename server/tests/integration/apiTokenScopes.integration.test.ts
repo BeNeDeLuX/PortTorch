@@ -102,6 +102,17 @@ describe("API token scopes and scanner restriction", () => {
       .set("Authorization", `Bearer ${tokens.read}`)
       .send({ ip: IP_A, kind: "cve", cveId: "CVE-2020-0001" });
     expect(del.status).toBe(403);
+
+    // A real, found gap: PUT mutates the exact same row (setting a
+    // triage state) but was missing requireTokenWrite while DELETE right
+    // above always had it - a read-only token could silence a finding
+    // fleet-wide for a host despite the scope existing to stop precisely
+    // that. This is the regression test for that fix.
+    const put = await request(getApp())
+      .put("/api/v1/findings/triage")
+      .set("Authorization", `Bearer ${tokens.read}`)
+      .send({ ip: IP_A, cveId: "CVE-2020-0001", state: "false_positive" });
+    expect(put.status).toBe(403);
   });
 
   it("still allows a read_write token through the guard", async () => {

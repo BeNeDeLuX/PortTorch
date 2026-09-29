@@ -106,6 +106,20 @@
     width: max-content;
     min-width: min(100%, var(--layout-standard-width));
   }
+  /* Without its own cap here, a cell whose content itself wraps (Host
+     Detail's CVE badges, `.cve-badges` already sets flex-wrap) still
+     forces the table to its fully-unwrapped max-content width - a
+     flex container's max-content contribution is its single-line width
+     regardless of its own wrap CSS. That left a port with many CVEs
+     requiring horizontal scroll inside .table-scroll even though the
+     badges' own CSS was already correct. 24rem rather than the narrow
+     breakpoint's 20rem: confirmed live (Puppeteer, a real 20-CVE port)
+     that both eliminate the overflow, and wide mode has the width to
+     spare for slightly more per line. */
+  :root[data-layout="wide"] .table-scroll > table th,
+  :root[data-layout="wide"] .table-scroll > table td {
+    max-width: 24rem;
+  }
 }
 
 :root[data-theme="light"] {
@@ -1702,6 +1716,23 @@ th {
    border/icon instead of --accent since this specifically means "nothing
    needs attention," which shouldn't depend on (or be confused with) the
    user's own selectable accent color. */
+/* flex-wrap: wrap on all three callout variants below is a real fix, not
+   tidiness - found by measuring the Settings page at 390px and getting a
+   638px scrollWidth. The icon has flex-shrink: 0, but the text beside it
+   is a bare run of inline content (often mixed with <code>), which a
+   nowrap flex row sizes to its own unbroken width rather than letting it
+   wrap - confirmed by toggling flex-wrap live against the real page:
+   nowrap held the box at 638px regardless of min-width, wrap dropped it
+   straight to the viewport's own 390px. The accepted tradeoff, checked by
+   screenshot: on a callout long enough to actually wrap, the icon sits on
+   its own line above the text rather than beside its first line - a
+   worse position than the ideal (wrapping every icon+text callout's
+   markup into an explicit span so it wraps as a single flex item) but a
+   real fix for the one that actually matters, at a fraction of the
+   surface area (every .callout-* call site would need touching for the
+   ideal version, for a page nobody is opening at 390px anyway except
+   Settings' own Backup & Restore warning, the one paragraph long enough
+   to trigger it). */
 .callout-success {
   background: var(--panel);
   border: 1px solid var(--success);
@@ -1709,6 +1740,7 @@ th {
   padding: 1rem;
   margin-bottom: 1rem;
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: 0.6rem;
   color: var(--success);
@@ -1729,6 +1761,7 @@ th {
   padding: 1rem;
   margin-bottom: 1rem;
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: 0.6rem;
   color: var(--danger);
@@ -1761,6 +1794,7 @@ th {
   padding: 1rem;
   margin-bottom: 1rem;
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: 0.6rem;
   color: var(--warning);

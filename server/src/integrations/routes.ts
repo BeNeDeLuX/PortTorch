@@ -553,7 +553,12 @@ function resolveTriageTarget(input: {
   return { ok: false, error: "provide a cveId, or templateId+matchedAt, to identify the finding" };
 }
 
-integrationsRouter.put("/findings/triage", asyncHandler(async (req, res) => {
+// requireTokenWrite was missing here until a real gap was found: DELETE
+// right below has always had it, but this route - which mutates the same
+// row (sets false_positive/accepted_risk/fixed, silencing a finding
+// fleet-wide for that host) - did not, so a read-only token could
+// triage findings despite the scope existing precisely to stop that.
+integrationsRouter.put("/findings/triage", requireTokenWrite, asyncHandler(async (req, res) => {
   const parsed = triageSchema.safeParse(req.body);
   if (!parsed.success || (!parsed.data.ip && !parsed.data.hostname)) {
     res.status(400).json({ error: parsed.success ? "provide an ip or hostname in the request body" : parsed.error.flatten() });

@@ -49,6 +49,15 @@ schedulesRouter.get("/", asyncHandler(async (req, res) => {
       "scan_schedules.window_days as window_days",
       "scan_schedules.window_timezone as window_timezone",
       "scan_schedules.tags as tags",
+      // Real, found by checking this response against a live instance
+      // rather than assumed: these two were never in this explicit select
+      // list, so `Schedule.skipped_runs` was `undefined` in every response
+      // this route has ever sent - `s.skipped_runs > 0` in Schedules.tsx
+      // is `undefined > 0`, false, so the "N runs skipped" warning this
+      // column exists for (see the scheduler-skip section above) has
+      // never once rendered, on any deployment.
+      "scan_schedules.skipped_runs as skipped_runs",
+      "scan_schedules.last_skipped_at as last_skipped_at",
       "scanner_agents.name as scanner_agent_name",
     ]);
 

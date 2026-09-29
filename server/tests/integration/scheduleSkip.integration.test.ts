@@ -4,8 +4,13 @@ import { runSchedulerTick } from "../../src/scheduler";
 import {
   closeDb,
   createTestAgent,
+  createTestUser,
   deleteTestAgent,
+  deleteTestUser,
+  loginAs,
+  type SessionClient,
   type TestAgent,
+  type TestUser,
 } from "./helpers";
 
 const TARGET = "240.33.0.0/24";
@@ -16,10 +21,14 @@ const TARGET = "240.33.0.0/24";
 // the fact; nothing prevented it.
 describe("scheduler skips a run whose predecessor is still queued", () => {
   let agent: TestAgent;
+  let admin: TestUser;
+  let client: SessionClient;
   let scheduleId: string;
 
   beforeAll(async () => {
     agent = await createTestAgent("it-sched-skip");
+    admin = await createTestUser("admin");
+    client = await loginAs(admin.username, admin.password);
     const row = await db
       .insertInto("scan_schedules")
       .values({
@@ -41,6 +50,7 @@ describe("scheduler skips a run whose predecessor is still queued", () => {
     await db.deleteFrom("scan_requests").where("schedule_id", "=", scheduleId).execute();
     await db.deleteFrom("scan_schedules").where("id", "=", scheduleId).execute();
     await deleteTestAgent(agent.id);
+    await deleteTestUser(admin.id);
     await closeDb();
   });
 
@@ -135,5 +145,20 @@ describe("scheduler skips a run whose predecessor is still queued", () => {
     await runSchedulerTick();
     expect(await pendingCount()).toBe(1);
     expect((await schedule()).skipped_runs).toBe(1);
+  });
+
+  // A real gap this pins down: every check above reads scan_schedules
+  // directly, which is exactly why GET /api/schedules omitting
+  // skipped_runs/last_skipped_at from its own explicit select list went
+  // unnoticed - the DB row was always right, the dashboard was never
+  // told. Schedules.tsx's "N runs skipped" warning checks
+  // `s.skipped_runs > 0`, which is `undefined > 0` (false) against a
+  // response missing the field entirely, so it silently never rendered.
+  it("surfaces the skipped count through the API response, not only the database row", async () => {
+    const res = await client.get("/api/schedules");
+    expect(res.status).toBe(200);
+    const mine = res.body.find((s: { id: string }) => s.id === scheduleId);
+    expect(mine.skipped_runs).toBeGreaterThan(0);
+    expect(mine.last_skipped_at).not.toBeNull();
   });
 });
