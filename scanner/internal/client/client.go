@@ -264,8 +264,11 @@ func (c *Client) CheckCancelRequested(ctx context.Context, jobID string) (bool, 
 // PushScanProgress sends the current stage/detail/recent-log-lines
 // snapshot for a running scan - see progress.Tracker, which calls this
 // periodically while a scan is in progress. Satisfies progress.Pusher.
-func (c *Client) PushScanProgress(ctx context.Context, jobID, stage, detail string, logs []progress.LogLine) error {
+func (c *Client) PushScanProgress(ctx context.Context, jobID, stage, detail string, logs []progress.LogLine, counts *progress.Counts) error {
 	body := map[string]any{"stage": stage, "stageDetail": detail, "logs": logs}
+	if counts != nil {
+		body["counts"] = counts
+	}
 	return c.doJSON(ctx, http.MethodPatch, "/api/ingest/scan-jobs/"+jobID+"/progress", body, nil)
 }
 

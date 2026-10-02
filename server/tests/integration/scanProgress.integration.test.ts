@@ -57,7 +57,7 @@ describe("scan job progress (PATCH .../progress from the scanner, GET .../progre
   it("GET returns nulls/empty before the scanner has pushed anything", async () => {
     const res = await adminClient.get(`/api/scan-jobs/${jobId}/progress`);
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ currentStage: null, stageDetail: null, logs: [], logsComplete: false, updatedAt: null });
+    expect(res.body).toEqual({ currentStage: null, stageDetail: null, logs: [], logsComplete: false, updatedAt: null, counts: null });
   });
 
   it("PATCH from the owning scanner is reflected by GET", async () => {
@@ -90,6 +90,31 @@ describe("scan job progress (PATCH .../progress from the scanner, GET .../progre
     const getRes = await adminClient.get(`/api/scan-jobs/${jobId}/progress`);
     expect(getRes.body.currentStage).toBe("submit");
     expect(getRes.body.logs).toEqual(newLogs);
+  });
+
+  // The progress bar's data. A push without counts - an older scanner,
+  // or one sent before discovery was planned - must read back as null,
+  // never as an invented "0 of 0".
+  it("carries host counts for the progress bar, and none when a push has none", async () => {
+    const push = (body: object) =>
+      request(getApp()).patch(`/api/ingest/scan-jobs/${jobId}/progress`).set("Authorization", `Bearer ${agentA.apiKey}`).send(body);
+
+    expect(
+      (await push({ stage: "nmap", logs: [], counts: { discoveryBlocks: 8, discoveryBlocksDone: 3, hostsDiscovered: 40, hostsProcessed: 12 } }))
+        .status
+    ).toBe(204);
+    let res = await adminClient.get(`/api/scan-jobs/${jobId}/progress`);
+    expect(res.body.counts).toEqual({ discoveryBlocks: 8, discoveryBlocksDone: 3, hostsDiscovered: 40, hostsProcessed: 12 });
+
+    await push({ stage: "nmap", logs: [] });
+    res = await adminClient.get(`/api/scan-jobs/${jobId}/progress`);
+    expect(res.body.counts).toBeNull();
+
+    // A negative count is a broken payload, not a progress state.
+    expect(
+      (await push({ stage: "nmap", logs: [], counts: { discoveryBlocks: 1, discoveryBlocksDone: 1, hostsDiscovered: -1, hostsProcessed: 0 } }))
+        .status
+    ).toBe(400);
   });
 
   it("PATCH is rejected for a job that belongs to a different scanner agent", async () => {

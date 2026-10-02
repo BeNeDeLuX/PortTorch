@@ -61,10 +61,24 @@ const DefaultPushInterval = 3 * time.Second
 // this package has no dependency on it at all, and so a test can supply a
 // fake without spinning up a real HTTP client.
 type Pusher interface {
-	PushScanProgress(ctx context.Context, jobID, stage, detail string, logs []LogLine) error
+	// counts is nil when nothing is known yet (see Counts).
+	PushScanProgress(ctx context.Context, jobID, stage, detail string, logs []LogLine, counts *Counts) error
 	// PushFullScanLog uploads the complete accumulated log once, at
 	// Close() - see maxFullLogLines above and Close()'s doc comment.
 	PushFullScanLog(ctx context.Context, jobID string, logs []LogLine) error
+}
+
+// Counts is the structured half of a progress push: how many hosts
+// discovery found and how many of them are done, which is what the
+// dashboard draws its progress bar from. Sent alongside the log lines
+// rather than parsed back out of them, because a bar computed from
+// free-text messages would break the first time one was reworded. The
+// JSON names match the webserver's ingest schema.
+type Counts struct {
+	DiscoveryBlocks     int `json:"discoveryBlocks"`
+	DiscoveryBlocksDone int `json:"discoveryBlocksDone"`
+	HostsDiscovered     int `json:"hostsDiscovered"`
+	HostsProcessed      int `json:"hostsProcessed"`
 }
 
 // Tracker is safe for concurrent use - Progress is called from whichever
@@ -81,6 +95,7 @@ type Tracker struct {
 	detail  string
 	logs    []LogLine
 	fullLog []LogLine
+	counts  func() *Counts
 
 	stop chan struct{}
 	done chan struct{}
@@ -118,6 +133,17 @@ func (t *Tracker) Progress(stage, message string) {
 	if len(t.fullLog) > maxFullLogLines {
 		t.fullLog = t.fullLog[len(t.fullLog)-maxFullLogLines:]
 	}
+}
+
+// SetCounts tells the tracker where to read host counts from on each
+// push. A func rather than values pushed in, because the counts live in
+// the pipeline and change from many goroutines - reading them at push
+// time is both simpler and never stale. Returning nil means "not known
+// yet" (discovery has not been planned) and sends no counts at all.
+func (t *Tracker) SetCounts(fn func() *Counts) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.counts = fn
 }
 
 func (t *Tracker) snapshot() (stage, detail string, logs []LogLine) {
@@ -162,13 +188,20 @@ func (t *Tracker) push() {
 		// onProgress call at all) - nothing worth sending.
 		return
 	}
+	t.mu.Lock()
+	countsFn := t.counts
+	t.mu.Unlock()
+	var counts *Counts
+	if countsFn != nil {
+		counts = countsFn()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	// Best-effort, like every other progress-reporting call in this
 	// codebase (onProgress itself only logs locally on failure elsewhere) -
 	// a missed push just means the webserver's view is one interval
 	// staler, not a reason to interrupt the scan itself.
-	_ = t.pusher.PushScanProgress(ctx, t.jobID, stage, detail, logs)
+	_ = t.pusher.PushScanProgress(ctx, t.jobID, stage, detail, logs, counts)
 }
 
 // Close stops the periodic pusher and blocks until its final push

@@ -401,6 +401,10 @@ func runScan(configPath, target, ports string, nseScripts []string, nucleiProfil
 	// the other way around (webserver polling the scanner).
 	tracker := progress.NewTracker(c, jobID, progress.DefaultPushInterval)
 	defer tracker.Close()
+	// For the dashboard's progress bar only: a one-shot scan cannot be
+	// cancelled from the dashboard, so its remainder is never reported.
+	coverage := &pipeline.ScanCoverage{}
+	tracker.SetCounts(coverage.ProgressCounts)
 
 	// Each host is submitted as soon as its own nmap+gowitness/RDP/TLS
 	// work finishes, rather than batching the whole target range into one
@@ -476,9 +480,7 @@ func runScan(configPath, target, ports string, nseScripts []string, nucleiProfil
 				log.Warn("writing scan audit log entry failed", "event", "auditlog.write_failed", "scan_job_id", jobID, "target_ip", host.IP, "error", writeErr.Error())
 			}
 		},
-		// nil: a one-shot CLI scan cannot be cancelled from the dashboard,
-		// so it never stops with a remainder worth offering to resume.
-		nil,
+		coverage,
 	)
 
 	if scanErr != nil {

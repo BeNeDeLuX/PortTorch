@@ -483,6 +483,7 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 		if ctx.Err() == nil {
 			coverage.hostDone(host.IP)
 		}
+		coverage.hostProcessed()
 		onHostComplete(host)
 	})
 
@@ -596,6 +597,9 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 						nmapCountMu.Lock()
 						nmapFailed++
 						nmapCountMu.Unlock()
+						// Dealt with, as far as progress goes - otherwise one
+						// unreachable host holds the bar short of its end.
+						coverage.hostProcessed()
 						return
 					}
 					nmapCountMu.Lock()

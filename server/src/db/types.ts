@@ -213,6 +213,12 @@ export interface ScanJobProgressTable {
   stage_detail: string | null;
   recent_logs: ColumnType<ScanProgressLogLine[], string, string>;
   updated_at: ColumnType<Date, string | undefined, string>;
+  // Host counts for the progress bar (migration 1746800000000). Null when
+  // the scanner sent none - too old, or discovery not yet planned.
+  discovery_blocks: ColumnType<number | null, number | null | undefined, number | null>;
+  discovery_blocks_done: ColumnType<number | null, number | null | undefined, number | null>;
+  hosts_discovered: ColumnType<number | null, number | null | undefined, number | null>;
+  hosts_processed: ColumnType<number | null, number | null | undefined, number | null>;
 }
 
 export interface ScanProgressLogLine {

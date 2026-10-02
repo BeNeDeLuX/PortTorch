@@ -804,6 +804,8 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, nucle
 	// instead - see internal/progress's doc comment.
 	tracker := progress.NewTracker(s.client, jobID, progress.DefaultPushInterval)
 	defer tracker.Close()
+	coverage := &pipeline.ScanCoverage{}
+	tracker.SetCounts(coverage.ProgressCounts)
 
 	// A per-scan rate override applies to this scan only - s.pcfg is
 	// copied (Config is a plain struct passed by value), never mutated, so
@@ -816,7 +818,6 @@ func (s *Server) runScan(jobID, target, ports string, nseScripts []string, nucle
 		scanCfg.MasscanRate = *masscanRate
 	}
 
-	coverage := &pipeline.ScanCoverage{}
 	result, err := pipeline.RunScan(scanCtx, scanCfg, target, ports, excludes, probeHostnames, nseScripts, nucleiProfile,
 		func(stage, message string) {
 			state.appendLog("[" + stage + "] " + message)

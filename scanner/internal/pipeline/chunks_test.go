@@ -300,3 +300,65 @@ func TestRunScanSmallTargetIsOnePassWithTheSpecAsGiven(t *testing.T) {
 		t.Errorf("masscan calls = %v, want exactly [10.9.0.0/24]", calls)
 	}
 }
+
+func TestCoverageCountsTrackBlocksAndHosts(t *testing.T) {
+	masscan, nmap, _ := writeFakeScanners(t, 0)
+	cfg := Config{MasscanPath: masscan, NmapPath: nmap, MasscanRate: 1, Concurrency: 2}
+	cov := &ScanCoverage{}
+	if cov.ProgressCounts() != nil {
+		t.Fatal("nothing should be reported before discovery is planned")
+	}
+	if _, err := RunScan(context.Background(), cfg, "10.9.0.0/20", "22", Excludes{}, nil, nil, nil, nil, nil, cov); err != nil {
+		t.Fatal(err)
+	}
+	want := ScanCounts{Planned: true, DiscoveryBlocks: 8, DiscoveryBlocksDone: 8, HostsDiscovered: 8, HostsProcessed: 8}
+	if got := cov.Counts(); got != want {
+		t.Errorf("counts = %+v, want %+v", got, want)
+	}
+}
+
+// Cancelled in block 4 of 8: three blocks done, their three hosts done,
+// and the bar honestly short of its end.
+func TestCoverageCountsStopWhereTheScanStopped(t *testing.T) {
+	masscan, nmap, _ := writeFakeScanners(t, 4)
+	cfg := Config{MasscanPath: masscan, NmapPath: nmap, MasscanRate: 1, Concurrency: 2}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var mu sync.Mutex
+	done := 0
+	cov := &ScanCoverage{}
+	_, _ = RunScan(ctx, cfg, "10.9.0.0/20", "22", Excludes{}, nil, nil, nil, nil, func(HostResult) {
+		mu.Lock()
+		defer mu.Unlock()
+		if done++; done == 3 {
+			cancel()
+		}
+	}, cov)
+	got := cov.Counts()
+	if got.DiscoveryBlocks != 8 || got.DiscoveryBlocksDone != 3 || got.HostsDiscovered != 3 || got.HostsProcessed != 3 {
+		t.Errorf("counts = %+v, want 3 of 8 blocks and 3 of 3 hosts", got)
+	}
+}
+
+// A host nmap fails on is still dealt with as far as progress goes -
+// otherwise one unreachable host holds the bar at 99% forever. It stays
+// in the remainder, though, since it was never actually scanned.
+func TestNmapFailureCountsAsProcessedButStaysInTheRemainder(t *testing.T) {
+	masscan, _, _ := writeFakeScanners(t, 0)
+	failing := filepath.Join(t.TempDir(), "nmap")
+	if err := os.WriteFile(failing, []byte("#!/bin/sh\necho boom >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{MasscanPath: masscan, NmapPath: failing, MasscanRate: 1000, Concurrency: 2}
+	cov := &ScanCoverage{}
+	_, err := RunScan(context.Background(), cfg, "10.9.0.0/24", "22", Excludes{}, nil, nil, nil, nil, nil, cov)
+	if err == nil {
+		t.Fatal("every host failing nmap should fail the scan")
+	}
+	if got := cov.Counts(); got.HostsDiscovered != 1 || got.HostsProcessed != 1 {
+		t.Errorf("counts = %+v, want 1 of 1 processed", got)
+	}
+	if got := cov.Remaining(); got != "10.9.0.0" {
+		t.Errorf("remaining = %q, want the failed host", got)
+	}
+}

@@ -1032,6 +1032,19 @@ export interface ScanJobProgress {
   // for a still-running scan.
   logsComplete: boolean;
   updatedAt: string | null;
+  // Host counts for the progress bar, or null when the scanner sent none
+  // (a build older than the bar, or discovery not yet planned).
+  counts: ScanProgressCounts | null;
+}
+
+export interface ScanProgressCounts {
+  // Discovery passes: 1 normally, more when a large target is discovered
+  // in blocks - hostsDiscovered then keeps growing until the last one.
+  discoveryBlocks: number;
+  discoveryBlocksDone: number;
+  hostsDiscovered: number;
+  // Completed, or given up on because nmap failed for them.
+  hostsProcessed: number;
 }
 
 // Where a scan request lands in its scanner's claim order. See the

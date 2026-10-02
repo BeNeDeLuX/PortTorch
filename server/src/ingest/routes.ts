@@ -519,10 +519,20 @@ const progressLogLineSchema = z.object({
   message: z.string(),
 });
 
+const scanProgressCountsSchema = z.object({
+  discoveryBlocks: z.number().int().min(0),
+  discoveryBlocksDone: z.number().int().min(0),
+  hostsDiscovered: z.number().int().min(0),
+  hostsProcessed: z.number().int().min(0),
+});
+
 const scanProgressSchema = z.object({
   stage: z.string().min(1),
   stageDetail: z.string().optional(),
   logs: z.array(progressLogLineSchema).max(200),
+  // Absent from a scanner older than the progress bar, and before
+  // discovery is planned - stored as nulls, never as zeros.
+  counts: scanProgressCountsSchema.optional(),
 });
 
 // Pushed periodically (every few seconds) by the scanner itself while a
@@ -555,23 +565,21 @@ ingestRouter.patch("/scan-jobs/:id/progress", asyncHandler(async (req, res) => {
     return;
   }
 
+  const counts = parsed.data.counts;
+  const row = {
+    current_stage: parsed.data.stage,
+    stage_detail: parsed.data.stageDetail ?? null,
+    recent_logs: JSON.stringify(parsed.data.logs),
+    updated_at: new Date().toISOString(),
+    discovery_blocks: counts?.discoveryBlocks ?? null,
+    discovery_blocks_done: counts?.discoveryBlocksDone ?? null,
+    hosts_discovered: counts?.hostsDiscovered ?? null,
+    hosts_processed: counts?.hostsProcessed ?? null,
+  };
   await db
     .insertInto("scan_job_progress")
-    .values({
-      scan_job_id: singleParam(req.params.id),
-      current_stage: parsed.data.stage,
-      stage_detail: parsed.data.stageDetail ?? null,
-      recent_logs: JSON.stringify(parsed.data.logs),
-      updated_at: new Date().toISOString(),
-    })
-    .onConflict((oc) =>
-      oc.column("scan_job_id").doUpdateSet({
-        current_stage: parsed.data.stage,
-        stage_detail: parsed.data.stageDetail ?? null,
-        recent_logs: JSON.stringify(parsed.data.logs),
-        updated_at: new Date().toISOString(),
-      })
-    )
+    .values({ scan_job_id: singleParam(req.params.id), ...row })
+    .onConflict((oc) => oc.column("scan_job_id").doUpdateSet(row))
     .execute();
 
   res.status(204).end();

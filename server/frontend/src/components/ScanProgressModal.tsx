@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ScanJobProgress } from "../api";
 import { durationLabel, elapsedLabel } from "../lib/elapsed";
+import { progressView } from "../lib/scanProgress";
 import Modal from "./Modal";
 
 // masscan/discovery are the scan's up-front port-discovery step (nmap
@@ -40,6 +41,51 @@ const CONCURRENT_STAGES: Array<{ key: string; label: string }> = [
 ];
 
 const POLL_INTERVAL_MS = 3000;
+
+function Bar({ percent, label, detail }: { percent: number; label: string; detail: string }) {
+  return (
+    <div className="scan-progress-bar-block">
+      <div className="scan-progress-bar-head">
+        <span>{label}</span>
+        <span className="scan-progress-bar-percent">{percent}%</span>
+      </div>
+      <div className="scan-progress-bar" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
+        <span style={{ width: `${percent}%` }} />
+      </div>
+      <p className="host-meta">{detail}</p>
+    </div>
+  );
+}
+
+// Per host, not per port - see lib/scanProgress.ts. Shown from the moment
+// discovery has reported how many hosts there are; until then the
+// Discovery step above is the honest answer.
+function ProgressBars({ progress, live }: { progress: ScanJobProgress; live: boolean }) {
+  const view = progressView(progress.counts);
+  if (!view.discovery && !view.hosts && !view.nothingFound) return null;
+  return (
+    <div className="scan-progress-bars">
+      {view.discovery && (
+        <Bar
+          percent={view.discovery.percent}
+          label="Discovery"
+          detail={`Block ${view.discovery.done} of ${view.discovery.total} done - a large target is discovered in blocks, so hosts keep arriving.`}
+        />
+      )}
+      {view.hosts && (
+        <Bar
+          percent={view.hosts.percent}
+          label={live ? "Hosts" : "Hosts processed"}
+          detail={
+            `${view.hosts.processed.toLocaleString()} of ${view.hosts.discovered.toLocaleString()} host${view.hosts.discovered === 1 ? "" : "s"} done` +
+            (view.hosts.final ? "" : " so far - later blocks may add more")
+          }
+        />
+      )}
+      {view.nothingFound && <p className="host-meta">Discovery found no hosts with open ports.</p>}
+    </div>
+  );
+}
 
 // The runtime advances on its own rather than only when a poll lands: the
 // scanner pushes every few seconds, and a clock that moved in 3-second
@@ -158,6 +204,8 @@ export default function ScanProgressModal({
               1. Discovery <span className="host-meta">(masscan)</span>
             </li>
           </ol>
+
+          <ProgressBars progress={progress} live={live} />
 
           {maxPhaseSeen.current > 1 && (
             <div className="scan-phase-2">

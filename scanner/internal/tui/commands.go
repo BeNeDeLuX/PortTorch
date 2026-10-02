@@ -77,6 +77,9 @@ func runScanCmd(c *client.Client, pcfg pipeline.Config, queueDir string, auditLo
 
 		tracker := scanprogress.NewTracker(c, jobID, scanprogress.DefaultPushInterval)
 		defer tracker.Close()
+		// Progress bar only, same as the one-shot CLI.
+		coverage := &pipeline.ScanCoverage{}
+		tracker.SetCounts(coverage.ProgressCounts)
 
 		// nil nseScripts/nucleiProfile: the menu TUI has no scan-profile
 		// concept - always runs DefaultNSEScripts and never runs nuclei,
@@ -129,7 +132,7 @@ func runScanCmd(c *client.Client, pcfg pipeline.Config, queueDir string, auditLo
 				progressCh <- progressMsg{stage: "submit", message: submittedMsg}
 				tracker.Progress("submit", submittedMsg)
 			},
-			nil,
+			coverage,
 		)
 
 		status := "completed"

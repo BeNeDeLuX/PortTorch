@@ -3191,6 +3191,54 @@ a.subnet-cell:focus-visible {
 }
 
 /* Scan progress modal (components/ScanProgressModal.tsx) */
+/* The per-host progress bars in the Details popup (ScanProgressModal).
+   Accent-coloured: this is UI state, not a data series, so the rule that
+   keeps --accent out of charts does not apply. */
+.scan-progress-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0.75rem 0;
+}
+
+.scan-progress-bar-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  margin-bottom: 0.25rem;
+}
+
+.scan-progress-bar-percent {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.scan-progress-bar {
+  height: 0.6rem;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.scan-progress-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+
+.scan-progress-bar-block .host-meta {
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scan-progress-bar > span {
+    transition: none;
+  }
+}
+
 .scan-phase-tracker {
   display: flex;
   flex-direction: column;

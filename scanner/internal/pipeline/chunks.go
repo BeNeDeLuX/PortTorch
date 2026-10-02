@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"porttorch/scanner/internal/progress"
 )
 
 // A large IPv4 target is discovered in blocks rather than in one masscan
@@ -286,6 +288,72 @@ type ScanCoverage struct {
 	hostnames map[string]string
 	blocks    []coverageBlock
 	pending   map[string]bool
+
+	// Running totals for the dashboard's progress bar (see Counts).
+	blocksDone int
+	discovered int
+	processed  int
+}
+
+// ScanCounts is how far a scan has got, in hosts rather than ports: the
+// one unit an operator can reason about, and the only one known in
+// advance - discovery says how many hosts nmap will have to enrich, while
+// how long each one takes depends on what it turns out to run.
+type ScanCounts struct {
+	// False until discovery has been planned; nothing below means
+	// anything before that.
+	Planned bool
+	// Discovery passes in total and finished. One for an ordinary scan;
+	// more when a large target is discovered in blocks, in which case
+	// HostsDiscovered keeps growing until the last block is done.
+	DiscoveryBlocks     int
+	DiscoveryBlocksDone int
+	// Hosts discovery turned up, and how many of those have been dealt
+	// with - completed, or given up on because nmap failed for them. A
+	// failure counts as processed so the bar can reach its end; the host
+	// is still left in Remaining for a resume.
+	HostsDiscovered int
+	HostsProcessed  int
+}
+
+func (c *ScanCoverage) Counts() ScanCounts {
+	if c == nil {
+		return ScanCounts{}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return ScanCounts{
+		Planned:             c.planned,
+		DiscoveryBlocks:     len(c.blocks),
+		DiscoveryBlocksDone: c.blocksDone,
+		HostsDiscovered:     c.discovered,
+		HostsProcessed:      c.processed,
+	}
+}
+
+// ProgressCounts adapts Counts to what progress.Tracker.SetCounts takes,
+// so every entry point wires the progress bar up with the same one line.
+// nil until discovery has been planned - there is nothing to show then.
+func (c *ScanCoverage) ProgressCounts() *progress.Counts {
+	counts := c.Counts()
+	if !counts.Planned {
+		return nil
+	}
+	return &progress.Counts{
+		DiscoveryBlocks:     counts.DiscoveryBlocks,
+		DiscoveryBlocksDone: counts.DiscoveryBlocksDone,
+		HostsDiscovered:     counts.HostsDiscovered,
+		HostsProcessed:      counts.HostsProcessed,
+	}
+}
+
+func (c *ScanCoverage) hostProcessed() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.processed++
 }
 
 type coverageBlock struct {
@@ -324,6 +392,8 @@ func (c *ScanCoverage) blockDiscovered(i int, ips []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.blocks[i].done = true
+	c.blocksDone++
+	c.discovered += len(ips)
 	for _, ip := range ips {
 		c.pending[ip] = true
 	}

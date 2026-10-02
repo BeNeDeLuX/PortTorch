@@ -16,6 +16,7 @@ type fakePusher struct {
 type pushCall struct {
 	jobID, stage, detail string
 	logs                 []LogLine
+	counts               *Counts
 }
 
 type fullLogPushCall struct {
@@ -23,13 +24,40 @@ type fullLogPushCall struct {
 	logs  []LogLine
 }
 
-func (f *fakePusher) PushScanProgress(_ context.Context, jobID, stage, detail string, logs []LogLine) error {
+func (f *fakePusher) PushScanProgress(_ context.Context, jobID, stage, detail string, logs []LogLine, counts *Counts) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	logsCopy := make([]LogLine, len(logs))
 	copy(logsCopy, logs)
-	f.calls = append(f.calls, pushCall{jobID: jobID, stage: stage, detail: detail, logs: logsCopy})
+	f.calls = append(f.calls, pushCall{jobID: jobID, stage: stage, detail: detail, logs: logsCopy, counts: counts})
 	return nil
+}
+
+// The counts are read at push time from whatever the source currently
+// says, and absent until there is a source - a scanner build without it
+// simply sends none.
+func TestTrackerSendsCountsReadAtPushTime(t *testing.T) {
+	pusher := &fakePusher{}
+	tr := NewTracker(pusher, "job-counts", time.Hour)
+	tr.Progress("masscan", "scanning")
+	processed := 0
+	tr.SetCounts(func() *Counts {
+		return &Counts{DiscoveryBlocks: 1, DiscoveryBlocksDone: 1, HostsDiscovered: 10, HostsProcessed: processed}
+	})
+	processed = 4
+	tr.Close()
+	got := pusher.lastCall().counts
+	if got == nil || got.HostsDiscovered != 10 || got.HostsProcessed != 4 {
+		t.Fatalf("counts = %+v, want 4 of 10 as read at push time", got)
+	}
+
+	plain := &fakePusher{}
+	tr2 := NewTracker(plain, "job-no-counts", time.Hour)
+	tr2.Progress("masscan", "scanning")
+	tr2.Close()
+	if plain.lastCall().counts != nil {
+		t.Error("a tracker with no count source must send no counts")
+	}
 }
 
 func (f *fakePusher) PushFullScanLog(_ context.Context, jobID string, logs []LogLine) error {

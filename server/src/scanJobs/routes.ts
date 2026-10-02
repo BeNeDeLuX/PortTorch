@@ -258,7 +258,16 @@ scanJobsRouter.get("/:id/progress", asyncHandler(async (req, res) => {
   const [progress, fullLog] = await Promise.all([
     db
       .selectFrom("scan_job_progress")
-      .select(["current_stage", "stage_detail", "recent_logs", "updated_at"])
+      .select([
+        "current_stage",
+        "stage_detail",
+        "recent_logs",
+        "updated_at",
+        "discovery_blocks",
+        "discovery_blocks_done",
+        "hosts_discovered",
+        "hosts_processed",
+      ])
       .where("scan_job_id", "=", req.params.id)
       .executeTakeFirst(),
     // Uploaded once by the scanner at completion (see ingest/routes.ts's
@@ -283,6 +292,18 @@ scanJobsRouter.get("/:id/progress", asyncHandler(async (req, res) => {
     logs: fullLog?.logs ?? progress?.recent_logs ?? [],
     logsComplete: fullLog !== undefined,
     updatedAt: progress?.updated_at ?? null,
+    // The progress bar's data, or null when the scanner sent none (too
+    // old, or discovery not yet planned) - the popup then shows no bar
+    // rather than an invented "0 of 0".
+    counts:
+      progress && progress.hosts_discovered !== null && progress.hosts_processed !== null
+        ? {
+            discoveryBlocks: progress.discovery_blocks ?? 1,
+            discoveryBlocksDone: progress.discovery_blocks_done ?? 0,
+            hostsDiscovered: progress.hosts_discovered,
+            hostsProcessed: progress.hosts_processed,
+          }
+        : null,
   });
 }));
 
