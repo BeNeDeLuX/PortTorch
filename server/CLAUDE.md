@@ -831,6 +831,15 @@ Covered by `outboundProxy.integration.test.ts` against real loopback servers rat
 
 `TableExport` gained a **PDF** button, which is `window.print()` against the page's own DOM exactly as Host Detail's export is - no library, no round trip, and the current filter and sort are what come out. The `@media print` block already hid the nav, search bar and list controls; it now also hides the bulk-triage bar and the row checkboxes, since empty checkboxes in a printed record read as a form to fill in. The checkbox *column* stays (hiding a column in CSS means touching every `th` and `td`), which is a fair trade against restructuring three tables for print.
 
+### What `node-forge` is used for, and the advisory that does not reach it
+
+`node-forge` appears in exactly two files:
+
+- **`tls/generateCert.ts`** generates the webserver's own self-signed key and certificate, signs it and writes PEM.
+- **`settings/caCertificates.ts`** parses an uploaded CA certificate, reads its basicConstraints and fingerprints it.
+
+Neither file ever **verifies** a signature. Every TLS connection this webserver makes is verified by Node's own `tls` module, which receives the uploaded PEM as its `ca` option and never involves `node-forge`. That matters for GHSA-86w9-cpqp-85rv: forged RSA PKCS#1 v1.5 signatures are accepted by `node-forge` 1.4.0's signature *verification*, and no patched release exists yet. Checked in October 2026 with a grep for `verify`/`isIssuer`/`caStore` across both files: the vulnerable path is not reachable from this code. That stays true only while nothing here starts calling `cert.verify`, `publicKey.verify` or a forge `caStore`. Anything that needs to check a signature should use `crypto.X509Certificate#verify`, which Node implements on OpenSSL.
+
 ### Talking to an internally hosted server with a private certificate
 
 Two outbound integrations connect to servers an operator runs themselves, where a self-signed or private-CA certificate is the norm rather than a mistake: the mail relay and the HEC collector. Both have their own verify-TLS switch (`app_settings.smtp_verify_tls`, `hec_verify_tls`), defaulting to verifying.
