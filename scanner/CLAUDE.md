@@ -324,10 +324,31 @@ plus domain, so on a workgroup machine it holds the short name, and a dot
 is what distinguishes the two rather than the field's name. Then `nbstat`,
 last because a NetBIOS name is always the short, uppercase form.
 
-Only `nbstat` carries a MAC. `smb-os-discovery` reports OS, computer name,
-domain and system time and no address at all - confirmed against real
-output, not assumed. It is still consulted first so that adding a source
-later is a change in one place.
+Two sources carry a MAC, in this order:
+
+1. **SNMP's interface table (`snmp-interfaces`)**, from the SNMP probe
+   every host gets. It is the only source tied to an address: it names the
+   MAC of the interface that carries the scanned IP. It also reaches
+   devices nothing else here does, such as printers, UPS cards, switches
+   and appliances with no SMB.
+2. **`nbstat`.** Its MAC is whichever adapter NetBIOS answered from, which
+   on a multi-homed Windows machine need not be the scanned one.
+
+`smb-os-discovery` reports OS, computer name, domain and system time and no
+address at all. That was confirmed against real output, not assumed.
+
+`macFromSNMPInterfaces` takes **only** the MAC of the interface whose
+`IP address` equals the scanned IP. A router or multi-homed appliance
+reports every interface it has, and any other one would be a real MAC
+belonging to a different address. No match means no MAC rather than a
+guess, which is also the right answer behind NAT or for a VIP. Interface
+blocks are told apart by their field names (`IP address:`, `MAC address:`,
+`Type:`, `Status:`, `Traffic stats:` - the fixed set nmap's
+`snmp-interfaces.nse` `build_results` emits) rather than by indentation,
+because the block's name is the device's free-text `ifDescr`. The parser was
+checked against all 8 real `snmp-interfaces` outputs stored on a live
+deployment: for every one, the derived MAC equalled the MAC ARP had
+resolved for the same address.
 
 **Nothing is ever overwritten**, and the derived values live in their own
 fields rather than filling in `Hostname`/`MACAddress`. A PTR record and an

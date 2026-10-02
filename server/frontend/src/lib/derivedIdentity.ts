@@ -9,6 +9,7 @@ export const IDENTITY_SOURCE_LABEL: Record<string, string> = {
   "rdp-certificate": "from the RDP certificate",
   "smb-os-discovery": "from SMB (smb-os-discovery)",
   nbstat: "from NetBIOS (nbstat)",
+  "snmp-interfaces": "from SNMP's interface table (snmp-interfaces)",
   // The eight services nmap can elicit an NTLM message from. They answer
   // both a name and the exact Windows build (see lib/windowsBuilds.ts),
   // so the same labels serve the hostname marker and the version badge.

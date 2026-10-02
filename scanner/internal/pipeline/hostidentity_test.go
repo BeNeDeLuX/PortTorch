@@ -198,3 +198,116 @@ func TestAnEmptyCopyDoesNotMaskAPopulatedOne(t *testing.T) {
 		t.Errorf("DerivedHostname = %q, want the populated copy to win", host.DerivedHostname)
 	}
 }
+
+// The snmp-interfaces output a real CS141 UPS management card returned,
+// in the shape nmap's own script builds it (an interface name, then its
+// indented fields). Three interfaces, only one of them carrying the
+// scanned address.
+const realSNMPInterfaces = `
+  lo
+    IP address: 127.0.0.1  Netmask: 255.0.0.0
+    Type: softwareLoopback  Speed: 10 Mbps
+    Status: up
+    Traffic stats: 3.28 Gb sent, 3.28 Gb received
+  eth0
+    IP address: 10.41.72.135  Netmask: 255.255.248.0
+    MAC address: 00:30:d6:39:36:16 (MSC Vertriebs Gmbh)
+    Type: ethernetCsmacd  Speed: 1 Gbps
+    Status: up
+    Traffic stats: 1.20 Gb sent, 2.19 Gb received
+  sit0
+    Type: tunnel  Speed: 0 Kbps
+    Status: down
+    Traffic stats: 0.00 Kb sent, 0.00 Kb received
+`
+
+// The SNMP probe appends its result as a synthetic UDP/161 port - see
+// snmp.go - which is where deriveHostIdentity finds it.
+func snmpHost(ip, interfaces string) *HostResult {
+	return &HostResult{
+		IP: ip,
+		Ports: []PortResult{
+			{Port: 80, Protocol: "tcp", State: "open", ServiceName: "http"},
+			{Port: 161, Protocol: "udp", State: "open", ServiceName: "snmp", ExtraScripts: []NSEScript{{ID: "snmp-interfaces", Output: interfaces}}},
+		},
+	}
+}
+
+func TestDeriveMACFromTheSNMPInterfaceCarryingTheScannedAddress(t *testing.T) {
+	host := snmpHost("10.41.72.135", realSNMPInterfaces)
+	deriveHostIdentity(host)
+	if host.DerivedMACAddress != "00:30:D6:39:36:16" {
+		t.Errorf("DerivedMACAddress = %q, want eth0's address", host.DerivedMACAddress)
+	}
+	if host.DerivedMACVendor != "MSC Vertriebs Gmbh" {
+		t.Errorf("DerivedMACVendor = %q", host.DerivedMACVendor)
+	}
+	if host.DerivedMACSource != IdentitySourceSNMPInterfaces {
+		t.Errorf("source = %q, want snmp-interfaces", host.DerivedMACSource)
+	}
+}
+
+// A router reports every interface it has. Taking the first MAC in the
+// table would record a real address that belongs to another network -
+// so an address the device does not list (NAT, a VIP) yields nothing.
+func TestSNMPInterfaceMACNeedsTheScannedAddress(t *testing.T) {
+	host := snmpHost("192.0.2.50", realSNMPInterfaces)
+	deriveHostIdentity(host)
+	if host.DerivedMACAddress != "" {
+		t.Errorf("took %q from an interface that is not the scanned address", host.DerivedMACAddress)
+	}
+
+	router := `
+  ge-0/0/0
+    IP address: 10.1.0.1  Netmask: 255.255.255.0
+    MAC address: 00:11:22:33:44:01 (Juniper Networks)
+  ge-0/0/1
+    IP address: 10.2.0.1  Netmask: 255.255.255.0
+    MAC address: 00:11:22:33:44:02 (Juniper Networks)
+`
+	host = snmpHost("10.2.0.1", router)
+	deriveHostIdentity(host)
+	if host.DerivedMACAddress != "00:11:22:33:44:02" {
+		t.Errorf("DerivedMACAddress = %q, want the second interface's", host.DerivedMACAddress)
+	}
+}
+
+// The scanned interface tells us its address but carries no MAC (a
+// tunnel, or a point-to-point link) - another interface's MAC must not
+// be borrowed for it.
+func TestSNMPMatchedInterfaceWithoutAMACYieldsNothing(t *testing.T) {
+	output := `
+  ppp0
+    IP address: 10.9.9.9  Netmask: 255.255.255.255
+    Type: ppp  Speed: 0 Kbps
+  eth0
+    IP address: 10.0.0.1  Netmask: 255.255.255.0
+    MAC address: 00:aa:bb:cc:dd:ee (unknown)
+`
+	host := snmpHost("10.9.9.9", output)
+	deriveHostIdentity(host)
+	if host.DerivedMACAddress != "" {
+		t.Errorf("borrowed %q from a different interface", host.DerivedMACAddress)
+	}
+}
+
+// SNMP outranks nbstat: it names the MAC of the scanned address itself,
+// where NetBIOS answers from whichever adapter it likes.
+func TestSNMPInterfaceMACOutranksNbstat(t *testing.T) {
+	host := snmpHost("10.41.72.135", realSNMPInterfaces)
+	host.Ports = append(host.Ports, PortResult{Port: 445, Protocol: "tcp", State: "open", ExtraScripts: []NSEScript{{ID: "nbstat", Output: windowsNbstat}}})
+	deriveHostIdentity(host)
+	if host.DerivedMACSource != IdentitySourceSNMPInterfaces {
+		t.Errorf("source = %q, want snmp-interfaces to win", host.DerivedMACSource)
+	}
+}
+
+// An ARP-resolved MAC is direct evidence and is never second-guessed.
+func TestSNMPDoesNotOverrideARP(t *testing.T) {
+	host := snmpHost("10.41.72.135", realSNMPInterfaces)
+	host.MACAddress = "00:30:D6:39:36:16"
+	deriveHostIdentity(host)
+	if host.DerivedMACAddress != "" {
+		t.Error("derived a MAC although ARP already resolved one")
+	}
+}

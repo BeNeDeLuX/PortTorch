@@ -18,8 +18,9 @@ import (
 //     over NetBIOS, which travels across routers.
 //
 // Everything here is derived from output the pipeline already collects
-// (the RDP certificate probe, and the smb-os-discovery/nbstat scripts
-// that run on every SMB port) - no extra probe, no extra scan time.
+// (the RDP certificate probe, the smb-os-discovery/nbstat scripts that run
+// on every SMB port, and the snmp-interfaces table from the SNMP probe
+// every host gets) - no extra probe, no extra scan time.
 //
 // **Nothing is ever overwritten.** These land in their own fields and are
 // only derived at all when the real value is missing: a PTR record and an
@@ -38,6 +39,7 @@ const (
 	IdentitySourceRDPCertificate = "rdp-certificate"
 	IdentitySourceSMBOSDiscovery = "smb-os-discovery"
 	IdentitySourceNbstat         = "nbstat"
+	IdentitySourceSNMPInterfaces = "snmp-interfaces"
 )
 
 // Deliberately strict: this only has to accept the shapes a Windows host
@@ -140,11 +142,22 @@ func deriveHostname(host *HostResult) (string, string) {
 	return "", ""
 }
 
-// Only nbstat actually carries a MAC - smb-os-discovery reports OS,
-// computer name, domain and system time and no address at all, confirmed
-// against real output. It is still consulted first so that adding a
-// source later is a change in one place rather than a change of shape.
+// smb-os-discovery reports OS, computer name, domain and system time and
+// no address at all, confirmed against real output - it is consulted only
+// so that a future nmap that adds one needs no change of shape here.
+//
+// SNMP's interface table comes first among the real sources because it is
+// the only one tied to an address: it names the MAC of the interface that
+// carries the very IP that was scanned. nbstat's MAC is whichever adapter
+// NetBIOS answered from, which on a multi-homed Windows machine need not be
+// this one. And SNMP reaches devices nothing else here does - printers,
+// UPS cards, switches and appliances with no SMB at all.
 func deriveMAC(host *HostResult) (mac string, vendor string, source string) {
+	for _, script := range hostScripts(host, "snmp-interfaces") {
+		if m, v := macFromSNMPInterfaces(script, host.IP); m != "" {
+			return m, v, IdentitySourceSNMPInterfaces
+		}
+	}
 	for _, script := range hostScripts(host, "smb-os-discovery") {
 		if m, v := macFromScriptOutput(script); m != "" {
 			return m, v, IdentitySourceSMBOSDiscovery
@@ -264,6 +277,81 @@ func parseNbstat(output string) (name string, mac string, vendor string) {
 		break
 	}
 	return name, mac, vendor
+}
+
+// snmp-interfaces prints one block per interface - its name, then
+// indented fields:
+//
+//	eth0
+//	  IP address: 10.41.72.135  Netmask: 255.255.248.0
+//	  MAC address: 00:30:d6:39:36:16 (MSC Vertriebs Gmbh)
+//	  Type: ethernetCsmacd  Speed: 1 Gbps
+//
+// Only the MAC of the interface carrying ip is taken. A device reports
+// every interface it has - a router or a multi-homed appliance a dozen of
+// them - and picking any other one would record a real MAC that belongs
+// to a different address. No match means no MAC rather than a guess:
+// that is also the right answer behind NAT, where the scanned address is
+// on no interface the device knows of.
+//
+// Blocks are told apart by their field names rather than by indentation,
+// so a change in nmap's padding cannot merge two interfaces into one. An
+// interface may carry several "IP address" lines (aliases); any of them
+// matching is enough.
+func macFromSNMPInterfaces(output, ip string) (string, string) {
+	target := net.ParseIP(strings.TrimSpace(ip))
+	if target == nil {
+		return "", ""
+	}
+	fieldPrefixes := []string{"ip address:", "mac address:", "type:", "status:", "traffic stats:", "netmask:", "speed:"}
+	isField := func(line string) bool {
+		lower := strings.ToLower(line)
+		for _, p := range fieldPrefixes {
+			if strings.HasPrefix(lower, p) {
+				return true
+			}
+		}
+		return false
+	}
+
+	type iface struct {
+		matches     bool
+		mac, vendor string
+	}
+	var blocks []iface
+	for _, raw := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if !isField(line) {
+			blocks = append(blocks, iface{})
+			continue
+		}
+		if len(blocks) == 0 {
+			// Fields before any interface name: nothing to attribute them to.
+			continue
+		}
+		current := &blocks[len(blocks)-1]
+		lower := strings.ToLower(line)
+		switch {
+		case strings.HasPrefix(lower, "ip address:"):
+			value := strings.Fields(strings.TrimSpace(line[len("ip address:"):]))
+			if len(value) > 0 {
+				if addr := net.ParseIP(value[0]); addr != nil && addr.Equal(target) {
+					current.matches = true
+				}
+			}
+		case strings.HasPrefix(lower, "mac address:"):
+			current.mac, current.vendor = macFromScriptOutput(line[len("mac address:"):])
+		}
+	}
+	for _, b := range blocks {
+		if b.matches && b.mac != "" {
+			return b.mac, b.vendor
+		}
+	}
+	return "", ""
 }
 
 var macVendorPattern = regexp.MustCompile(`\(([^)]+)\)`)
