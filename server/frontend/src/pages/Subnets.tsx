@@ -7,12 +7,15 @@ import TableExport from "../components/TableExport";
 import { formatDateTime } from "../lib/formatDate";
 import {
   compareSubnets,
+  groupIntoEights,
   groupIntoSixteens,
   intensity,
+  matchesNetworkFilter,
   RISK_LABELS,
   RISK_LEVELS,
   riskRank,
   subnetRisk,
+  type SixteenGroup,
   type SubnetRisk,
 } from "../lib/subnets";
 
@@ -22,6 +25,26 @@ type SortKey = "subnet" | "hosts" | "openPorts" | "hostsWithCves" | "criticalHos
 type SortDirection = "asc" | "desc";
 
 const PREFIXES = [16, 20, 22, 24];
+
+const METRIC_KEY = "porttorch.subnets.metric";
+const METRICS: MapMetric[] = ["hosts", "openPorts", "risk"];
+
+// Hosts by default: "where are my machines" is the question the map is
+// opened with, and a risk colouring is mostly grey on a fleet with little
+// CVE data. A different choice is remembered per browser.
+function storedMetric(): MapMetric {
+  try {
+    const v = localStorage.getItem(METRIC_KEY);
+    return METRICS.includes(v as MapMetric) ? (v as MapMetric) : "hosts";
+  } catch {
+    return "hosts";
+  }
+}
+
+// Above this many /16s the map opens with an overview of /8s instead of
+// one card per /16, and the cards below are paged.
+const OVERVIEW_THRESHOLD = 6;
+const CARDS_PER_PAGE = 12;
 
 // Every subnet that holds a known host, and how exposed it is - the one
 // question neither the per-host list nor the fleet-wide Scan Stats could
@@ -33,7 +56,7 @@ export default function Subnets({ me, onLogout }: { me: Me; onLogout: () => void
   const [scannerFilterIds, setScannerFilterIds] = useState<string[]>([]);
   const [hideRetired, setHideRetired] = useState(false);
   const [view, setView] = useState<View>("map");
-  const [metric, setMetric] = useState<MapMetric>("risk");
+  const [metric, setMetricState] = useState<MapMetric>(storedMetric);
   const [prefix, setPrefix] = useState(24);
   const [sortKey, setSortKey] = useState<SortKey>("subnet");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -48,6 +71,15 @@ export default function Subnets({ me, onLogout }: { me: Me; onLogout: () => void
   useEffect(() => {
     api.agents().then(setAgents);
   }, []);
+
+  function setMetric(m: MapMetric) {
+    setMetricState(m);
+    try {
+      localStorage.setItem(METRIC_KEY, m);
+    } catch {
+      // Private window or blocked storage: the choice just isn't remembered.
+    }
+  }
 
   useEffect(() => {
     setLoading(true);
@@ -146,9 +178,9 @@ export default function Subnets({ me, onLogout }: { me: Me; onLogout: () => void
             <span className="empty">Colour by</span>
             {(
               [
-                ["risk", "Risk"],
                 ["hosts", "Hosts"],
                 ["openPorts", "Open ports"],
+                ["risk", "Risk"],
               ] as [MapMetric, string][]
             ).map(([key, label]) => (
               <button key={key} className={`chip ${metric === key ? "active" : ""}`} onClick={() => setMetric(key)}>
@@ -283,29 +315,180 @@ function describe(s: SubnetEntry): string {
   return parts.join(" · ");
 }
 
+type NetworkSort = "address" | "hosts" | "risk";
+
+function metricValue(x: { hosts: number; openPorts: number }, metric: MapMetric): number {
+  return metric === "openPorts" ? x.openPorts : x.hosts;
+}
+
+function describeNetwork(g: SixteenGroup): string {
+  const parts = [
+    g.parent,
+    `${g.subnets} /24${g.subnets === 1 ? "" : "s"}`,
+    `${g.hosts} host${g.hosts === 1 ? "" : "s"}`,
+    `${g.openPorts} open port${g.openPorts === 1 ? "" : "s"}`,
+  ];
+  if (g.kevHosts > 0) parts.push(`${g.kevHosts} with a KEV finding`);
+  if (g.maxCvss !== null) parts.push(`max CVSS ${g.maxCvss}`);
+  return parts.join(" · ");
+}
+
 // One 16x16 grid per /16, one square per /24 (third octet left to right,
 // top to bottom), so where in an address block the hosts actually sit is
 // visible - the empty stretches included. IPv6 /64s have no such layout
 // and are listed underneath instead.
+//
+// A fleet spread over many /16s gets one level more: an overview with one
+// 16x16 grid per /8 and one square per /16, the same layout one octet up.
+// Clicking a square narrows the cards to that /16; the cards can also be
+// filtered by typing a prefix, sorted, and are paged rather than all
+// rendered at once.
 function SubnetMap({ subnets, metric }: { subnets: SubnetEntry[]; metric: MapMetric }) {
   const { groups, other } = useMemo(() => groupIntoSixteens(subnets), [subnets]);
-  const max = Math.max(0, ...subnets.map((s) => (metric === "hosts" ? s.hosts : s.openPorts)));
+  const eights = useMemo(() => groupIntoEights(groups), [groups]);
+  const [filter, setFilter] = useState("");
+  const [sort, setSort] = useState<NetworkSort>("address");
+  const [shown, setShown] = useState(CARDS_PER_PAGE);
 
-  function cellStyle(s: SubnetEntry): CSSProperties | undefined {
-    if (metric === "risk") return undefined;
-    const pct = Math.round(intensity(metric === "hosts" ? s.hosts : s.openPorts, max) * 100);
+  const max = Math.max(0, ...subnets.map((s) => metricValue(s, metric)));
+  const maxNetwork = Math.max(0, ...groups.map((g) => metricValue(g, metric)));
+  const withOverview = groups.length > OVERVIEW_THRESHOLD;
+
+  const visible = useMemo(() => {
+    const matching = groups.filter((g) => matchesNetworkFilter(g.parent, filter));
+    if (sort === "hosts") matching.sort((a, b) => b.hosts - a.hosts || compareSubnets(a.parent, b.parent));
+    if (sort === "risk")
+      matching.sort(
+        (a, b) =>
+          riskRank(subnetRisk(a)) - riskRank(subnetRisk(b)) ||
+          (b.maxCvss ?? -1) - (a.maxCvss ?? -1) ||
+          b.hosts - a.hosts
+      );
+    return matching;
+  }, [groups, filter, sort]);
+
+  // A new filter or order starts from the top rather than keeping a page
+  // count that belonged to a different list.
+  useEffect(() => setShown(CARDS_PER_PAGE), [filter, sort]);
+
+  function fill(value: number, of: number): CSSProperties {
+    const pct = Math.round(intensity(value, of) * 100);
     return { background: `color-mix(in srgb, var(--chart-series-1) ${pct}%, var(--panel))` };
   }
 
-  function cellClass(s: SubnetEntry): string {
-    return metric === "risk" ? `subnet-cell subnet-risk-${subnetRisk(s)}` : "subnet-cell";
+  function cellStyle(s: SubnetEntry): CSSProperties | undefined {
+    return metric === "risk" ? undefined : fill(metricValue(s, metric), max);
   }
+
+  function cellClass(x: Parameters<typeof subnetRisk>[0]): string {
+    return metric === "risk" ? `subnet-cell subnet-risk-${subnetRisk(x)}` : "subnet-cell";
+  }
+
+  function focusNetwork(parent: string) {
+    setFilter(parent);
+    document.getElementById("subnet-network-cards")?.scrollIntoView({ block: "start" });
+  }
+
+  const page = visible.slice(0, shown);
 
   return (
     <>
       <MapLegend metric={metric} max={max} />
+
+      {withOverview && (
+        <>
+          <h3>Overview</h3>
+          <p className="host-meta">
+            One square per /16
+            {metric !== "risk"
+              ? `, shaded by its total from 1 to ${maxNetwork.toLocaleString()} ${metric === "hosts" ? "hosts" : "open ports"} (log scale)`
+              : ", coloured by the worst finding in it"}
+            . Click one to show only that network below.
+          </p>
+          <div className="subnet-map-groups">
+            {eights.map((e) => {
+              const [a] = e.parent.split(".");
+              return (
+                <section key={e.parent} className="subnet-map-card">
+                  <h3>
+                    {e.parent}
+                    <span className="host-meta">
+                      {" "}
+                      · {e.networks} /16{e.networks === 1 ? "" : "s"} · {e.hosts.toLocaleString()} host
+                      {e.hosts === 1 ? "" : "s"}
+                    </span>
+                  </h3>
+                  <div className="subnet-grid">
+                    {e.cells.map((g, i) =>
+                      g ? (
+                        <button
+                          key={i}
+                          type="button"
+                          className={`${cellClass(g)}${filter === g.parent ? " subnet-cell-selected" : ""}`}
+                          style={metric === "risk" ? undefined : fill(metricValue(g, metric), maxNetwork)}
+                          title={describeNetwork(g)}
+                          aria-label={describeNetwork(g)}
+                          aria-pressed={filter === g.parent}
+                          onClick={() => focusNetwork(g.parent)}
+                        />
+                      ) : (
+                        <span key={i} className="subnet-cell subnet-cell-empty" title={`${a}.${i}.0.0/16 - no known hosts`} />
+                      )
+                    )}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {groups.length > 0 && (
+        <div className="list-controls" id="subnet-network-cards">
+          <div className="list-controls-filters">
+            {withOverview && <h3 className="subnet-cards-heading">Networks</h3>}
+            <input
+              type="search"
+              className="subnet-filter"
+              placeholder="Filter, e.g. 10.46"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              aria-label="Filter networks by prefix"
+            />
+            <div className="filter-chips">
+              <span className="empty">Sort by</span>
+              {(
+                [
+                  ["address", "Address"],
+                  ["hosts", "Hosts"],
+                  ["risk", "Risk"],
+                ] as [NetworkSort, string][]
+              ).map(([key, label]) => (
+                <button key={key} className={`chip ${sort === key ? "active" : ""}`} onClick={() => setSort(key)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <span className="host-meta">
+            {visible.length === groups.length
+              ? `${groups.length} network${groups.length === 1 ? "" : "s"}`
+              : `${visible.length} of ${groups.length} networks`}
+          </span>
+        </div>
+      )}
+
+      {groups.length > 0 && visible.length === 0 && (
+        <p className="empty">
+          No /16 matches "{filter}".{" "}
+          <button type="button" className="link-button" onClick={() => setFilter("")}>
+            Show all
+          </button>
+        </p>
+      )}
+
       <div className="subnet-map-groups">
-        {groups.map((g) => {
+        {page.map((g) => {
           const [a, b] = g.parent.split(".");
           return (
             <section key={g.parent} className="subnet-map-card">
@@ -313,7 +496,8 @@ function SubnetMap({ subnets, metric }: { subnets: SubnetEntry[]; metric: MapMet
                 {g.parent}
                 <span className="host-meta">
                   {" "}
-                  · {g.subnets} subnet{g.subnets === 1 ? "" : "s"} · {g.hosts} host{g.hosts === 1 ? "" : "s"}
+                  · {g.subnets} subnet{g.subnets === 1 ? "" : "s"} · {g.hosts.toLocaleString()} host
+                  {g.hosts === 1 ? "" : "s"}
                 </span>
               </h3>
               <div className="subnet-grid">
@@ -336,6 +520,16 @@ function SubnetMap({ subnets, metric }: { subnets: SubnetEntry[]; metric: MapMet
           );
         })}
       </div>
+      {visible.length > shown && (
+        <p>
+          <button type="button" onClick={() => setShown((n) => n + CARDS_PER_PAGE)}>
+            Show {Math.min(CARDS_PER_PAGE, visible.length - shown)} more
+          </button>{" "}
+          <button type="button" className="link-button" onClick={() => setShown(visible.length)}>
+            Show all {visible.length}
+          </button>
+        </p>
+      )}
       {other.length > 0 && (
         <section className="subnet-map-card">
           <h3>
@@ -383,6 +577,9 @@ function MapLegend({ metric, max }: { metric: MapMetric; max: number }) {
         {metric === "hosts" ? "Hosts per /24" : "Open ports per /24"}: 1
         <span className="subnet-legend-ramp" aria-hidden="true" />
         {max.toLocaleString()}
+        <span title="A few very full networks would otherwise wash every small one out to the same pale shade.">
+          (log scale)
+        </span>
       </span>
       <span className="subnet-legend-item">
         <span className="subnet-cell subnet-cell-empty" aria-hidden="true" />

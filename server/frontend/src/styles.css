@@ -2825,8 +2825,19 @@ button.scan-part-badge:hover {
   background: color-mix(in srgb, var(--chart-series-1) 60%, var(--panel));
 }
 
+button.subnet-cell {
+  padding: 0;
+  margin: 0;
+  width: 100%;
+  cursor: pointer;
+  font: inherit;
+}
+
 a.subnet-cell:hover,
-a.subnet-cell:focus-visible {
+a.subnet-cell:focus-visible,
+button.subnet-cell:hover,
+button.subnet-cell:focus-visible,
+.subnet-cell-selected {
   outline: 2px solid var(--text);
   outline-offset: 1px;
   z-index: 1;
@@ -2876,6 +2887,14 @@ a.subnet-cell:focus-visible {
 
 .subnet-chip-risk-medium {
   border-color: var(--warning);
+}
+
+.subnet-filter {
+  width: 12rem;
+}
+
+.subnet-cards-heading {
+  margin: 0;
 }
 
 .subnet-legend {

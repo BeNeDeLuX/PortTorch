@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { SubnetEntry } from "../api";
-import { compareSubnets, groupIntoSixteens, intensity, riskRank, subnetRisk } from "./subnets";
+import {
+  compareSubnets,
+  groupIntoEights,
+  groupIntoSixteens,
+  intensity,
+  matchesNetworkFilter,
+  riskRank,
+  subnetRisk,
+} from "./subnets";
 
 function entry(subnet: string, over: Partial<SubnetEntry> = {}): SubnetEntry {
   return {
@@ -57,11 +65,48 @@ describe("groupIntoSixteens", () => {
     expect(other.map((o) => o.subnet)).toEqual(["2001:db8::/64"]);
   });
 
+  it("rolls each /16 up into the same risk shape a /24 has", () => {
+    const { groups } = groupIntoSixteens([
+      entry("10.20.1.0/24", { hosts: 2, openPorts: 5, hostsWithCves: 1, maxCvss: 7.5 }),
+      entry("10.20.2.0/24", { hosts: 1, openPorts: 1, hostsWithCves: 1, maxCvss: 9.8, kevHosts: 1 }),
+    ]);
+    expect(groups[0]).toMatchObject({ hosts: 3, openPorts: 6, hostsWithCves: 2, kevHosts: 1, maxCvss: 9.8 });
+    expect(subnetRisk(groups[0])).toBe("kev");
+  });
+
   it("does not grid a grouping wider than /24", () => {
     // The map is per /24 by construction; a /20 has no single cell.
     const { groups, other } = groupIntoSixteens([entry("10.20.16.0/20")]);
     expect(groups).toHaveLength(0);
     expect(other).toHaveLength(1);
+  });
+});
+
+describe("groupIntoEights", () => {
+  it("places each /16 at its second octet within its /8", () => {
+    const { groups } = groupIntoSixteens([
+      entry("10.46.1.0/24", { hosts: 4 }),
+      entry("10.200.9.0/24", { hosts: 1 }),
+      entry("172.16.0.0/24", { hosts: 2 }),
+    ]);
+    const eights = groupIntoEights(groups);
+    expect(eights.map((e) => e.parent)).toEqual(["10.0.0.0/8", "172.0.0.0/8"]);
+    expect(eights[0].cells[46]?.parent).toBe("10.46.0.0/16");
+    expect(eights[0].cells[200]?.parent).toBe("10.200.0.0/16");
+    expect(eights[0].cells[47]).toBeNull();
+    expect(eights[0]).toMatchObject({ networks: 2, hosts: 5 });
+  });
+});
+
+describe("matchesNetworkFilter", () => {
+  it("matches whole octets only", () => {
+    expect(matchesNetworkFilter("10.46.0.0/16", "")).toBe(true);
+    expect(matchesNetworkFilter("10.46.0.0/16", "10")).toBe(true);
+    expect(matchesNetworkFilter("10.46.0.0/16", "10.46")).toBe(true);
+    expect(matchesNetworkFilter("10.46.0.0/16", "10.46.")).toBe(true);
+    expect(matchesNetworkFilter("10.46.0.0/16", "10.46.0.0/16")).toBe(true);
+    expect(matchesNetworkFilter("10.46.0.0/16", "10.4")).toBe(false);
+    expect(matchesNetworkFilter("10.46.0.0/16", "10.47")).toBe(false);
   });
 });
 
@@ -77,5 +122,13 @@ describe("intensity", () => {
     expect(intensity(0, 50)).toBe(0);
     expect(intensity(1, 1000)).toBeGreaterThanOrEqual(0.2);
     expect(intensity(50, 50)).toBe(1);
+    expect(intensity(1, 1)).toBe(1);
+  });
+
+  it("is logarithmic, so one full network does not wash out the rest", () => {
+    // Linear, 5 of 250 would be 0.216 - indistinguishable from 1 host.
+    expect(intensity(5, 250)).toBeGreaterThan(0.4);
+    expect(intensity(5, 250)).toBeGreaterThan(intensity(1, 250));
+    expect(intensity(50, 250)).toBeGreaterThan(intensity(5, 250));
   });
 });

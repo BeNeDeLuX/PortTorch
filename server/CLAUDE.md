@@ -1381,7 +1381,11 @@ No page answered "which network is the problem?": the host list is per host, Sca
 
 The page (`/subnets`, in the Statistics menu) has two views:
 
-- **Map** draws one 16×16 grid per /16 with one square per /24, so the empty stretches of an address block are visible too. It can be coloured by risk, hosts or open ports. KEV and critical share the danger red, so KEV also carries a dot; the two must stay tellable apart without relying on hue alone.
+- **Map** draws one 16×16 grid per /16 with one square per /24, so the empty stretches of an address block are visible too. It can be coloured by hosts (the default, remembered per browser), open ports or risk. KEV and critical share the danger red, so KEV also carries a dot; the two must stay tellable apart without relying on hue alone.
+
+**A fleet spread over many /16s gets one level more.** On an instance with dozens of /16s, one card each became a page several screens long. Above six /16s the map opens with an overview: one 16×16 grid per /8, one square per /16, the same layout one octet up (`groupIntoEights`). A /16 is ranked by the same `subnetRisk` rule as a /24, using its rolled-up counts and worst CVSS. Clicking a square narrows the cards below to that /16. The cards can also be filtered by a typed prefix, whole octets only so `10.4` does not match `10.46` (`matchesNetworkFilter`), sorted by address, hosts or risk, and are shown twelve at a time.
+
+Shading is logarithmic. Host counts per network are heavily skewed, and on the original linear scale one /24 with 250 hosts painted every network holding five the same pale shade as one holding a single host.
 - **Table** widens the grouping, sorts and exports.
 
 Both link each subnet to the Dashboard with the CIDR as its search, which `applyHostFilters` already matches. The grouping and risk logic lives in `frontend/src/lib/subnets.ts`, unit-tested. `--accent` is unused in the map, as in every chart, so a user's accent colour never reads as data.
