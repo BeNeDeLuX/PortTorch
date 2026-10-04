@@ -6,8 +6,10 @@ import { runSchedulerTick } from "../../src/scheduler";
 import {
   closeDb,
   createTestAgent,
+  createTestApiToken,
   createTestUser,
   deleteTestAgent,
+  deleteTestApiToken,
   deleteTestUser,
   getApp,
   loginAs,
@@ -243,5 +245,92 @@ describe("scans split across several scanners", () => {
     const entry = history.body.items.find((i: { id: string }) => i.id === job.body.id);
     expect(entry).toMatchObject({ group_part: part.group_part, group_parts: 2, group_target_spec: "240.91.11.0/24" });
     expect(new Set(entry.group_scanner_agent_ids)).toEqual(new Set([a.id, b.id]));
+  });
+
+  // The scan as a whole: Scan History lists each share as its own job,
+  // which never answered "is this scan done?" on its own.
+  it("reports a split scan as a whole, and resumes every unfinished part at once", async () => {
+    const res = await op.post("/api/adhoc-scans").send({ scannerAgentIds: [a.id, b.id], targetSpec: "240.91.12.0/24", portSpec: "22" });
+    const groupId = res.body.scanGroupId;
+    const parts = await partsOf(groupId);
+
+    let view = await op.get(`/api/scan-groups/${groupId}`);
+    expect(view.status).toBe(200);
+    expect(view.body).toMatchObject({ status: "running", parts: 2, counts: { queued: 2, resumable: 0 } });
+
+    // Part 1 finishes; part 2 is cancelled with a remainder - each the way
+    // a scanner would report it.
+    const outcomes = [
+      { part: parts[0], status: "completed" as const, remaining: undefined },
+      { part: parts[1], status: "cancelled" as const, remaining: parts[1].target_spec.split(",")[0] },
+    ];
+    for (const o of outcomes) {
+      const agent = o.part.scanner_agent_id === a.id ? a : b;
+      const job = await request(getApp()).post("/api/ingest/scan-jobs").set("Authorization", `Bearer ${agent.apiKey}`).send({ targetSpec: o.part.target_spec, portSpec: "22", cancellable: true });
+      await request(getApp())
+        .patch(`/api/ingest/scan-jobs/${job.body.id}`)
+        .set("Authorization", `Bearer ${agent.apiKey}`)
+        .send({ status: o.status, ...(o.remaining ? { remainingTargetSpec: o.remaining } : {}) });
+      await db.updateTable("scan_requests").set({ scan_job_id: job.body.id, status: o.status }).where("scan_group_id", "=", groupId).where("group_part", "=", o.part.group_part).execute();
+    }
+
+    view = await op.get(`/api/scan-groups/${groupId}`);
+    expect(view.body).toMatchObject({ status: "incomplete", counts: { completed: 1, cancelled: 1, resumable: 1 } });
+
+    // A restricted session that may not see both scanners does not see
+    // the scan at all.
+    await db.deleteFrom("user_scanner_agents").where("user_id", "=", restricted.id).where("scanner_agent_id", "=", b.id).execute();
+    const narrow = await loginAs(restricted.username, restricted.password);
+    expect((await narrow.get(`/api/scan-groups/${groupId}`)).status).toBe(404);
+    expect((await narrow.post(`/api/scan-groups/${groupId}/resume`)).status).toBe(404);
+
+    const resumed = await op.post(`/api/scan-groups/${groupId}/resume`);
+    expect(resumed.status).toBe(201);
+    expect(resumed.body.results).toEqual([expect.objectContaining({ part: 2, ok: true })]);
+
+    // The resume joins the group as the same part, so the group view shows
+    // it beside what it finishes - and the scan is running again.
+    const again = await db.selectFrom("scan_requests").selectAll().where("id", "=", resumed.body.results[0].scanRequestId).executeTakeFirstOrThrow();
+    expect(again).toMatchObject({ scan_group_id: groupId, group_part: 2, group_parts: 2, target_spec: outcomes[1].remaining });
+    view = await op.get(`/api/scan-groups/${groupId}`);
+    expect(view.body.status).toBe("running");
+    expect(view.body.partViews[1].attempts).toHaveLength(2);
+    expect(view.body.counts.resumable).toBe(0);
+
+    // Nothing left to resume a second time.
+    expect((await op.post(`/api/scan-groups/${groupId}/resume`)).status).toBe(409);
+  });
+
+  it("splits through the External API too, by scanner name, within the token's scanners", async () => {
+    const token = await createTestApiToken("it-split-token");
+    try {
+      const post = (body: object) => request(getApp()).post("/api/v1/scans/adhoc").set("Authorization", `Bearer ${token.token}`).send(body);
+
+      const split = await post({ scannerAgents: [a.name, b.name], targetSpec: "240.91.13.0/24", portSpec: "22", masscanRate: 2000, masscanRateSplit: true });
+      expect(split.status).toBe(201);
+      expect(split.body.scanGroupId).toBeTruthy();
+      expect(split.body.parts).toHaveLength(2);
+      expect(split.body.parts.every((p: { masscanRate: number }) => p.masscanRate === 1000)).toBe(true);
+      const rows = await partsOf(split.body.scanGroupId);
+      expect(rows.flatMap((r) => addresses(r.target_spec)).sort((x, y) => x - y)).toEqual(addresses("240.91.13.0/24"));
+
+      // The single-scanner shape callers already use is unchanged.
+      const single = await post({ scannerAgent: a.name, targetSpec: "240.91.13.7", portSpec: "22" });
+      expect(single.status).toBe(201);
+      expect(single.body).toMatchObject({ scannerAgentName: a.name, scanGroupId: null });
+
+      expect((await post({ scannerAgents: [a.name, "no-such-scanner"], targetSpec: "240.91.13.0/24", portSpec: "22" })).status).toBe(400);
+      expect((await post({ targetSpec: "240.91.13.0/24", portSpec: "22" })).status).toBe(400);
+
+      // A token restricted to scanner A may not queue on B - not split,
+      // and not on its own either. This route used to ignore the
+      // restriction entirely.
+      await db.updateTable("api_tokens").set({ scanner_agent_ids: [a.id] }).where("id", "=", token.id).execute();
+      expect((await post({ scannerAgents: [a.name, b.name], targetSpec: "240.91.14.0/24", portSpec: "22" })).status).toBe(403);
+      expect((await post({ scannerAgent: b.name, targetSpec: "240.91.14.1", portSpec: "22" })).status).toBe(403);
+      expect((await post({ scannerAgent: a.name, targetSpec: "240.91.14.1", portSpec: "22" })).status).toBe(201);
+    } finally {
+      await deleteTestApiToken(token.id);
+    }
   });
 });

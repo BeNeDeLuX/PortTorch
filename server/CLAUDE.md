@@ -83,6 +83,28 @@ The schedule form also gained error display in the same change. Server errors fr
 
 Verified by `scanGroups.integration.test.ts` (ad-hoc split coverage and determinism, rate division, every refusal, the scheduler split, the skip, a revoked scanner's share moving to the rest, history and queue fields) and in a real browser against a disposable stack: three scanners picked in the ad-hoc form, the per-scanner estimate, three parts queued, and a schedule saved through the form showing "split across 3".
 
+**A split scan can be seen and resumed as a whole.** Scan History lists each share as its own job, which never answers "is this scan done?". `GET /api/scan-groups/:id` (`scanGroups/routes.ts`) returns every part with all its attempts, plus one status for the group:
+
+- **running** while any part is queued or running;
+- **completed** once every part's latest attempt completed;
+- **incomplete** otherwise.
+
+The "part i/N" badge in Scan History opens it (`ScanGroupModal.tsx`), and the modal refreshes while the scan runs. `POST /api/scan-groups/:id/resume` (operator) resumes every unfinished part in one action. It goes through the same `scanJobs/resume.ts` as the single-job Resume, extracted for exactly this, so the two cannot disagree about what is resumable. A part that cannot be resumed is reported per part rather than failing the rest.
+
+**A resume of a share now joins its group as the same part**, carrying `scan_group_id`/`group_part`. The group view lists it beside what it finishes, and the scan reads "running" again rather than staying "incomplete" while its remainder is being scanned. A restricted session sees a group only if it may see every scanner in it (404 otherwise), since a partial view would still reveal the other shares of the target.
+
+**Running scans show their progress inline.** `GET /api/scan-jobs/active` returns the same `counts` the Details popup reads (from `scan_job_progress`, already joined there for staleness). `ScanProgressInline.tsx` draws them as a one-line bar on the Dashboard banner and the Scanner Agents page, using the same `lib/scanProgress.ts` rules as the popup.
+
+**The External API splits too, and now honours a token's scanner restriction on ad-hoc scans.** `POST /api/v1/scans/adhoc` takes `scannerAgents` (names) and `masscanRateSplit` alongside the unchanged `scannerAgent`, and queues through the same `queueScan`. Before this, the route looked a scanner up by name and queued on it whatever the token was restricted to. A token scoped to scanner A could therefore scan an arbitrary target from scanner B, while every other route here honoured the restriction through `lookupHost`. Found while adding the multi-scanner form, and pinned by a test covering both a split and a single-scanner request.
+
+**`ip:` is an explicit address search** in the shared `applyHostFilters`, so the Dashboard, its facets, saved searches and the External API all understand it. It matches addresses only, and takes:
+
+- **a partly typed IPv4 address**, read as the block it names (`ip:10.20.41` is 10.20.41.0/24), whole octets only;
+- **a full address or a CIDR**, matched as before;
+- **a partial IPv6 address**, matched as the leading text of the address.
+
+A value that cannot be an address matches nothing rather than falling back to free text. It is a separate syntax rather than a change to the plain search, deliberately. The plain search also matches banners and versions, where "10.20" is as likely a version, and widening what existing saved searches match would change their results and fire new `saved_search.match` alerts nobody asked for. `lib/net.ts`'s `ipv4PrefixToCidr` mirrors the quick search's own client-side rule, and the quick search now links a partial address to the dashboard as `ip:…` rather than as the CIDR it computed.
+
 ### Ad-hoc Scans: a one-shot trigger against an arbitrary target, including a DNS hostname
 
 `server/src/adhocScans/routes.ts`'s `POST /api/adhoc-scans` (`requireOperator`, same access tier as the Rescan button — not `requireAdmin` like Schedule creation, since this is a one-shot operational action, not persistent config) inserts a single `scan_requests` row directly, structurally identical to what `scheduler.ts`'s `tick()` inserts when firing a schedule (`host_id: null`, `requested_by: req.session.username`, resolved NSE/nuclei profile columns via the same `resolveNSEProfile`/`resolveNucleiProfile` Schedule creation already uses) — just triggered immediately instead of by a cron/interval check, and with no `scan_schedules` row created at all (no recurrence, nothing left behind once the scanner claims it). Because this route is reachable by restricted operator/user accounts (unlike Schedule creation, `requireAdmin`-only, where every admin is always unrestricted), it's the one scan-request-creation path that has to explicitly re-check `getAllowedScannerAgentIds(req)` against the chosen `scannerAgentId` before inserting.

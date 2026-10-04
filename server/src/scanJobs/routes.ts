@@ -12,7 +12,7 @@ import { requestScanCancel } from "../scanCancel";
 import { singleParam } from "../lib/reqParams";
 import { getAppSettings } from "../settings/appSettings";
 import { scanPriorityOrder } from "../scanPriority";
-import { targetSpecSchema } from "../lib/targetSpec";
+import { resumeScanJob } from "./resume";
 
 export const scanJobsRouter = Router();
 scanJobsRouter.use(requireAuth);
@@ -131,6 +131,7 @@ scanJobsRouter.get("/history", asyncHandler(async (req, res) => {
       // say it is part 2 of 3 of 10.0.0.0/24. Scalar subqueries: a job
       // has at most one request (scan_requests.scan_job_id is set once,
       // when it finishes), so these cannot fan out.
+      sql<string | null>`(select sr.scan_group_id from scan_requests sr where sr.scan_job_id = scan_jobs.id limit 1)`.as("scan_group_id"),
       sql<number | null>`(select sr.group_part from scan_requests sr where sr.scan_job_id = scan_jobs.id limit 1)`.as("group_part"),
       sql<number | null>`(select sr.group_parts from scan_requests sr where sr.scan_job_id = scan_jobs.id limit 1)`.as("group_parts"),
       sql<string | null>`(
@@ -203,6 +204,10 @@ scanJobsRouter.get("/active", asyncHandler(async (req, res) => {
       "scan_jobs.cancel_requested_at as cancel_requested_at",
       "scanner_agents.name as scanner_agent_name",
       "scan_job_progress.updated_at as last_progress_at",
+      "scan_job_progress.discovery_blocks as discovery_blocks",
+      "scan_job_progress.discovery_blocks_done as discovery_blocks_done",
+      "scan_job_progress.hosts_discovered as hosts_discovered",
+      "scan_job_progress.hosts_processed as hosts_processed",
     ])
     .where("scan_jobs.status", "=", "running");
   if (allowed) {
@@ -224,8 +229,20 @@ scanJobsRouter.get("/active", asyncHandler(async (req, res) => {
     : [];
 
   res.json(
-    jobs.map(({ cancel_requested_at, last_progress_at, ...j }) => ({
+    jobs.map(({ cancel_requested_at, last_progress_at, discovery_blocks, discovery_blocks_done, hosts_discovered, hosts_processed, ...j }) => ({
       ...j,
+      // The same host counts the Details popup draws its bar from, so the
+      // list of running scans can show progress without opening it. Null
+      // when the scanner has sent none (too old, or not yet planned).
+      counts:
+        hosts_discovered !== null && hosts_processed !== null
+          ? {
+              discoveryBlocks: discovery_blocks ?? 1,
+              discoveryBlocksDone: discovery_blocks_done ?? 0,
+              hostsDiscovered: hosts_discovered,
+              hostsProcessed: hosts_processed,
+            }
+          : null,
       is_stale: isStaleScanJob(j.started_at, last_progress_at, staleScanThresholdMinutes),
       cancel_requested: cancel_requested_at !== null,
       ...(isAdmin
@@ -520,144 +537,22 @@ scanJobsRouter.post("/:id/cancel", requireOperator, asyncHandler(async (req, res
   res.status(204).end();
 }));
 
-// Queues what a cancelled or failed scan never finished, as a new scan
-// request on the same scanner with the same ports. Not a pause/resume of
-// the original: masscan and nmap run as separate processes and a stateless
-// SYN scanner that is frozen loses every reply that arrives meanwhile, so
-// "resume" means "scan the rest" - which the scanner can state precisely,
-// because it discovers large targets in blocks and knows which blocks and
-// hosts it finished (see migration 1746700000000).
-//
-// The original request's settings - scan profile, nuclei profile, rate,
-// priority, tags - are carried over, unlike Scan History's Rescan button:
-// this finishes *that* scan, so running the rest with different scripts
-// would produce a result nobody asked for. They come from the snapshot on
-// the originating scan_requests row, so an edited or deleted profile
-// changes nothing. A job with no originating request (started from the
-// scanner's own local API) resumes with defaults.
-//
-// Operator-level, like cancel and Rescan: it only ever re-queues work that
-// was already requested on this scanner.
+// Queues what a cancelled or failed scan never finished - see resume.ts
+// for what that means and what carries over. Operator-level, like cancel
+// and Rescan: it only ever re-queues work already requested on this
+// scanner.
 scanJobsRouter.post("/:id/resume", requireOperator, asyncHandler(async (req, res) => {
   if (!z.string().uuid().safeParse(req.params.id).success) {
     res.status(400).json({ error: "invalid scan job id" });
     return;
   }
-  const jobId = singleParam(req.params.id);
-
-  const job = await db
-    .selectFrom("scan_jobs")
-    .select(["id", "status", "scanner_agent_id", "port_spec", "remaining_target_spec", "resumed_at"])
-    .where("id", "=", jobId)
-    .executeTakeFirst();
-  const allowed = getAllowedScannerAgentIds(req);
-  if (!job || (allowed && (!job.scanner_agent_id || !allowed.includes(job.scanner_agent_id)))) {
-    res.status(404).json({ error: "scan job not found" });
-    return;
-  }
-  if (job.status === "running" || job.status === "completed" || !job.remaining_target_spec) {
-    res.status(409).json({ error: "this scan has nothing left to resume" });
-    return;
-  }
-  if (job.resumed_at) {
-    res.status(409).json({ error: "this scan has already been resumed" });
-    return;
-  }
-  if (!job.scanner_agent_id) {
-    res.status(409).json({ error: "the scanner that ran this scan has been deleted" });
-    return;
-  }
-  const agent = await db
-    .selectFrom("scanner_agents")
-    .select(["name", "revoked_at"])
-    .where("id", "=", job.scanner_agent_id)
-    .executeTakeFirst();
-  if (!agent || agent.revoked_at) {
-    res.status(409).json({ error: "the scanner that ran this scan has been revoked" });
-    return;
-  }
-  // The remainder of a huge scan can in principle outgrow what one masscan
-  // argument can carry, which is exactly the limit targetSpecSchema
-  // enforces for a typed target. Refusing here says so before anything is
-  // queued, rather than letting the scanner fail on it later.
-  const spec = targetSpecSchema.safeParse(job.remaining_target_spec);
-  if (!spec.success) {
-    res.status(400).json({ error: "what is left of this scan is too long to queue as one scan - split the remaining target across several ad-hoc scans" });
-    return;
-  }
-
-  const origin = await db
-    .selectFrom("scan_requests")
-    .select(["nse_profile", "nse_scripts", "nse_profile_label", "nuclei_profile", "nuclei_tags", "nuclei_profile_label", "masscan_rate", "priority", "tags"])
-    .where("scan_job_id", "=", jobId)
-    .orderBy("created_at", "desc")
-    .executeTakeFirst();
-
-  const created = await db.transaction().execute(async (trx) => {
-    // Compare-and-set, so two operators clicking at once queue the rest
-    // once, not twice.
-    const claimed = await trx
-      .updateTable("scan_jobs")
-      .set({ resumed_at: new Date().toISOString() })
-      .where("id", "=", jobId)
-      .where("resumed_at", "is", null)
-      .returning(["id"])
-      .executeTakeFirst();
-    if (!claimed) return null;
-
-    const request = await trx
-      .insertInto("scan_requests")
-      .values({
-        scanner_agent_id: job.scanner_agent_id,
-        host_id: null,
-        target_spec: spec.data,
-        port_spec: job.port_spec,
-        requested_by: req.session.username,
-        ...(origin
-          ? {
-              nse_profile: origin.nse_profile,
-              nse_scripts: origin.nse_scripts,
-              nse_profile_label: origin.nse_profile_label,
-              nuclei_profile: origin.nuclei_profile,
-              nuclei_tags: origin.nuclei_tags,
-              nuclei_profile_label: origin.nuclei_profile_label,
-              masscan_rate: origin.masscan_rate,
-              priority: origin.priority,
-              tags: origin.tags,
-            }
-          : {}),
-      })
-      .returning(["id"])
-      .executeTakeFirstOrThrow();
-
-    await trx
-      .updateTable("scan_jobs")
-      .set({ resumed_scan_request_id: request.id })
-      .where("id", "=", jobId)
-      .execute();
-    return request;
+  const outcome = await resumeScanJob(singleParam(req.params.id), getAllowedScannerAgentIds(req), {
+    username: req.session.username,
+    ip: req.ip,
   });
-  if (!created) {
-    res.status(409).json({ error: "this scan has already been resumed" });
+  if (!outcome.ok) {
+    res.status(outcome.status).json({ error: outcome.error });
     return;
   }
-
-  logger.info({
-    event: "scan_job.resumed",
-    scan_job_id: jobId,
-    scan_request_id: created.id,
-    scanner_agent_id: job.scanner_agent_id,
-    scanner_agent_name: agent.name,
-    remaining_target_spec: spec.data,
-    port_spec: job.port_spec,
-    requested_by: req.session.username,
-    source_ip: req.ip,
-  });
-  recordAudit("scan_job.resumed", req.session.username, req.ip, {
-    scan_job_id: jobId,
-    scan_request_id: created.id,
-    scanner_agent_id: job.scanner_agent_id,
-  });
-
-  res.status(201).json({ scanRequestId: created.id, targetSpec: spec.data, portSpec: job.port_spec });
+  res.status(201).json({ scanRequestId: outcome.scanRequestId, targetSpec: outcome.targetSpec, portSpec: outcome.portSpec });
 }));

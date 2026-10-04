@@ -1013,6 +1013,8 @@ export interface ActiveScanJob {
   // isn't necessarily what's really being probed. Admin-only (excludes
   // management itself is admin-only) - undefined for other roles.
   applicable_excludes?: Array<{ kind: "ip" | "port" | "ip_port"; value: string }>;
+  // Host counts for an inline progress bar - see ScanJobProgress.counts.
+  counts: ScanProgressCounts | null;
   // True only for jobs from a long-running "serve" process - see
   // ScanJobsTable.cancellable (server/src/db/types.ts) for why only those
   // can actually be stopped.
@@ -1266,6 +1268,7 @@ export interface ScanHistoryEntry {
   resumed_at: string | null;
   // One scanner's share of a split scan: which part of how many, and
   // the target of the scan as a whole.
+  scan_group_id: string | null;
   group_part: number | null;
   group_parts: number | null;
   group_target_spec: string | null;
@@ -1553,6 +1556,9 @@ export const api = {
   scanQueueThreshold: () => request<{ warningThreshold: number }>("/api/scan-jobs/queue-threshold"),
   dismissScanJob: (id: string) => request<void>(`/api/scan-jobs/${id}/dismiss`, { method: "POST" }),
   cancelScanJob: (id: string) => request<void>(`/api/scan-jobs/${id}/cancel`, { method: "POST" }),
+  scanGroup: (id: string) => request<ScanGroupView>(`/api/scan-groups/${id}`),
+  resumeScanGroup: (id: string) =>
+    request<{ results: Array<{ part: number; ok: boolean; scanRequestId?: string; error?: string }> }>(`/api/scan-groups/${id}/resume`, { method: "POST" }),
   resumeScanJob: (id: string) =>
     request<{ scanRequestId: string; targetSpec: string; portSpec: string }>(`/api/scan-jobs/${id}/resume`, { method: "POST" }),
   cancelQueuedScanRequest: (id: string) => request<void>(`/api/scan-jobs/queue/${id}/cancel`, { method: "POST" }),
@@ -1911,3 +1917,38 @@ export const api = {
     request<SavedSearch>("/api/saved-searches", { method: "POST", body: JSON.stringify({ name, filters }) }),
   deleteSavedSearch: (id: string) => request<void>(`/api/saved-searches/${id}`, { method: "DELETE" }),
 };
+
+// A split scan as a whole - see the webserver's scanGroups/routes.ts.
+export type ScanAttemptState = "queued" | "running" | "completed" | "failed" | "cancelled";
+
+export interface ScanGroupView {
+  id: string;
+  targetSpec: string;
+  portSpec: string;
+  parts: number;
+  masscanRateSplit: boolean;
+  requestedBy: string | null;
+  scheduleId: string | null;
+  createdAt: string;
+  status: "running" | "completed" | "incomplete";
+  counts: { queued: number; running: number; completed: number; failed: number; cancelled: number; resumable: number };
+  partViews: Array<{
+    part: number;
+    scannerAgentId: string | null;
+    scannerAgentName: string | null;
+    state: ScanAttemptState;
+    resumable: boolean;
+    // The original share first, then any resume of it.
+    attempts: Array<{
+      scanRequestId: string;
+      scanJobId: string | null;
+      targetSpec: string;
+      state: ScanAttemptState;
+      createdAt: string;
+      completedAt: string | null;
+      remainingTargetSpec: string | null;
+      hostsScanned: number | null;
+      openPortsFound: number | null;
+    }>;
+  }>;
+}

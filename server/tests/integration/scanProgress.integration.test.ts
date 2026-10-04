@@ -105,6 +105,15 @@ describe("scan job progress (PATCH .../progress from the scanner, GET .../progre
     ).toBe(204);
     let res = await adminClient.get(`/api/scan-jobs/${jobId}/progress`);
     expect(res.body.counts).toEqual({ discoveryBlocks: 8, discoveryBlocksDone: 3, hostsDiscovered: 40, hostsProcessed: 12 });
+    // The same numbers ride along with the list of running scans, so its
+    // inline bar needs no request per scan.
+    const active = await adminClient.get("/api/scan-jobs/active");
+    expect(active.body.find((j: { id: string }) => j.id === jobId).counts).toEqual({
+      discoveryBlocks: 8,
+      discoveryBlocksDone: 3,
+      hostsDiscovered: 40,
+      hostsProcessed: 12,
+    });
 
     await push({ stage: "nmap", logs: [] });
     res = await adminClient.get(`/api/scan-jobs/${jobId}/progress`);

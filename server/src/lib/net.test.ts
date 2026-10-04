@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isIPv4, isIPv4Cidr, isIPv4Range, isIPv6, isIPv6Cidr } from "./net";
+import { isIPv4, isIPv4Cidr, isIPv4Range, isIPv6, isIPv6Cidr, parseIpSearch } from "./net";
 
 describe("isIPv4", () => {
   it("accepts a plain IPv4 address", () => {
@@ -94,5 +94,26 @@ describe("isIPv6Cidr", () => {
 
   it("rejects an IPv4 CIDR", () => {
     expect(isIPv6Cidr("10.0.0.0/24")).toBe(false);
+  });
+});
+
+describe("parseIpSearch (the dashboard's `ip:` search)", () => {
+  it("reads a full address, a CIDR, and a partly typed IPv4 address", () => {
+    expect(parseIpSearch("10.20.41.9")).toEqual({ kind: "exact", value: "10.20.41.9" });
+    expect(parseIpSearch("10.20.0.0/16")).toEqual({ kind: "cidr", value: "10.20.0.0/16" });
+    expect(parseIpSearch(" 10.20.41 ")).toEqual({ kind: "cidr", value: "10.20.41.0/24" });
+    expect(parseIpSearch("172.16.")).toEqual({ kind: "cidr", value: "172.16.0.0/16" });
+    expect(parseIpSearch("10")).toBeNull();
+  });
+
+  it("matches a partial IPv6 address as leading text", () => {
+    expect(parseIpSearch("2001:DB8:")).toEqual({ kind: "prefix", value: "2001:db8:" });
+    expect(parseIpSearch("2001:db8::/32")).toEqual({ kind: "cidr", value: "2001:db8::/32" });
+  });
+
+  it("refuses what cannot be an address, rather than falling back to free text", () => {
+    for (const v of ["", "web.internal", "10.300.1", "nginx", "fe80::1%eth0;drop"]) {
+      expect(parseIpSearch(v)).toBeNull();
+    }
   });
 });

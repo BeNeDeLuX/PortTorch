@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -227,11 +228,34 @@ func TestNmapEnrichArgsAddsEitherTimeoutAlone(t *testing.T) {
 // Run without sudo so the test needs no privileges; the grandchild is
 // what matters, and a shell that backgrounds a sleep reproduces the same
 // shape as sudo starting nmap.
+// A bytes.Buffer safe to write from exec's copying goroutine while the
+// test reads it.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
 func TestNmapCommandCancellationStopsTheWholeProcessGroup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := NmapCmd{Path: "/bin/sh"}.command(ctx, "-c", "sleep 300 & echo started; wait")
 
-	var out bytes.Buffer
+	// exec copies the child's output from its own goroutine while the loop
+	// below polls it, so the buffer has to be safe for both at once - a
+	// plain bytes.Buffer here was a data race the race detector reported on
+	// every run, in the test rather than in the code it tests.
+	var out lockedBuffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	if err := cmd.Start(); err != nil {

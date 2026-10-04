@@ -34,6 +34,7 @@ import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import WindowsBuildBadge from "../components/WindowsBuildBadge";
 import { displayHostname, identitySourceLabel } from "../lib/derivedIdentity";
 import ScanProgressModal from "../components/ScanProgressModal";
+import ScanProgressInline from "../components/ScanProgressInline";
 import { elapsedLabel } from "../lib/elapsed";
 import { formatDateTime } from "../lib/formatDate";
 import { cveSeverityClass } from "../lib/cveSeverity";
@@ -869,6 +870,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                 <span className="host-meta">
                   {j.scanner_agent_name ?? "unknown scanner"} · running {elapsedLabel(j.started_at)}
                 </span>
+                <ScanProgressInline counts={j.counts} />
                 {j.is_stale && (
                   <span className="stale-badge" title="No update in a while - the scanner may be offline or have died mid-scan">
                     stale
@@ -906,7 +908,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
         }}
       >
         <input
-          placeholder="Search by IP, CIDR range, hostname, service, banner, CVE..."
+          placeholder="Search by IP, CIDR range, hostname, service, banner, CVE... - ip:10.20 for addresses only"
           value={queryInput}
           onChange={(e) => setQueryInput(e.target.value)}
         />

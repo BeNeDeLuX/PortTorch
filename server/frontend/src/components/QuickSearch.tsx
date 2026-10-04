@@ -141,7 +141,10 @@ export default function QuickSearch({ me }: { me: Me }) {
       group: "Search",
       label: hostQuery !== q ? `All hosts in ${hostQuery}` : `Search all hosts for “${q}”`,
       detail: "host list",
-      to: `/?q=${encodeURIComponent(hostQuery)}`,
+      // A partly typed address goes to the dashboard as an `ip:` search, the
+      // readable form of the same block, so the search box shows what was
+      // typed rather than a CIDR the user never wrote.
+      to: `/?q=${encodeURIComponent(hostQuery !== q ? `ip:${q}` : hostQuery)}`,
     });
     return out;
   }, [query, hostQuery, hosts, pages]);

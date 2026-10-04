@@ -30,6 +30,7 @@ import { digestRouter } from "./digest/routes";
 import { trendsRouter } from "./trends/routes";
 import { scanStatsRouter } from "./scanStats/routes";
 import { subnetsRouter } from "./subnets/routes";
+import { scanGroupsRouter } from "./scanGroups/routes";
 import { webhooksRouter } from "./webhooks/routes";
 import { auditRouter } from "./audit/routes";
 import { excludesRouter } from "./excludes/routes";
@@ -99,6 +100,7 @@ export function buildApp() {
   app.use("/api/trends", trendsRouter);
   app.use("/api/scan-stats", scanStatsRouter);
   app.use("/api/subnets", subnetsRouter);
+  app.use("/api/scan-groups", scanGroupsRouter);
   app.use("/api/webhooks", webhooksRouter);
   app.use("/api/audit", auditRouter);
   app.use("/api/excludes", excludesRouter);

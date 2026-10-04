@@ -253,7 +253,9 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             "The only endpoint here that doesn't require the target to be a known host - for reacting to something " +
             "learned outside PortTorch entirely, e.g. a firewall alert about a newly-seen IP. `targetSpec` accepts an " +
             "IP, CIDR, range, IPv6 list, or a DNS hostname (resolved by the scanner itself, and used as the TLS SNI / " +
-            "screenshot hostname for that scan).",
+            "screenshot hostname for that scan). Give `scannerAgents` instead of `scannerAgent` to split the target between " +
+            "several scanners: every address always goes to the same scanner, and with `masscanRateSplit` the rate is a " +
+            "total divided between them. A token restricted to certain scanners may only use those.",
           requestBody: jsonBody(adhocScanSchema),
           responses: {
             201: {
@@ -269,12 +271,33 @@ export function buildOpenApiDocument(): Record<string, unknown> {
                       scannerAgentName: { type: "string" },
                       profile: { type: "string", nullable: true },
                       nucleiProfile: { type: "string", nullable: true },
+                      tags: { type: "array", items: { type: "string" }, nullable: true },
+                      scanGroupId: {
+                        type: "string",
+                        format: "uuid",
+                        nullable: true,
+                        description: "Set when the scan was split across several scanners; the top-level fields describe its first part.",
+                      },
+                      parts: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            scanRequestId: { type: "string", format: "uuid" },
+                            scannerAgentName: { type: "string" },
+                            targetSpec: { type: "string" },
+                            addresses: { type: "integer", nullable: true },
+                            masscanRate: { type: "integer", nullable: true },
+                          },
+                        },
+                      },
                     },
                   },
                 },
               },
             },
             400: errorResponse,
+            403: errorResponse,
           },
         },
       },

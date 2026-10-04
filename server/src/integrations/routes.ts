@@ -11,6 +11,8 @@ import { requestRescan } from "../rescan";
 import { DEFAULT_SCAN_PRIORITY, scanPrioritySchema } from "../scanPriority";
 import { requestScanCancel } from "../scanCancel";
 import { getTokenScannerAgentIds, requireTokenWrite, tokenAuth } from "../apiTokens/tokenAuth";
+import { queueScan } from "../scanGroups/queue";
+import { MAX_SPLIT_SCANNERS } from "../lib/scanSplit";
 import { zIp } from "../lib/zodIp";
 import { applyHostFilters, parseHostFilterParams } from "../search/routes";
 import { ScanProfileNotFoundError, resolveNSEProfile, type NSEProfileSelection } from "../scanProfiles/resolve";
@@ -368,33 +370,53 @@ integrationsRouter.post("/hosts/cancel-scan", requireTokenWrite, asyncHandler(as
   res.status(204).end();
 }));
 
-export const adhocScanSchema = z.object({
-  scannerAgent: z.string().min(1),
-  targetSpec: targetSpecSchema,
-  portSpec: z.string().trim().min(1),
-  profile: z.string().min(1).optional(),
-  nucleiProfile: z.string().min(1).optional(),
-  // Optional per-scan override of the scanner's own configured
-  // masscanRate - omitted/null means the scanner keeps using its config
-  // value, so this never changes behavior for anyone who doesn't set it.
-  masscanRate: z.number().int().min(1).max(10_000_000).optional(),
-  // "high" | "normal" | "low" - where this lands in the target scanner's
-  // claim order. Omitted keeps the pre-priority behavior ('normal').
-  priority: scanPrioritySchema.optional(),
-  // Applied to every host this scan actually touches - see lib/scanTags.ts
-  // and the dashboard's own Ad-hoc Scans page, which this mirrors.
-  tags: scanTagsSchema,
-});
+export const adhocScanSchema = z
+  .object({
+    // One scanner by name, as always - or several, to split the target
+    // between them (see lib/scanSplit.ts). Names rather than ids, the
+    // convention every route here follows.
+    scannerAgent: z.string().min(1).optional(),
+    scannerAgents: z.array(z.string().min(1)).min(1).max(MAX_SPLIT_SCANNERS).optional(),
+    // With several scanners, masscanRate is the total for the whole scan,
+    // divided between them - so the target network sees the load of one
+    // scanner rather than one per scanner.
+    masscanRateSplit: z.boolean().optional(),
+    targetSpec: targetSpecSchema,
+    portSpec: z.string().trim().min(1),
+    profile: z.string().min(1).optional(),
+    nucleiProfile: z.string().min(1).optional(),
+    // Optional per-scan override of the scanner's own configured
+    // masscanRate - omitted/null means the scanner keeps using its config
+    // value, so this never changes behavior for anyone who doesn't set it.
+    masscanRate: z.number().int().min(1).max(10_000_000).optional(),
+    // "high" | "normal" | "low" - where this lands in the target scanner's
+    // claim order. Omitted keeps the pre-priority behavior ('normal').
+    priority: scanPrioritySchema.optional(),
+    // Applied to every host this scan actually touches - see lib/scanTags.ts
+    // and the dashboard's own Ad-hoc Scans page, which this mirrors.
+    tags: scanTagsSchema,
+  })
+  .refine((d) => d.scannerAgent !== undefined || d.scannerAgents !== undefined, {
+    message: "give scannerAgent or scannerAgents",
+  })
+  .refine((d) => !d.masscanRateSplit || d.masscanRate !== undefined, {
+    message: "masscanRateSplit needs a masscanRate to divide",
+  });
 
 // Ad-hoc Scans' External API counterpart - the one route in this router
 // that doesn't require an existing host, unlike /hosts/rescan and
-// /hosts/cancel-scan above. Reuses the identical scan_requests insert
-// shape the dashboard's own POST /api/adhoc-scans (adhocScans/routes.ts)
-// already uses - same queue, same scanner-side pickup via
-// GET /api/ingest/scan-requests/next, just triggered by a token instead
-// of a session. scannerAgent is looked up by name (not the dashboard's
-// internal uuid), matching every other External API route's convention
-// of never expecting a caller to know this app's own internal ids.
+// /hosts/cancel-scan above. Queues through the same queueScan the
+// dashboard's own POST /api/adhoc-scans uses - same queue, same split,
+// same scanner-side pickup via GET /api/ingest/scan-requests/next, just
+// triggered by a token instead of a session. Scanners are looked up by
+// name (not the dashboard's internal uuid), matching every other External
+// API route's convention of never expecting a caller to know this app's
+// own internal ids.
+//
+// A token restricted to certain scanners may only queue on those - the
+// restriction every other route here already honours through lookupHost.
+// This route queued on any scanner by name until that was noticed while
+// adding the multi-scanner form; pinned by a test now.
 integrationsRouter.post("/scans/adhoc", requireTokenWrite, asyncHandler(async (req, res) => {
   const parsed = adhocScanSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -402,15 +424,26 @@ integrationsRouter.post("/scans/adhoc", requireTokenWrite, asyncHandler(async (r
     return;
   }
 
-  const agent = await db
-    .selectFrom("scanner_agents")
-    .select(["id", "name"])
-    .where("name", "=", parsed.data.scannerAgent)
-    .executeTakeFirst();
-  if (!agent) {
-    res.status(400).json({ error: "unknown scanner agent" });
+  const names = [...new Set(parsed.data.scannerAgents ?? [parsed.data.scannerAgent!])];
+  const agents = await db.selectFrom("scanner_agents").select(["id", "name", "revoked_at"]).where("name", "in", names).execute();
+  const byName = new Map(agents.map((a) => [a.name, a]));
+  const unknown = names.filter((n) => !byName.has(n));
+  if (unknown.length > 0) {
+    res.status(400).json({ error: `unknown scanner agent: ${unknown.join(", ")}` });
     return;
   }
+  const chosen = names.map((n) => byName.get(n)!);
+  const allowed = getTokenScannerAgentIds(req);
+  if (allowed && chosen.some((a) => !allowed.includes(a.id))) {
+    res.status(403).json({ error: "this token is not allowed to use that scanner agent" });
+    return;
+  }
+  // A revoked scanner would never claim its share of a split.
+  if (chosen.length > 1 && chosen.some((a) => a.revoked_at)) {
+    res.status(400).json({ error: "a revoked scanner cannot take part in a split scan" });
+    return;
+  }
+  const nameOf = new Map(chosen.map((a) => [a.id, a.name]));
 
   const resolvedProfile = await resolveProfileParam(parsed.data.profile);
   if (!resolvedProfile.ok) {
@@ -446,57 +479,79 @@ integrationsRouter.post("/scans/adhoc", requireTokenWrite, asyncHandler(async (r
   }
 
   const requestedBy = `api-token:${req.apiTokenName}`;
-  const request = await db
-    .insertInto("scan_requests")
-    .values({
-      scanner_agent_id: agent.id,
-      host_id: null,
-      target_spec: parsed.data.targetSpec,
+  const tags = normalizeScanTags(parsed.data.tags);
+  const queued = await db.transaction().execute((trx) =>
+    queueScan(
+      trx,
+      parsed.data.targetSpec,
+      chosen.map((a) => a.id),
+      {
+        port_spec: parsed.data.portSpec,
+        requested_by: requestedBy,
+        nse_profile: nseResolution.nseProfile,
+        nse_scripts: nseResolution.nseScripts,
+        nse_profile_label: nseResolution.nseProfileLabel,
+        nuclei_profile: nucleiResolution.nucleiProfile,
+        nuclei_tags: nucleiResolution.nucleiTags,
+        nuclei_profile_label: nucleiResolution.nucleiProfileLabel,
+        masscan_rate: parsed.data.masscanRate ?? null,
+        priority: parsed.data.priority ?? DEFAULT_SCAN_PRIORITY,
+        tags,
+        schedule_id: null,
+      },
+      parsed.data.masscanRateSplit ?? false
+    )
+  );
+  if (!queued.ok) {
+    res.status(400).json({ error: queued.error });
+    return;
+  }
+
+  for (const part of queued.parts) {
+    logger.info({
+      event: "adhoc_scan.requested",
+      scan_request_id: part.id,
+      scan_group_id: queued.groupId,
+      scanner_agent_id: part.scannerAgentId,
+      scanner_agent_name: nameOf.get(part.scannerAgentId),
+      target_spec: part.targetSpec,
       port_spec: parsed.data.portSpec,
+      masscan_rate: part.masscanRate,
+      tags,
       requested_by: requestedBy,
-      nse_profile: nseResolution.nseProfile,
-      nse_scripts: nseResolution.nseScripts,
-      nse_profile_label: nseResolution.nseProfileLabel,
-      nuclei_profile: nucleiResolution.nucleiProfile,
-      nuclei_tags: nucleiResolution.nucleiTags,
-      nuclei_profile_label: nucleiResolution.nucleiProfileLabel,
-      masscan_rate: parsed.data.masscanRate ?? null,
-      priority: parsed.data.priority ?? DEFAULT_SCAN_PRIORITY,
-      tags: normalizeScanTags(parsed.data.tags),
-    })
-    .returning(["id", "status", "created_at", "tags"])
-    .executeTakeFirstOrThrow();
-
-  logger.info({
-    event: "adhoc_scan.requested",
-    scan_request_id: request.id,
-    scanner_agent_id: agent.id,
-    scanner_agent_name: agent.name,
-    target_spec: parsed.data.targetSpec,
-    port_spec: parsed.data.portSpec,
-    tags: request.tags,
-    requested_by: requestedBy,
-    api_token_id: req.apiTokenId,
-    source_ip: req.ip,
-  });
+      api_token_id: req.apiTokenId,
+      source_ip: req.ip,
+    });
+  }
   recordAudit("adhoc_scan.requested", requestedBy, req.ip, {
-    scan_request_id: request.id,
-    scanner_agent_id: agent.id,
-    scanner_agent_name: agent.name,
+    scan_request_id: queued.parts[0].id,
+    scan_group_id: queued.groupId,
+    scanner_agent_ids: queued.parts.map((p) => p.scannerAgentId),
     target_spec: parsed.data.targetSpec,
     port_spec: parsed.data.portSpec,
-    tags: request.tags,
+    tags,
     api_token_id: req.apiTokenId,
   });
 
+  // The first part at the top level keeps the response every caller
+  // written before splitting existed reads; `parts` is the whole picture.
+  const first = queued.parts[0];
   res.status(201).json({
-    scanRequestId: request.id,
-    status: request.status,
-    createdAt: request.created_at,
-    scannerAgentName: agent.name,
+    scanRequestId: first.id,
+    status: "pending",
+    createdAt: new Date().toISOString(),
+    scannerAgentName: nameOf.get(first.scannerAgentId),
     profile: nseResolution.nseProfileLabel,
     nucleiProfile: nucleiResolution.nucleiProfileLabel,
-    tags: request.tags,
+    tags,
+    scanGroupId: queued.groupId,
+    parts: queued.parts.map((p) => ({
+      scanRequestId: p.id,
+      scannerAgentName: nameOf.get(p.scannerAgentId),
+      targetSpec: p.targetSpec,
+      addresses: p.addresses,
+      masscanRate: p.masscanRate,
+    })),
   });
 }));
 

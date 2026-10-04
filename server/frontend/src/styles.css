@@ -2592,6 +2592,40 @@ th {
   color: var(--danger);
 }
 
+/* A split scan's parts can also still be waiting or under way (the group
+   view in Scan History). Muted, since neither is an outcome yet. */
+.scan-status-queued,
+.scan-status-running {
+  color: var(--muted);
+}
+
+.scan-status-incomplete {
+  color: var(--warning);
+}
+
+.scan-group-table td {
+  vertical-align: top;
+}
+
+.scan-group-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  align-items: baseline;
+  margin-bottom: 0.75rem;
+}
+
+button.scan-part-badge {
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+button.scan-part-badge:hover {
+  color: var(--text);
+  border-color: var(--text);
+}
+
 .version-badge {
   position: fixed;
   bottom: 0.5rem;
@@ -3274,9 +3308,35 @@ a.subnet-cell:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .scan-progress-bar > span {
+  .scan-progress-bar > span,
+  .scan-progress-inline-bar > span {
     transition: none;
   }
+}
+
+/* The one-line version for the lists of running scans. */
+.scan-progress-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.scan-progress-inline-bar {
+  display: inline-block;
+  width: 5rem;
+  height: 0.4rem;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.scan-progress-inline-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s ease;
 }
 
 .scan-phase-tracker {

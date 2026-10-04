@@ -5,6 +5,7 @@ import ScannerConfigModal from "../components/ScannerConfigModal";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanProgressModal from "../components/ScanProgressModal";
+import ScanProgressInline from "../components/ScanProgressInline";
 import { formatDateTime } from "../lib/formatDate";
 import { elapsedLabel } from "../lib/elapsed";
 import { isVersionBehind } from "../lib/semver";
@@ -560,6 +561,8 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
                               {activeJob.target_spec} <span className="host-meta">(ports {activeJob.port_spec})</span>
                               <div className="host-meta">
                                 running {elapsedLabel(activeJob.started_at)}
+                                {" "}
+                                <ScanProgressInline counts={activeJob.counts} />
                                 {activeJob.is_stale && (
                                   <span
                                     className="stale-badge"

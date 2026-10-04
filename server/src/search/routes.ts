@@ -6,7 +6,7 @@ import { db } from "../db";
 import { requireAdmin, requireAuth, requireOperator } from "../auth/middleware";
 import { getAllowedScannerAgentIds } from "../auth/scannerScope";
 import { asyncHandler } from "../lib/asyncHandler";
-import { isIPv4Cidr, isIPv6Cidr } from "../lib/net";
+import { isIPv4Cidr, isIPv6Cidr, parseIpSearch } from "../lib/net";
 import { isStale } from "../lib/staleness";
 import { getAppSettings } from "../settings/appSettings";
 import { parseDateOnly, toDateOnlyString } from "../lib/dateOnly";
@@ -235,7 +235,27 @@ export function applyHostFilters(
   // search checker - with no user session to restrict by).
   allowedScannerAgentIds: string[] | null = null
 ): any {
-  if (q) {
+  // An explicit `ip:` search matches addresses and nothing else, and
+  // takes a prefix: `ip:10.20.41` is 10.20.41.0/24, `ip:2001:db8:` the
+  // addresses starting that way. A separate syntax rather than teaching
+  // the plain search below to treat "10.20" as a prefix, because that
+  // search also matches banners and versions, where "10.20" is as likely a
+  // version - and saved searches and the External API run it too, so
+  // widening what it matches would change their results (and fire new
+  // saved_search.match alerts) under people who never asked.
+  const ipSearch = q ? /^ip:\s*(.*)$/i.exec(q) : null;
+  if (ipSearch) {
+    const parsed = parseIpSearch(ipSearch[1]);
+    if (!parsed) {
+      query = query.where(sql<boolean>`false`);
+    } else if (parsed.kind === "exact") {
+      query = query.where("hosts.ip", "=", parsed.value);
+    } else if (parsed.kind === "cidr") {
+      query = query.where(sql<boolean>`hosts.ip <<= ${parsed.value}::cidr`);
+    } else {
+      query = query.where(sql<boolean>`host(hosts.ip) LIKE ${`${parsed.value}%`}`);
+    }
+  } else if (q) {
     const isIp = net.isIP(q) !== 0;
     // hosts.ip <<= ::cidr is already dual-stack-correct Postgres syntax -
     // the only reason an IPv6 CIDR search didn't work before was this JS

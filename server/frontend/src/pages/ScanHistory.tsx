@@ -4,6 +4,7 @@ import { api, Me, ScanHistoryEntry, ScanHistoryResult } from "../api";
 import { IconInfo, IconWarning, IconSearch, IconRefresh, IconPlay } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScanProgressModal from "../components/ScanProgressModal";
+import ScanGroupModal from "../components/ScanGroupModal";
 import { formatDateTime } from "../lib/formatDate";
 import { durationLabel } from "../lib/elapsed";
 import { anomalyLabel, describeScanAnomaly } from "../lib/scanAnomalies";
@@ -39,6 +40,7 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
   const [result, setResult] = useState<ScanHistoryResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailsJobId, setDetailsJobId] = useState<string | null>(null);
+  const [groupId, setGroupId] = useState<string | null>(null);
   const [resumeNotice, setResumeNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [resumingId, setResumingId] = useState<string | null>(null);
 
@@ -171,12 +173,14 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
                   <td className="spec-cell">
                     {s.target_spec}
                     {s.group_parts !== null && s.group_parts > 1 && (
-                      <span
+                      <button
+                        type="button"
                         className="scan-part-badge"
-                        title={`One share of a scan of ${s.group_target_spec ?? "?"} split across ${s.group_parts} scanners`}
+                        title={`One share of a scan of ${s.group_target_spec ?? "?"} split across ${s.group_parts} scanners - click for the scan as a whole`}
+                        onClick={() => s.scan_group_id && setGroupId(s.scan_group_id)}
                       >
                         part {s.group_part}/{s.group_parts}
-                      </span>
+                      </button>
                     )}
                     {(s.anomalies ?? []).map((a, i) => (
                       <span key={i} className="scan-anomaly-badge" title={describeScanAnomaly(a)}>
@@ -278,6 +282,7 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
         </div>
       )}
 
+      {groupId && <ScanGroupModal groupId={groupId} me={me} onClose={() => setGroupId(null)} onChanged={load} />}
       {detailsJobId && (
         <ScanProgressModal
           jobId={detailsJobId}

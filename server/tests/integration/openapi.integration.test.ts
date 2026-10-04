@@ -43,7 +43,7 @@ describe("External API OpenAPI document", () => {
     // here automatically, which is the point of generating rather than
     // hand-writing this half.
     expect(Object.keys(adhocProps).sort()).toEqual(
-      ["masscanRate", "nucleiProfile", "portSpec", "priority", "profile", "scannerAgent", "tags", "targetSpec"].sort()
+      ["masscanRate", "masscanRateSplit", "nucleiProfile", "portSpec", "priority", "profile", "scannerAgent", "scannerAgents", "tags", "targetSpec"].sort()
     );
     // And the constraints come along too, not just the field names - both
     // a numeric bound and an enum's allowed values.
