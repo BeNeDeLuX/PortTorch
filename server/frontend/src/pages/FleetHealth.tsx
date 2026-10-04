@@ -256,6 +256,27 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
           {health.failedUpdates.length > 0 && `, ${health.failedUpdates.length} update failed`}
         </HealthCard>
 
+        {health.autoUpdate && (
+          <HealthCard to="/agents" title="Scanner Auto-Update" status={health.autoUpdateStatus}>
+            {health.autoUpdatingAgents.length} scanner{health.autoUpdatingAgents.length === 1 ? "" : "s"} auto-updating
+            {health.autoUpdateOffAgents.length > 0 && `, ${health.autoUpdateOffAgents.length} off`}
+            <span className="host-meta"> (fleet default {health.autoUpdate.fleetDefault ? "on" : "off"})</span>
+            <br />
+            {health.autoUpdateBlockedReason ??
+              (health.autoUpdatingAgents.length === 0
+                ? "Updates happen only when an admin clicks Update"
+                : health.autoUpdate.gate === "none"
+                  ? "No test scanner - a new release reaches every scanner at once"
+                  : health.autoUpdate.gate === "open"
+                    ? `v${health.autoUpdate.latestVersion} proven on a test scanner - rolling out to the rest`
+                    : `Waiting for a test scanner to complete a scan on v${health.autoUpdate.latestVersion}${
+                        health.autoUpdate.canaries.length > 0
+                          ? ` (${health.autoUpdate.canaries.map((c) => `${c.name}: ${c.onLatest ? "updated, no scan yet" : `v${c.version ?? "?"}`}`).join(", ")})`
+                          : ""
+                      }`)}
+          </HealthCard>
+        )}
+
         <HealthCard to="/agents" title="Scan Queue" status={health.queueStatus}>
           {health.scanQueue.length} pending request{health.scanQueue.length === 1 ? "" : "s"}
           <br />

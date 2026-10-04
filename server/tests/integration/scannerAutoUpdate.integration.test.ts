@@ -1,4 +1,5 @@
 import { sql } from "kysely";
+import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "../../src/db";
 import { runScannerAutoUpdate } from "../../src/scannerUpdate/autoUpdate";
@@ -8,6 +9,7 @@ import {
   createTestUser,
   deleteTestAgent,
   deleteTestUser,
+  getApp,
   loginAs,
   type SessionClient,
   type TestAgent,
@@ -140,5 +142,65 @@ describe("scanner auto-update", () => {
     expect(listed.body.find((x: { id: string }) => x.id === a.id)).toHaveProperty("auto_update", null);
     const settings = await adminClient.get("/api/settings/app");
     expect(settings.body.scannerAutoUpdate).toBe(true);
+  });
+
+  // Last, because a marked canary gates every other scanner in the
+  // database until it is cleared again.
+  it("staggers: canaries first, the rest once a canary scanned on the release", async () => {
+    const canary = await agent("it-auto-canary", { update_canary: true, auto_update: true });
+    const rest = await agent("it-auto-rest", { auto_update: true });
+    const report = (a: TestAgent, version: string) =>
+      request(getApp()).get("/api/ingest/excludes").set("Authorization", `Bearer ${a.apiKey}`).set("X-Scanner-Version", version);
+    const changedAt = async (a: TestAgent) =>
+      (await db.selectFrom("scanner_agents").select("version_changed_at").where("id", "=", a.id).executeTakeFirstOrThrow())
+        .version_changed_at;
+
+    // The canary is behind too: only it is asked.
+    let requested = await requestedIds();
+    expect(requested).toContain(canary.id);
+    expect(requested).not.toContain(rest.id);
+    await resetUpdateState();
+
+    // On the release, but nothing scanned on it yet: still waiting.
+    await report(canary, "0.30.0");
+    const firstChange = await changedAt(canary);
+    expect(firstChange).not.toBeNull();
+    expect(await requestedIds()).not.toContain(rest.id);
+    let status = await adminClient.get("/api/agents/auto-update-status");
+    expect(status.body.gate).toBe("waiting");
+    expect(status.body.canaries.find((c: { id: string }) => c.id === canary.id)).toMatchObject({ onLatest: true, provenOnLatest: false });
+
+    // Reporting the same version again does not move the marker.
+    await report(canary, "0.30.0");
+    expect(await changedAt(canary)).toEqual(firstChange);
+
+    // A completed scan on the new release opens the gate.
+    // Every request a real scanner makes carries its version; one without
+    // the header records the version as unknown.
+    const job = await request(getApp())
+      .post("/api/ingest/scan-jobs")
+      .set("Authorization", `Bearer ${canary.apiKey}`)
+      .set("X-Scanner-Version", "0.30.0")
+      .send({ targetSpec: "10.0.0.1", portSpec: "22" });
+    await request(getApp())
+      .patch(`/api/ingest/scan-jobs/${job.body.id}`)
+      .set("Authorization", `Bearer ${canary.apiKey}`)
+      .set("X-Scanner-Version", "0.30.0")
+      .send({ status: "completed" });
+    expect(await changedAt(canary)).toEqual(firstChange);
+    status = await adminClient.get("/api/agents/auto-update-status");
+    expect(status.body.gate).toBe("open");
+    expect(await requestedIds()).toContain(rest.id);
+
+    // A restricted session sees the gate but not other scanners' names.
+    const restrictedStatus = await operatorClient.get("/api/agents/auto-update-status");
+    expect(restrictedStatus.body.gate).toBe("open");
+
+    expect((await adminClient.put(`/api/agents/${canary.id}/auto-update`).send({ canary: false })).status).toBe(204);
+    expect((await adminClient.put(`/api/agents/${canary.id}/auto-update`).send({})).status).toBe(400);
+    status = await adminClient.get("/api/agents/auto-update-status");
+    expect(status.body.gate).toBe("none");
+    await db.deleteFrom("scan_jobs").where("scanner_agent_id", "=", canary.id).execute();
+    await resetUpdateState();
   });
 });

@@ -3,8 +3,13 @@ import type { ColumnType, Generated } from "kysely";
 export interface UsersTable {
   id: Generated<number>;
   username: string;
-  password_hash: string;
+  // Null for an SSO account, which has no local password - the password
+  // login refuses it. See migration 1747400000000_oidc_sso.js.
+  password_hash: string | null;
   role: string;
+  auth_source: ColumnType<"local" | "oidc", "local" | "oidc" | undefined, "local" | "oidc">;
+  oidc_issuer: string | null;
+  oidc_subject: string | null;
   created_at: ColumnType<Date, string | undefined, never>;
   last_login_at: ColumnType<Date | null, string | undefined, string>;
   totp_secret: string | null;
@@ -55,6 +60,12 @@ export interface ScannerAgentsTable {
   // app_settings.scanner_auto_update, true/false pin it. See
   // scannerUpdate/autoUpdate.ts.
   auto_update: ColumnType<boolean | null, boolean | null | undefined, boolean | null>;
+  // Takes a new release first; the rest of the fleet is auto-updated only
+  // after a canary completed a scan on it. See scannerUpdate/autoUpdate.ts.
+  update_canary: ColumnType<boolean, boolean | undefined, boolean>;
+  // When the currently reported version was first reported - what "a scan
+  // on the new release" is measured from. Null until a version is known.
+  version_changed_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
   // Dedup state for the scan_queue.backlog webhook (see
   // webhooks/operationalAlerts.ts) - unlike most alert-dedup columns in
   // this codebase, this one is cleared back to null once the backlog
@@ -853,6 +864,19 @@ export interface WebhookRetryQueueTable {
 
 // Singleton row (id always 1) of global, admin-configurable toggles that
 // don't belong to any one user's account - see settings/appSettings.ts.
+// Approved state per network - see baselines/ and migration
+// 1747300000000_network_baselines.js.
+export interface NetworkBaselinesTable {
+  id: Generated<string>;
+  network: string;
+  scanner_agent_id: string | null;
+  note: string | null;
+  approved_at: ColumnType<Date, string | Date | undefined, string | Date>;
+  approved_by: string | null;
+  alerted_keys: ColumnType<string[], string[] | undefined, string[]>;
+  created_at: ColumnType<Date, string | undefined, never>;
+}
+
 export interface AppSettingsTable {
   id: Generated<number>;
   // Outbound proxy, moved out of HTTP_PROXY/HTTPS_PROXY/NO_PROXY so it no
@@ -867,6 +891,21 @@ export interface AppSettingsTable {
   // Fleet-wide default for scanner auto-update, off unless an admin turns
   // it on - see scannerUpdate/autoUpdate.ts.
   scanner_auto_update: ColumnType<boolean, boolean | undefined, boolean>;
+  // Single sign-on (auth/oidc.ts). The client secret is withheld from the
+  // settings API like smtp_password.
+  oidc_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  oidc_issuer_url: string | null;
+  oidc_client_id: string | null;
+  oidc_client_secret: string | null;
+  oidc_redirect_uri: string | null;
+  oidc_scopes: ColumnType<string, string | undefined, string>;
+  oidc_username_claim: ColumnType<string, string | undefined, string>;
+  oidc_groups_claim: ColumnType<string, string | undefined, string>;
+  oidc_admin_groups: ColumnType<string[], string[] | undefined, string[]>;
+  oidc_operator_groups: ColumnType<string[], string[] | undefined, string[]>;
+  oidc_user_groups: ColumnType<string[], string[] | undefined, string[]>;
+  oidc_default_role: "user" | "operator" | null;
+  oidc_button_label: ColumnType<string, string | undefined, string>;
   // Was config.ts's HOST_RETENTION_DAYS env var - moved here so it's
   // live-editable from the Settings page (see retention.ts). 0 disables
   // the sweep entirely, same semantics the env var always had.
@@ -943,6 +982,7 @@ export interface AuditLogTable {
 export interface Database {
   users: UsersTable;
   scanner_agents: ScannerAgentsTable;
+  network_baselines: NetworkBaselinesTable;
   api_tokens: ApiTokensTable;
   scan_jobs: ScanJobsTable;
   scan_job_progress: ScanJobProgressTable;

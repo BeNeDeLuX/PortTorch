@@ -15,5 +15,8 @@ declare module "express-session" {
     // everything), same as today's behavior for every existing account.
     // Loaded once at login, same trust/staleness model as role above.
     allowedScannerAgentIds?: string[];
+    // An SSO sign-in in progress: what the callback must see echoed back
+    // (state, nonce) and the PKCE verifier only this session knows.
+    oidcPending?: { state: string; nonce: string; codeVerifier: string };
   }
 }

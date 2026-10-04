@@ -34,6 +34,7 @@ const EVENTS: WebhookEvent[] = [
   "network.coverage_stale",
   "ssh_key.shared",
   "ca_certificate.expiring_soon",
+  "baseline.deviation",
 ];
 const uuidSchema = z.string().uuid();
 const WEBHOOK_COLUMNS = [

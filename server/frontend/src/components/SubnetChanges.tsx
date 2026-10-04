@@ -2,7 +2,7 @@ import { FormEvent, ReactNode, useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api, Me, SubnetChangeHost, SubnetChangePort, SubnetChangesResult } from "../api";
 import { formatDateTime } from "../lib/formatDate";
-import { IconSearch } from "./icons";
+import { IconCheck, IconSearch } from "./icons";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PRESETS: [string, number][] = [
@@ -39,6 +39,8 @@ export default function SubnetChanges({
   const [result, setResult] = useState<SubnetChangesResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [baselineMessage, setBaselineMessage] = useState<string | null>(null);
+  const canEdit = me.role === "admin" || me.role === "operator";
 
   async function run(net = network, from = fromInput, to = toInput) {
     if (!net.trim()) return;
@@ -72,6 +74,19 @@ export default function SubnetChanges({
   useEffect(() => {
     if (result) run();
   }, [scannerAgentIds, hideRetired]);
+
+  // A baseline scoped the way this view is: to the one scanner filtered
+  // on, or to every scanner when the filter is empty or names several.
+  async function approveAsBaseline() {
+    if (!result) return;
+    setBaselineMessage(null);
+    try {
+      await api.createBaseline(result.network, scannerAgentIds.length === 1 ? scannerAgentIds[0] : null, null);
+      setBaselineMessage(`The current state of ${result.network} is now its baseline - see the Baselines page.`);
+    } catch (err) {
+      setBaselineMessage(err instanceof Error ? err.message : "Could not create the baseline");
+    }
+  }
 
   function preset(days: number) {
     const to = toLocalInputValue(new Date());
@@ -131,72 +146,86 @@ export default function SubnetChanges({
         <p className="empty">Enter a network, or open one from the map with its "changes" link.</p>
       )}
 
-      {result && (
-        <>
-          <div className="stat-tiles">
-            <Tile label={`Hosts on ${formatDateTime(result.from, me.preferences)}`} value={result.hostsBefore} />
-            <Tile label={`Hosts on ${formatDateTime(result.to, me.preferences)}`} value={result.hostsAfter} />
-            <Tile label="Scans in between" value={result.scansInPeriod} />
-          </div>
-          {result.scansInPeriod === 0 && (
-            <p className="callout-warning">
-              No scan reported anything in {result.network} during this period, so every host known before it is listed
-              as not seen - that says nothing about whether they are still there.
-            </p>
-          )}
-
-          <ChangeSection
-            title="New hosts"
-            empty="No host was first found in this period."
-            list={result.newHosts}
-            limit={result.limit}
-            headers={["Host", "Open ports", "Scanner", "First seen"]}
-          >
-            {result.newHosts.items.map((h) => (
-              <HostRow key={h.hostId} host={h} me={me} date={h.firstSeenAt} />
-            ))}
-          </ChangeSection>
-
-          <ChangeSection
-            title="Not seen in this period"
-            note="Known before the period, but no scan reported them during it. Either gone, or not scanned - the number of scans above tells you which is likely."
-            empty="Every host known before the period was reported again during it."
-            list={result.unseenHosts}
-            limit={result.limit}
-            headers={["Host", "Open ports when last seen", "Scanner", "Last seen"]}
-          >
-            {result.unseenHosts.items.map((h) => (
-              <HostRow key={h.hostId} host={h} me={me} date={h.lastSeenAt} />
-            ))}
-          </ChangeSection>
-
-          <ChangeSection
-            title="Ports opened"
-            note="On hosts that already existed when the period began. A new host's ports are listed with it above."
-            empty="No port opened on an existing host."
-            list={result.openedPorts}
-            limit={result.limit}
-            headers={["Host", "Port", "Service", "Seen open"]}
-          >
-            {result.openedPorts.items.map((p) => (
-              <PortRow key={`${p.hostId}-${p.port}-${p.protocol}`} port={p} me={me} />
-            ))}
-          </ChangeSection>
-
-          <ChangeSection
-            title="Ports closed"
-            note="Only ports a scan recorded as closed. A port that silently stopped answering keeps its last open record, the same as everywhere else in the dashboard."
-            empty="No port was recorded closed."
-            list={result.closedPorts}
-            limit={result.limit}
-            headers={["Host", "Port", "Service", "Recorded closed"]}
-          >
-            {result.closedPorts.items.map((p) => (
-              <PortRow key={`${p.hostId}-${p.port}-${p.protocol}`} port={p} me={me} />
-            ))}
-          </ChangeSection>
-        </>
+      {result && canEdit && (
+        <p className="inline-actions">
+          <button type="button" className="btn-icon-label" onClick={approveAsBaseline}>
+            <IconCheck /> Approve {result.network} as baseline
+          </button>
+          {baselineMessage && <span className="host-meta">{baselineMessage}</span>}
+        </p>
       )}
+      {result && <ChangesReport result={result} me={me} />}
+    </>
+  );
+}
+
+// The tiles and four lists of a comparison, shared by the Changes view
+// and a baseline's detail on the Baselines page.
+export function ChangesReport({ result, me }: { result: SubnetChangesResult; me: Me }) {
+  return (
+    <>
+      <div className="stat-tiles">
+        <Tile label={`Hosts on ${formatDateTime(result.from, me.preferences)}`} value={result.hostsBefore} />
+        <Tile label={`Hosts on ${formatDateTime(result.to, me.preferences)}`} value={result.hostsAfter} />
+        <Tile label="Scans in between" value={result.scansInPeriod} />
+      </div>
+      {result.scansInPeriod === 0 && (
+        <p className="callout-warning">
+          No scan reported anything in {result.network} during this period, so every host known before it is listed
+          as not seen - that says nothing about whether they are still there.
+        </p>
+      )}
+
+      <ChangeSection
+        title="New hosts"
+        empty="No host was first found in this period."
+        list={result.newHosts}
+        limit={result.limit}
+        headers={["Host", "Open ports", "Scanner", "First seen"]}
+      >
+        {result.newHosts.items.map((h) => (
+          <HostRow key={h.hostId} host={h} me={me} date={h.firstSeenAt} />
+        ))}
+      </ChangeSection>
+
+      <ChangeSection
+        title="Not seen in this period"
+        note="Known before the period, but no scan reported them during it. Either gone, or not scanned - the number of scans above tells you which is likely."
+        empty="Every host known before the period was reported again during it."
+        list={result.unseenHosts}
+        limit={result.limit}
+        headers={["Host", "Open ports when last seen", "Scanner", "Last seen"]}
+      >
+        {result.unseenHosts.items.map((h) => (
+          <HostRow key={h.hostId} host={h} me={me} date={h.lastSeenAt} />
+        ))}
+      </ChangeSection>
+
+      <ChangeSection
+        title="Ports opened"
+        note="On hosts that already existed when the period began. A new host's ports are listed with it above."
+        empty="No port opened on an existing host."
+        list={result.openedPorts}
+        limit={result.limit}
+        headers={["Host", "Port", "Service", "Seen open"]}
+      >
+        {result.openedPorts.items.map((p) => (
+          <PortRow key={`${p.hostId}-${p.port}-${p.protocol}`} port={p} me={me} />
+        ))}
+      </ChangeSection>
+
+      <ChangeSection
+        title="Ports closed"
+        note="Only ports a scan recorded as closed. A port that silently stopped answering keeps its last open record, the same as everywhere else in the dashboard."
+        empty="No port was recorded closed."
+        list={result.closedPorts}
+        limit={result.limit}
+        headers={["Host", "Port", "Service", "Recorded closed"]}
+      >
+        {result.closedPorts.items.map((p) => (
+          <PortRow key={`${p.hostId}-${p.port}-${p.protocol}`} port={p} me={me} />
+        ))}
+      </ChangeSection>
     </>
   );
 }

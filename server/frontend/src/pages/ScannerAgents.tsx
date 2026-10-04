@@ -275,7 +275,12 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
 
   async function handleAutoUpdateChange(a: ScannerAgent, value: string) {
     const autoUpdate = value === "on" ? true : value === "off" ? false : null;
-    await api.setScannerAutoUpdate(a.id, autoUpdate);
+    await api.setScannerAutoUpdate(a.id, { autoUpdate });
+    await load();
+  }
+
+  async function handleCanaryChange(a: ScannerAgent, canary: boolean) {
+    await api.setScannerAutoUpdate(a.id, { canary });
     await load();
   }
 
@@ -471,6 +476,15 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
               <option value="on">On</option>
               <option value="off">Off</option>
             </select>
+          </label>
+        )}
+        {isAdmin && !a.revoked_at && (
+          <label
+            className="auto-update-select"
+            title="A test scanner takes a new release first. While any scanner is marked, the others are only auto-updated once a test scanner has completed a scan on that release, so a broken release stops at one scanner. An admin's Update click is never held back."
+          >
+            <input type="checkbox" checked={a.update_canary} onChange={(e) => handleCanaryChange(a, e.target.checked)} />
+            Test first
           </label>
         )}
 

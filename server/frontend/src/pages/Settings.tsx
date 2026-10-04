@@ -4,6 +4,7 @@ import PageHeader from "../components/PageHeader";
 import AlertingCard from "./settings/AlertingCard";
 import BackupCard from "./settings/BackupCard";
 import HecCard from "./settings/HecCard";
+import OidcCard from "./settings/OidcCard";
 import ProxyCard from "./settings/ProxyCard";
 import RequireTotpCard from "./settings/RequireTotpCard";
 import RetentionCard from "./settings/RetentionCard";
@@ -61,6 +62,9 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
           <TlsCertificateCard me={me} />
           {settings && <RequireTotpCard settings={settings} onUpdated={setSettings} />}
           <TrustedCaCard me={me} />
+          <div className="settings-grid-wide">
+            <OidcCard />
+          </div>
         </div>
       </section>
 

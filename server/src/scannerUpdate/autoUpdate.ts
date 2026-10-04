@@ -20,6 +20,77 @@ export interface AutoUpdateRequest {
   toVersion: string;
 }
 
+export interface CanaryStatus {
+  id: string;
+  name: string;
+  version: string | null;
+  // Reports the latest release (or newer).
+  onLatest: boolean;
+  // Has completed a scan that started after it began reporting that
+  // version - the evidence the release actually works there.
+  provenOnLatest: boolean;
+}
+
+// Whether the rest of the fleet may take `latest` yet.
+//   none    - no canary is marked, so everyone updates at once (the
+//             behaviour before canaries existed).
+//   open    - a canary has completed a scan on the release.
+//   waiting - canaries exist and none has proven the release yet.
+export type CanaryGate = "none" | "open" | "waiting";
+
+export interface AutoUpdateStatus {
+  fleetDefault: boolean;
+  latestVersion: string | null;
+  gate: CanaryGate;
+  canaries: CanaryStatus[];
+}
+
+async function canaryStatus(latest: string | null): Promise<{ gate: CanaryGate; canaries: CanaryStatus[] }> {
+  const rows = await db
+    .selectFrom("scanner_agents as sa")
+    .select([
+      "sa.id",
+      "sa.name",
+      "sa.version",
+      // A scan that started on the current version and finished cleanly.
+      // Started, not finished, after the version change: a scan already
+      // running when the binary was replaced ran on the old one.
+      sql<boolean>`EXISTS (
+        SELECT 1 FROM scan_jobs sj
+        WHERE sj.scanner_agent_id = sa.id
+          AND sj.status = 'completed'
+          AND sa.version_changed_at IS NOT NULL
+          AND sj.started_at >= sa.version_changed_at
+      )`.as("scanned_since_change"),
+    ])
+    .where("sa.update_canary", "=", true)
+    .where("sa.revoked_at", "is", null)
+    .orderBy("sa.name")
+    .execute();
+
+  const canaries = rows.map((r) => {
+    const onLatest = Boolean(latest && r.version && compareSemver(r.version, latest) >= 0);
+    return { id: r.id, name: r.name, version: r.version, onLatest, provenOnLatest: onLatest && r.scanned_since_change };
+  });
+  const gate: CanaryGate = canaries.length === 0 ? "none" : canaries.some((c) => c.provenOnLatest) ? "open" : "waiting";
+  return { gate, canaries };
+}
+
+async function latestRelease(): Promise<string | null> {
+  const release = await db
+    .selectFrom("scanner_release_cache")
+    .select("latest_version")
+    .where("id", "=", 1)
+    .executeTakeFirst();
+  return release?.latest_version ?? null;
+}
+
+export async function getAutoUpdateStatus(): Promise<AutoUpdateStatus> {
+  const latestVersion = await latestRelease();
+  const { scannerAutoUpdate } = await getAppSettings();
+  return { fleetDefault: scannerAutoUpdate, latestVersion, ...(await canaryStatus(latestVersion)) };
+}
+
 // Requests the self-update an admin would otherwise have to click, for
 // every scanner whose effective auto-update setting is on and which is
 // behind the latest published release. It only ever *sets the flag*: the
@@ -32,17 +103,17 @@ export interface AutoUpdateRequest {
 // a retry loop every five minutes. That state clears either when an admin
 // re-triggers it or when the scanner reports the latest version (see
 // apiKeyAuth.ts), after which auto-update covers it again.
+//
+// Staggered when any canary is marked: canaries go first, everyone else
+// waits until a canary has completed a scan on the new release. Only the
+// automatic path is held back - an admin's Update click is never gated.
 export async function runScannerAutoUpdate(now: Date = new Date()): Promise<AutoUpdateRequest[]> {
-  const release = await db
-    .selectFrom("scanner_release_cache")
-    .select("latest_version")
-    .where("id", "=", 1)
-    .executeTakeFirst();
-  const latest = release?.latest_version;
+  const latest = await latestRelease();
   if (!latest) return [];
 
   const { scannerAutoUpdate } = await getAppSettings();
-  const candidates = await db
+  const { gate } = await canaryStatus(latest);
+  let query = db
     .selectFrom("scanner_agents")
     .select(["id", "name", "version"])
     .where("revoked_at", "is", null)
@@ -50,8 +121,9 @@ export async function runScannerAutoUpdate(now: Date = new Date()): Promise<Auto
     .where("update_requested_at", "is", null)
     .where("version", "is not", null)
     .where("last_seen_at", ">", new Date(now.getTime() - RECENTLY_SEEN_MS))
-    .where(sql<boolean>`coalesce(auto_update, ${scannerAutoUpdate})`)
-    .execute();
+    .where(sql<boolean>`coalesce(auto_update, ${scannerAutoUpdate})`);
+  if (gate === "waiting") query = query.where("update_canary", "=", true);
+  const candidates = await query.execute();
 
   const requested: AutoUpdateRequest[] = [];
   for (const agent of candidates) {
@@ -66,6 +138,7 @@ export async function runScannerAutoUpdate(now: Date = new Date()): Promise<Auto
       scanner_agent_name: agent.name,
       from_version: agent.version,
       to_version: latest,
+      canary_gate: gate,
     });
     await recordAudit("agent.update_requested", "auto-update", undefined, {
       scanner_agent_id: agent.id,

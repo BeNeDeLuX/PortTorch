@@ -349,6 +349,31 @@ input {
   display: block;
 }
 
+/* The SSO button is a link that has to look like the Log in button above
+   it - it navigates rather than submitting, since the sign-in is a chain
+   of full-page redirects through the identity provider. */
+.login-sso {
+  justify-content: center;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 0.5rem 1rem;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.login-sso:hover,
+.login-sso:focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.login-divider {
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
 .login-card label {
   display: flex;
   flex-direction: column;
@@ -1178,6 +1203,12 @@ button.export-link {
    the way dashed-vs-solid does. */
 .chip-auto {
   border-style: dashed;
+}
+
+.chip-sso {
+  margin-left: 0.4rem;
+  font-size: 0.7rem;
+  padding: 0.05rem 0.4rem;
 }
 
 .saved-searches {
@@ -2900,6 +2931,23 @@ button.subnet-cell:focus-visible,
 
 .subnet-chip-risk-medium {
   border-color: var(--warning);
+}
+
+.baseline-deviations {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.baseline-ok {
+  color: var(--success);
+}
+
+.baseline-detail {
+  margin-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
 }
 
 .subnet-changes-link {

@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { api, Me } from "../api";
 import { IconArrowLeft, IconCheck, IconLogIn } from "../components/icons";
 import ThemeToggle from "../components/ThemeToggle";
@@ -10,6 +10,17 @@ export default function Login({ onLogin }: { onLogin: (me: Me) => void }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [sso, setSso] = useState<{ enabled: boolean; label: string } | null>(null);
+  // A failed single sign-on ends here with its reason in the query, since
+  // the provider's redirect is a full page navigation.
+  const [ssoError] = useState(() => new URLSearchParams(window.location.search).get("sso_error"));
+
+  useEffect(() => {
+    api
+      .oidcLoginInfo()
+      .then(setSso)
+      .catch(() => setSso(null));
+  }, []);
 
   async function handlePasswordSubmit(e: FormEvent) {
     e.preventDefault();
@@ -61,6 +72,7 @@ export default function Login({ onLogin }: { onLogin: (me: Me) => void }) {
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
           </label>
           {error && <p className="error">{error}</p>}
+          {ssoError && !error && <p className="error">{ssoError}</p>}
           <button type="submit" className="btn-icon-label" disabled={submitting}>
             {submitting ? (
               "..."
@@ -70,6 +82,16 @@ export default function Login({ onLogin }: { onLogin: (me: Me) => void }) {
               </>
             )}
           </button>
+          {sso?.enabled && (
+            <>
+              <div className="login-divider">or</div>
+              {/* A plain link, not a fetch: the sign-in is a sequence of
+                  full-page redirects through the identity provider. */}
+              <a className="btn-icon-label login-sso" href="/auth/oidc/login">
+                <IconLogIn /> {sso.label}
+              </a>
+            </>
+          )}
         </form>
       ) : (
         <form className="login-card" onSubmit={handleTotpSubmit}>

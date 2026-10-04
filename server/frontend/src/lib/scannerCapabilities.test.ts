@@ -15,6 +15,7 @@ function agent(version: string | null): ScannerAgent {
     update_request_status: null,
     update_failure_reason: null,
     auto_update: null,
+    update_canary: false,
     submit_queue_pending: null,
   scan_slots_running: null,
   scan_slots_max: null,

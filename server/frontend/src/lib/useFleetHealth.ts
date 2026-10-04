@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   ActiveScanJob,
   api,
+  AutoUpdateStatus,
   Me,
   QueuedScanRequest,
   ScannerAgent,
@@ -70,6 +71,16 @@ export interface FleetHealthData {
   oldestTemplateAgeDays: number | null;
   overlapStatus: HealthStatus;
   overlap: ScannerOverlap | null;
+  autoUpdateStatus: HealthStatus;
+  autoUpdate: AutoUpdateStatus | null;
+  // Live scanners whose effective auto-update setting is on, and those
+  // pinned off - the two numbers the card leads with.
+  autoUpdatingAgents: ScannerAgent[];
+  autoUpdateOffAgents: ScannerAgent[];
+  // Set when a staggered rollout cannot progress: every canary is either
+  // not reporting or stuck on a failed update, so the rest of the fleet
+  // waits for something that will not happen on its own.
+  autoUpdateBlockedReason: string | null;
   setOverlap: (o: ScannerOverlap) => void;
 }
 
@@ -92,6 +103,7 @@ export function useFleetHealth(me: Me): FleetHealthData {
   // until that first fetch resolves.
   const [queueWarningThreshold, setQueueWarningThreshold] = useState(1);
   const [overlap, setOverlap] = useState<ScannerOverlap | null>(null);
+  const [autoUpdate, setAutoUpdate] = useState<AutoUpdateStatus | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -109,8 +121,10 @@ export function useFleetHealth(me: Me): FleetHealthData {
       // fact about the fleet everyone's numbers are built on, and the
       // endpoint is scanner-scoped like every other fleet-wide read.
       api.hostsOverlap().catch(() => null),
+      api.autoUpdateStatus().catch(() => null),
     ])
-      .then(([a, release, ws, threshold, serverRelease, dup]) => {
+      .then(([a, release, ws, threshold, serverRelease, dup, auto]) => {
+        setAutoUpdate(auto);
         setAgents(a);
         setLatestRelease(release);
         setWebserverCert(ws);
@@ -251,6 +265,31 @@ export function useFleetHealth(me: Me): FleetHealthData {
   const overlapStatus: HealthStatus =
     overlap && overlap.duplicatedAddresses > 0 && !overlap.acknowledgement?.active ? "warning" : "ok";
 
+  const autoUpdatingAgents = autoUpdate
+    ? liveAgents.filter((a) => a.auto_update ?? autoUpdate.fleetDefault)
+    : [];
+  const autoUpdateOffAgents = autoUpdate ? liveAgents.filter((a) => !(a.auto_update ?? autoUpdate.fleetDefault)) : [];
+  // Same "recently seen" window the auto-update ticker requires before it
+  // asks a scanner to update at all.
+  const recentlySeen = (a: ScannerAgent) =>
+    a.last_seen_at !== null && Date.now() - new Date(a.last_seen_at).getTime() < 5 * 60_000;
+  let autoUpdateBlockedReason: string | null = null;
+  if (autoUpdate?.gate === "waiting" && autoUpdatingAgents.length > 0) {
+    const canaryAgents = autoUpdate.canaries
+      .map((c) => liveAgents.find((a) => a.id === c.id))
+      .filter((a): a is ScannerAgent => Boolean(a));
+    const stuck = canaryAgents.filter((a) => !recentlySeen(a) || a.update_request_status === "failed");
+    if (canaryAgents.length > 0 && stuck.length === canaryAgents.length) {
+      autoUpdateBlockedReason = `Rollout of v${autoUpdate.latestVersion} is held: every test scanner is offline or failed its update (${stuck
+        .map((a) => a.name)
+        .join(", ")}).`;
+    }
+  }
+  // A held rollout is a warning, not critical: nothing is broken, the
+  // fleet keeps scanning on the version it has. It is shown at all
+  // because it never resolves by itself.
+  const autoUpdateStatus: HealthStatus = autoUpdateBlockedReason ? "warning" : "ok";
+
   const overall = worstOf(
     scannerStatus,
     updatesStatus,
@@ -258,6 +297,7 @@ export function useFleetHealth(me: Me): FleetHealthData {
     retryQueueStatus,
     nucleiTemplatesStatus,
     overlapStatus,
+    autoUpdateStatus,
     webserverCert ? webserverCertStatus : "ok",
     webserverVersionStatus
   );
@@ -268,6 +308,11 @@ export function useFleetHealth(me: Me): FleetHealthData {
     overall,
     overlapStatus,
     overlap,
+    autoUpdateStatus,
+    autoUpdate,
+    autoUpdatingAgents,
+    autoUpdateOffAgents,
+    autoUpdateBlockedReason,
     // Acknowledging replaces the card's own data rather than re-running
     // every request the page makes - the other cards did not change.
     setOverlap,

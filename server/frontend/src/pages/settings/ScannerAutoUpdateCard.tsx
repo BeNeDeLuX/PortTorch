@@ -35,7 +35,8 @@ export default function ScannerAutoUpdateCard({
           When on, a scanner behind the latest published release is asked to update itself within five minutes, the same
           as clicking Update on the Scanner Agents page. It applies the update once it is idle, so a running scan is never
           interrupted. A failed update is not retried automatically - it waits for an admin. Individual scanners can be
-          set to always or never on the Scanner Agents page.
+          set to always or never on the Scanner Agents page. Marking one or more scanners "Test first" there staggers the
+          rollout: the rest wait until a test scanner has completed a scan on the new release.
         </>
       }
       error={error}

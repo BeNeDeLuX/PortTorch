@@ -46,6 +46,9 @@ export interface Me {
   // App.tsx's route gating and Account.tsx's banner) - always false for
   // non-admin roles, since that toggle only ever governs admin accounts.
   totpSetupRequired: boolean;
+  // "oidc" for an account that signs in through single sign-on, which has
+  // no local password or 2FA of its own.
+  authSource?: "local" | "oidc";
 }
 
 export interface StorageUsage {
@@ -203,6 +206,7 @@ export interface DashboardUser {
   created_at: string;
   last_login_at: string | null;
   totp_enabled: boolean;
+  auth_source: "local" | "oidc";
   // Which scanner agents' results this user may see - empty means
   // unrestricted (sees everything), always empty for role "admin".
   scannerAgentIds: string[];
@@ -922,6 +926,8 @@ export interface ScannerAgent {
   update_failure_reason: string | null;
   // Auto-update override: null follows the Settings page's fleet default.
   auto_update: boolean | null;
+  // Takes a new release first when auto-updates are staggered.
+  update_canary: boolean;
   // internal/submitqueue's current backlog size on this scanner, reported
   // on every request - null until a scanner build with this support has
   // made at least one request (see apiKeyAuth.ts).
@@ -1306,6 +1312,60 @@ export interface SubnetEntry {
   lastSeenAt: string | null;
 }
 
+export interface NetworkBaseline {
+  id: string;
+  network: string;
+  scanner_agent_id: string | null;
+  scanner_agent_name: string | null;
+  note: string | null;
+  approved_at: string;
+  approved_by: string | null;
+  created_at: string;
+}
+
+export interface NetworkBaselineSummary extends NetworkBaseline {
+  deviations: {
+    newHosts: number;
+    openedPorts: number;
+    closedPorts: number;
+    unseenHosts: number;
+    truncated: boolean;
+    // The deviations that alert: new hosts and opened or closed ports.
+    alerting: number;
+  };
+  scansSinceApproval: number;
+}
+
+export interface OidcSettings {
+  enabled: boolean;
+  issuerUrl: string | null;
+  clientId: string | null;
+  clientSecretSet: boolean;
+  redirectUri: string | null;
+  scopes: string;
+  usernameClaim: string;
+  groupsClaim: string;
+  adminGroups: string[];
+  operatorGroups: string[];
+  userGroups: string[];
+  defaultRole: "user" | "operator" | null;
+  buttonLabel: string;
+  // What still has to be filled in before it can be turned on.
+  missing: string[];
+}
+
+export type OidcSettingsInput = Omit<OidcSettings, "clientSecretSet" | "missing"> & { clientSecret?: string | null };
+
+export interface AutoUpdateStatus {
+  fleetDefault: boolean;
+  latestVersion: string | null;
+  // none: no canary marked, everyone updates at once. open: a canary
+  // completed a scan on the latest release. waiting: canaries exist and
+  // none has proven it yet, so only they are auto-updated.
+  gate: "none" | "open" | "waiting";
+  canaries: { id: string; name: string; version: string | null; onLatest: boolean; provenOnLatest: boolean }[];
+}
+
 export interface SubnetsResult {
   prefix: number;
   subnets: SubnetEntry[];
@@ -1605,8 +1665,29 @@ export const api = {
   latestScannerRelease: () => request<ScannerReleaseInfo>("/api/agents/latest-release"),
   refreshScannerRelease: () => request<ScannerReleaseInfo>("/api/agents/latest-release/refresh", { method: "POST" }),
   requestScannerUpdate: (id: string) => request<void>(`/api/agents/${id}/request-update`, { method: "POST" }),
-  setScannerAutoUpdate: (id: string, autoUpdate: boolean | null) =>
-    request<void>(`/api/agents/${id}/auto-update`, { method: "PUT", body: JSON.stringify({ autoUpdate }) }),
+  setScannerAutoUpdate: (id: string, change: { autoUpdate?: boolean | null; canary?: boolean }) =>
+    request<void>(`/api/agents/${id}/auto-update`, { method: "PUT", body: JSON.stringify(change) }),
+  autoUpdateStatus: () => request<AutoUpdateStatus>("/api/agents/auto-update-status"),
+  baselines: () => request<NetworkBaselineSummary[]>("/api/baselines"),
+  oidcLoginInfo: () => request<{ enabled: boolean; label: string }>("/auth/oidc"),
+  oidcSettings: () => request<OidcSettings>("/api/settings/oidc"),
+  updateOidcSettings: (input: OidcSettingsInput) =>
+    request<OidcSettings>("/api/settings/oidc", { method: "PUT", body: JSON.stringify(input) }),
+  testOidc: () =>
+    request<{ ok: boolean; error?: string; issuer?: string; authorizationEndpoint?: string | null; tokenEndpoint?: string | null }>(
+      "/api/settings/oidc/test",
+      { method: "POST" }
+    ),
+  baseline: (id: string) =>
+    request<{ baseline: NetworkBaseline; changes: SubnetChangesResult }>(`/api/baselines/${id}`),
+  createBaseline: (network: string, scannerAgentId: string | null, note: string | null) =>
+    request<{ id: string; network: string }>("/api/baselines", {
+      method: "POST",
+      body: JSON.stringify({ network, scannerAgentId, note }),
+    }),
+  approveBaseline: (id: string) =>
+    request<void>(`/api/baselines/${id}/approve`, { method: "POST", body: JSON.stringify({}) }),
+  deleteBaseline: (id: string) => request<void>(`/api/baselines/${id}`, { method: "DELETE" }),
   requestTemplateUpdate: (id: string) =>
     request<void>(`/api/agents/${id}/request-template-update`, { method: "POST" }),
   scannerTunables: () => request<ScannerTunable[]>("/api/agents/config/tunables"),

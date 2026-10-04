@@ -39,6 +39,7 @@ import { runRetentionSweep } from "../retention";
 import { backupRouter } from "../backup/routes";
 import { outboundGet } from "../lib/outbound";
 import { proxyForUrl } from "../lib/proxy";
+import { getOidcSettings, missingSettings, oidcConfiguration, resetOidcCache, setOidcSettings } from "../auth/oidc";
 
 // Everything here is admin-only, like scanner agents/schedules/webhooks/
 // excludes/user management (see CLAUDE.md's "Roles and permissions") -
@@ -642,6 +643,7 @@ settingsRouter.post("/ca-certificates", asyncHandler(async (req, res) => {
   // moving these settings into the database was meant to end.
   resetCaBundle();
   resetSmtpTransporter();
+  resetOidcCache();
 
   logger.info({
     event: "ca_certificate.uploaded",
@@ -674,6 +676,7 @@ settingsRouter.delete("/ca-certificates/:id", asyncHandler(async (req, res) => {
 
   resetCaBundle();
   resetSmtpTransporter();
+  resetOidcCache();
   logger.info({ event: "ca_certificate.deleted", ca_certificate_id: req.params.id, deleted_by: req.session.username });
   recordAudit("ca_certificate.deleted", req.session.username, req.ip, { ca_certificate_id: req.params.id });
   res.status(204).end();
@@ -798,3 +801,94 @@ settingsRouter.post(
     });
   })
 );
+
+
+// --- Single sign-on --------------------------------------------------------
+//
+// Its own endpoints rather than part of PATCH /app: a provider is a dozen
+// fields that only make sense together, and the client secret needs the
+// same withhold-and-keep handling as the SMTP password.
+function clientOidcSettings(s: Awaited<ReturnType<typeof getOidcSettings>>) {
+  const { clientSecret, ...rest } = s;
+  return { ...rest, clientSecretSet: Boolean(clientSecret), missing: missingSettings(s) };
+}
+
+settingsRouter.get("/oidc", asyncHandler(async (_req, res) => {
+  res.json(clientOidcSettings(await getOidcSettings()));
+}));
+
+const groupList = z.array(z.string().trim().min(1).max(200)).max(50);
+const oidcSchema = z.object({
+  enabled: z.boolean(),
+  issuerUrl: z.string().trim().url().max(500).nullable(),
+  clientId: z.string().trim().min(1).max(500).nullable(),
+  // Omitted keeps the stored secret, like smtp.password.
+  clientSecret: z.string().min(1).max(2000).nullable().optional(),
+  redirectUri: z.string().trim().url().max(500).nullable(),
+  scopes: z.string().trim().min(1).max(500).refine((v) => v.split(/\s+/).includes("openid"), {
+    message: "scopes must include openid",
+  }),
+  usernameClaim: z.string().trim().min(1).max(100),
+  groupsClaim: z.string().trim().min(1).max(100),
+  adminGroups: groupList,
+  operatorGroups: groupList,
+  userGroups: groupList,
+  defaultRole: z.enum(["user", "operator"]).nullable(),
+  buttonLabel: z.string().trim().min(1).max(60),
+});
+
+settingsRouter.put("/oidc", asyncHandler(async (req, res) => {
+  const parsed = oidcSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const merged = { ...(await getOidcSettings()), ...parsed.data };
+  // Turning it on half-configured would put a button on the login page
+  // that can only fail, so it is refused with what is missing.
+  const missing = missingSettings({ ...merged, clientSecret: merged.clientSecret ?? null });
+  if (parsed.data.enabled && missing.length > 0) {
+    res.status(400).json({ error: `cannot enable single sign-on without: ${missing.join(", ")}` });
+    return;
+  }
+  await setOidcSettings(parsed.data);
+  logger.info({
+    event: "settings.oidc_updated",
+    enabled: parsed.data.enabled,
+    issuer: parsed.data.issuerUrl,
+    updated_by: req.session.username,
+    source_ip: req.ip,
+  });
+  recordAudit("settings.oidc_updated", req.session.username, req.ip, {
+    enabled: parsed.data.enabled,
+    issuer: parsed.data.issuerUrl,
+    secret_changed: parsed.data.clientSecret !== undefined,
+  });
+  res.json(clientOidcSettings(await getOidcSettings()));
+}));
+
+// Runs discovery against the saved provider, over the real transport -
+// the same reasoning as the SMTP test sending a real message. Reports what
+// the provider published, so a wrong issuer URL shows up here rather than
+// on the next person's login.
+settingsRouter.post("/oidc/test", asyncHandler(async (_req, res) => {
+  const s = await getOidcSettings();
+  const missing = missingSettings(s);
+  if (missing.length > 0) {
+    res.json({ ok: false, error: `not configured: ${missing.join(", ")}` });
+    return;
+  }
+  resetOidcCache();
+  try {
+    const meta = (await oidcConfiguration(s)).serverMetadata();
+    res.json({
+      ok: true,
+      issuer: meta.issuer,
+      authorizationEndpoint: meta.authorization_endpoint ?? null,
+      tokenEndpoint: meta.token_endpoint ?? null,
+      userinfoEndpoint: meta.userinfo_endpoint ?? null,
+    });
+  } catch (err) {
+    res.json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}));

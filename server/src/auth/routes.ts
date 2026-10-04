@@ -16,6 +16,7 @@ import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { VERSION } from "../version";
 import { getAppSettings } from "../settings/appSettings";
+import { authorizationRedirect, completeLogin, getOidcSettings, missingSettings, roleForGroups } from "./oidc";
 
 export const authRouter = Router();
 
@@ -68,42 +69,53 @@ const loginSchema = z.object({
 // session (rotates the session id on this privilege change, and - on the
 // verify-totp path - drops the pendingTotpUserId set by the first step)
 // before writing the authenticated fields.
-function finishLogin(
-  req: Request,
-  res: Response,
-  user: { id: number; username: string; role: string; totp_enabled: boolean; scannerAgentIds: string[] } & PreferenceColumns,
-  requireAdminTotp: boolean
-) {
-  req.session.regenerate(async (err) => {
-    if (err) {
-      res.status(500).json({ error: "login failed" });
-      return;
-    }
-    req.session.userId = user.id;
-    req.session.username = user.username;
-    req.session.role = user.role;
-    // Admins are always unrestricted regardless of any (normally
-    // impossible) assignment row; everyone else with zero assignment rows
-    // is also unrestricted - see auth/scannerScope.ts.
-    req.session.allowedScannerAgentIds =
-      user.role === "admin" || user.scannerAgentIds.length === 0 ? undefined : user.scannerAgentIds;
-    logger.info({ event: "auth.login_success", username: user.username, source_ip: req.ip });
-    recordAudit("auth.login_success", user.username, req.ip);
-    // Best-effort, like recordAudit above - a failed write here must not
-    // fail the login itself.
-    try {
-      await db.updateTable("users").set({ last_login_at: new Date().toISOString() }).where("id", "=", user.id).execute();
-    } catch (updateErr) {
-      logger.warn({ event: "auth.last_login_update_failed", username: user.username, err: updateErr instanceof Error ? updateErr.message : String(updateErr) });
-    }
-    res.json({
-      username: user.username,
-      role: user.role,
-      version: VERSION,
-      preferences: toPreferences(user),
-      totpSetupRequired: computeTotpSetupRequired(user.role, user.totp_enabled, requireAdminTotp),
+type SessionUser = { id: number; username: string; role: string; totp_enabled: boolean; scannerAgentIds: string[] } & PreferenceColumns;
+
+// Opens a session for a user who has proven who they are - by password
+// (and code), or through the SSO provider. One place, so both paths
+// regenerate the session id and record the login identically.
+function startSession(req: Request, user: SessionUser, method: "password" | "sso"): Promise<void> {
+  return new Promise((resolve, reject) => {
+    req.session.regenerate(async (err) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      req.session.userId = user.id;
+      req.session.username = user.username;
+      req.session.role = user.role;
+      // Admins are always unrestricted regardless of any (normally
+      // impossible) assignment row; everyone else with zero assignment rows
+      // is also unrestricted - see auth/scannerScope.ts.
+      req.session.allowedScannerAgentIds =
+        user.role === "admin" || user.scannerAgentIds.length === 0 ? undefined : user.scannerAgentIds;
+      logger.info({ event: "auth.login_success", username: user.username, method, source_ip: req.ip });
+      recordAudit("auth.login_success", user.username, req.ip, method === "sso" ? { method } : undefined);
+      // Best-effort, like recordAudit above - a failed write here must not
+      // fail the login itself.
+      try {
+        await db.updateTable("users").set({ last_login_at: new Date().toISOString() }).where("id", "=", user.id).execute();
+      } catch (updateErr) {
+        logger.warn({ event: "auth.last_login_update_failed", username: user.username, err: updateErr instanceof Error ? updateErr.message : String(updateErr) });
+      }
+      resolve();
     });
   });
+}
+
+function finishLogin(req: Request, res: Response, user: SessionUser, requireAdminTotp: boolean) {
+  startSession(req, user, "password")
+    .then(() =>
+      res.json({
+        username: user.username,
+        role: user.role,
+        version: VERSION,
+        authSource: "local",
+        preferences: toPreferences(user),
+        totpSetupRequired: computeTotpSetupRequired(user.role, user.totp_enabled, requireAdminTotp, "local"),
+      })
+    )
+    .catch(() => res.status(500).json({ error: "login failed" }));
 }
 
 // An admin account without 2FA enabled, while an admin (any admin - there's
@@ -111,8 +123,16 @@ function finishLogin(
 // "require 2FA for all admins" toggle - see settings/appSettings.ts. Only
 // ever true for role "admin": the toggle deliberately only ever governs
 // admin accounts (the highest-privilege role), not operator/user.
-function computeTotpSetupRequired(role: string, totpEnabled: boolean, requireAdminTotp: boolean): boolean {
-  return role === "admin" && requireAdminTotp && !totpEnabled;
+//
+// Never for an SSO account: its second factor is the identity provider's
+// business, and this app has no password of its own to protect for it.
+function computeTotpSetupRequired(
+  role: string,
+  totpEnabled: boolean,
+  requireAdminTotp: boolean,
+  authSource: "local" | "oidc"
+): boolean {
+  return authSource === "local" && role === "admin" && requireAdminTotp && !totpEnabled;
 }
 
 authRouter.post("/login", asyncHandler(async (req, res) => {
@@ -314,6 +334,7 @@ authRouter.get("/me", requireAuth, asyncHandler(async (req, res) => {
     .selectFrom("users")
     .select([
       "totp_enabled",
+      "auth_source",
       "pref_theme",
       "pref_hosts_page_size",
       "pref_show_active_scans_banner",
@@ -330,8 +351,9 @@ authRouter.get("/me", requireAuth, asyncHandler(async (req, res) => {
     username: req.session.username,
     role: req.session.role,
     version: VERSION,
+    authSource: user.auth_source,
     preferences: toPreferences(user),
-    totpSetupRequired: computeTotpSetupRequired(req.session.role!, user.totp_enabled, requireAdminTotp),
+    totpSetupRequired: computeTotpSetupRequired(req.session.role!, user.totp_enabled, requireAdminTotp, user.auth_source),
   });
 }));
 
@@ -433,7 +455,20 @@ authRouter.get("/2fa/status", requireAuth, asyncHandler(async (req, res) => {
   res.json({ enabled: user.totp_enabled });
 }));
 
-authRouter.post("/2fa/setup", requireAuth, asyncHandler(async (req, res) => {
+// An SSO account has no local password and takes its second factor from
+// the identity provider, so the password and 2FA endpoints refuse it with
+// the reason rather than letting it set up credentials that the login
+// would never accept.
+const refuseSsoAccount = asyncHandler(async (req, res, next) => {
+  const user = await db.selectFrom("users").select("auth_source").where("id", "=", req.session.userId!).executeTakeFirst();
+  if (user?.auth_source === "oidc") {
+    res.status(400).json({ error: "this account signs in through single sign-on - its password and 2FA are managed by the identity provider" });
+    return;
+  }
+  next();
+});
+
+authRouter.post("/2fa/setup", requireAuth, refuseSsoAccount, asyncHandler(async (req, res) => {
   const user = await db
     .selectFrom("users")
     .select(["username", "totp_enabled"])
@@ -573,7 +608,7 @@ const changePasswordSchema = z.object({
 // session), same reasoning as /2fa/disable directly above: a session
 // alone isn't proof the person at the keyboard is still the account
 // owner, which is exactly the case this endpoint has to defend against.
-authRouter.post("/password", requireAuth, asyncHandler(async (req, res) => {
+authRouter.post("/password", requireAuth, refuseSsoAccount, asyncHandler(async (req, res) => {
   const parsed = changePasswordSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -694,4 +729,152 @@ authRouter.post("/2fa/recovery-codes/regenerate", requireAuth, asyncHandler(asyn
   recordAudit("auth.totp_recovery_codes_regenerated", user.username, req.ip);
 
   res.json({ recoveryCodes });
+}));
+
+
+// --- Single sign-on (OpenID Connect) -------------------------------------
+//
+// The login page asks whether to offer the button; nothing here is secret.
+authRouter.get("/oidc", asyncHandler(async (_req, res) => {
+  const s = await getOidcSettings();
+  res.json({ enabled: s.enabled && missingSettings(s).length === 0, label: s.buttonLabel });
+}));
+
+// Every failure ends on the login page with a reason, never on a JSON
+// error: this is a browser navigation, and a raw error body is a dead end.
+function ssoFailed(res: Response, reason: string) {
+  res.redirect(`/login?sso_error=${encodeURIComponent(reason)}`);
+}
+
+authRouter.get("/oidc/login", asyncHandler(async (req, res) => {
+  const s = await getOidcSettings();
+  if (!s.enabled || missingSettings(s).length > 0) {
+    ssoFailed(res, "Single sign-on is not enabled.");
+    return;
+  }
+  try {
+    const { url, pending } = await authorizationRedirect(s);
+    req.session.oidcPending = pending;
+    req.session.save((err) => {
+      if (err) {
+        ssoFailed(res, "Could not start the sign-in.");
+        return;
+      }
+      res.redirect(url.href);
+    });
+  } catch (err) {
+    logger.warn({ event: "auth.sso_start_failed", err: err instanceof Error ? err.message : String(err) });
+    ssoFailed(res, "The identity provider could not be reached.");
+  }
+}));
+
+authRouter.get("/oidc/callback", asyncHandler(async (req, res) => {
+  const s = await getOidcSettings();
+  const pending = req.session.oidcPending;
+  // Single use: a replayed callback finds nothing to complete.
+  delete req.session.oidcPending;
+  if (!s.enabled || missingSettings(s).length > 0) {
+    ssoFailed(res, "Single sign-on is not enabled.");
+    return;
+  }
+  if (!pending) {
+    ssoFailed(res, "The sign-in expired or was started in another browser. Try again.");
+    return;
+  }
+
+  // The URL the provider redirected to, as the provider knows it - the
+  // configured redirect URI plus this request's query - rather than as
+  // this process sees it behind a reverse proxy.
+  const currentUrl = new URL(s.redirectUri!);
+  currentUrl.search = new URL(req.originalUrl, "http://localhost").search;
+
+  let identity;
+  try {
+    identity = await completeLogin(s, currentUrl, pending);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn({ event: "auth.sso_failed", err: message, source_ip: req.ip });
+    recordAudit("auth.sso_failed", null, req.ip, { reason: message });
+    ssoFailed(res, "The identity provider's answer could not be verified.");
+    return;
+  }
+
+  const role = roleForGroups(identity.groups, s);
+  if (!role) {
+    logger.warn({ event: "auth.sso_denied", username: identity.username, groups: identity.groups, source_ip: req.ip });
+    recordAudit("auth.sso_denied", identity.username, req.ip, { groups: identity.groups });
+    ssoFailed(res, "Your account is not in any group allowed to use PortTorch.");
+    return;
+  }
+
+  const columns = [
+    "id",
+    "username",
+    "role",
+    "totp_enabled",
+    "pref_theme",
+    "pref_hosts_page_size",
+    "pref_show_active_scans_banner",
+    "pref_default_scanner_agent_id",
+    "pref_timezone",
+    "pref_time_format",
+    "pref_accent_color",
+    "pref_layout_width",
+  ] as const;
+  let user = await db
+    .selectFrom("users")
+    .select(columns)
+    .where("auth_source", "=", "oidc")
+    .where("oidc_issuer", "=", identity.issuer)
+    .where("oidc_subject", "=", identity.subject)
+    .executeTakeFirst();
+
+  if (!user) {
+    // A name already taken - by a local account, or an SSO account from
+    // another subject - is refused rather than merged: taking over a local
+    // admin by registering the same name at the provider must not work.
+    const taken = await db.selectFrom("users").select("id").where("username", "=", identity.username).executeTakeFirst();
+    if (taken) {
+      logger.warn({ event: "auth.sso_name_taken", username: identity.username, source_ip: req.ip });
+      recordAudit("auth.sso_name_taken", identity.username, req.ip, {});
+      ssoFailed(res, `An account named "${identity.username}" already exists in PortTorch. An admin has to remove or rename it first.`);
+      return;
+    }
+    user = await db
+      .insertInto("users")
+      .values({
+        username: identity.username,
+        password_hash: null,
+        role,
+        auth_source: "oidc",
+        oidc_issuer: identity.issuer,
+        oidc_subject: identity.subject,
+      })
+      .returning(columns)
+      .executeTakeFirstOrThrow();
+    logger.info({ event: "auth.sso_user_created", username: user.username, role, source_ip: req.ip });
+    recordAudit("auth.sso_user_created", user.username, req.ip, { role });
+  } else if (user.role !== role) {
+    // The provider's groups are the source of truth, re-read at every
+    // login - removing someone from the admin group takes effect the next
+    // time they sign in.
+    await db.updateTable("users").set({ role }).where("id", "=", user.id).execute();
+    logger.info({ event: "auth.sso_role_changed", username: user.username, from: user.role, to: role, source_ip: req.ip });
+    recordAudit("auth.sso_role_changed", user.username, req.ip, { from: user.role, to: role });
+    user = { ...user, role };
+  }
+
+  const scannerAgentIds =
+    role === "admin"
+      ? []
+      : (await db.selectFrom("user_scanner_agents").select("scanner_agent_id").where("user_id", "=", user.id).execute()).map(
+          (r) => r.scanner_agent_id
+        );
+  try {
+    await startSession(req, { ...user, scannerAgentIds }, "sso");
+  } catch {
+    ssoFailed(res, "Could not start a session.");
+    return;
+  }
+  res.redirect("/");
 }));

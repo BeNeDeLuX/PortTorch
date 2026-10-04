@@ -16,6 +16,7 @@ import Certificates from "./pages/Certificates";
 import SshKeys from "./pages/SshKeys";
 import Software from "./pages/Software";
 import Networks from "./pages/Networks";
+import Baselines from "./pages/Baselines";
 import ImportScan from "./pages/ImportScan";
 import SavedSearches from "./pages/SavedSearches";
 import Screenshots from "./pages/Screenshots";
@@ -155,6 +156,10 @@ export default function App() {
       <Route
         path="/networks"
         element={routeElement(false, (m) => <Networks me={m} onLogout={() => setMe(null)} />)}
+      />
+      <Route
+        path="/baselines"
+        element={routeElement(false, (m) => <Baselines me={m} onLogout={() => setMe(null)} />)}
       />
       <Route
         path="/vulnerabilities"

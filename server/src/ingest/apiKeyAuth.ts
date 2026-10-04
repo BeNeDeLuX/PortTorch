@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import type { NextFunction, Request, Response } from "express";
+import { sql } from "kysely";
 import { db } from "../db";
 import { logger } from "../logger";
 
@@ -190,6 +191,16 @@ export async function apiKeyAuth(req: Request, res: Response, next: NextFunction
       last_seen_at: new Date(),
       last_seen_ip: req.ip ?? null,
       version: reportedVersion ?? null,
+      // Moves only when the reported version actually changes, so it says
+      // since when this scanner runs what it runs now - the staggered
+      // auto-update measures "a canary scanned on the new release" from
+      // here. An absent header leaves it alone, like the version itself
+      // becoming unknown is not a new version.
+      ...(reportedVersion
+        ? {
+            version_changed_at: sql<Date>`CASE WHEN version IS DISTINCT FROM ${reportedVersion} THEN now() ELSE version_changed_at END`,
+          }
+        : {}),
       submit_queue_pending: reportedPending,
       // Only written when reported, like nuclei_templates_updated_at
       // rather than like submit_queue_pending: a scanner build without

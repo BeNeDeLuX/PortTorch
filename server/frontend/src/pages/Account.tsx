@@ -105,13 +105,24 @@ export default function Account({
       <section>
         <h3 className="settings-group-title">Security</h3>
         <div className="settings-grid">
-          <PasswordCard />
+          {/* An SSO account's password and second factor live at the
+              identity provider; this app has neither to change. */}
+          {me.authSource === "oidc" ? (
+            <p className="host-meta">
+              You sign in through single sign-on, so your password and two-factor authentication are managed by your
+              identity provider, not here.
+            </p>
+          ) : (
+            <PasswordCard />
+          )}
           <SessionsCard />
-          {/* Wide: the setup step pairs a QR code with its instructions,
-              and the enabled state holds two separate forms. */}
-          <div className="settings-grid-wide">
-            <TwoFactorCard onMeRefresh={onMeRefresh} />
-          </div>
+          {me.authSource !== "oidc" && (
+            /* Wide: the setup step pairs a QR code with its instructions,
+               and the enabled state holds two separate forms. */
+            <div className="settings-grid-wide">
+              <TwoFactorCard onMeRefresh={onMeRefresh} />
+            </div>
+          )}
         </div>
       </section>
     </div>

@@ -16,7 +16,7 @@ usersRouter.use(requireAdmin);
 usersRouter.get("/", asyncHandler(async (_req, res) => {
   const users = await db
     .selectFrom("users")
-    .select(["id", "username", "role", "created_at", "last_login_at", "totp_enabled"])
+    .select(["id", "username", "role", "created_at", "last_login_at", "totp_enabled", "auth_source"])
     .orderBy("created_at", "desc")
     .execute();
 
@@ -256,9 +256,16 @@ usersRouter.post("/:id/password", asyncHandler(async (req, res) => {
     return;
   }
 
-  const target = await db.selectFrom("users").select(["username"]).where("id", "=", id).executeTakeFirst();
+  const target = await db.selectFrom("users").select(["username", "auth_source"]).where("id", "=", id).executeTakeFirst();
   if (!target) {
     res.status(404).json({ error: "user not found" });
+    return;
+  }
+  // A password on an SSO account would be a second way in that the
+  // identity provider knows nothing about - and stays valid after the
+  // provider disables the person.
+  if (target.auth_source === "oidc") {
+    res.status(400).json({ error: "this account signs in through single sign-on and has no local password" });
     return;
   }
 

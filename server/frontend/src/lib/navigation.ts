@@ -30,6 +30,7 @@ export function navEntries(role: Me["role"]): NavEntry[] {
         { to: "/agents", label: "Scanner Agents", keywords: "scanners queue update" },
         { to: "/scan-history", label: "Scan History", keywords: "finished jobs resume rescan" },
         { to: "/networks", label: "Network Coverage", keywords: "ranges monitored cidr" },
+        { to: "/baselines", label: "Baselines", keywords: "approved expected state deviation drift" },
         { to: "/import", label: "Import Scan", keywords: "nmap xml upload" },
         { to: "/saved-searches", label: "Saved Searches", keywords: "alerts filters" },
         ...(admin

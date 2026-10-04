@@ -710,6 +710,32 @@ calls one service `Grafana http` while its page title is `Grafana`, so
 those stay two rows. Guessing that they are the same would be exactly the
 kind of heuristic that ends up reading as data.
 
+### Baselines: an approved state per network, and alerts on deviation
+
+`port.opened` and `host.new` fire on every change everywhere, which in a fleet of any size is a stream nobody reads. A baseline turns that into "this network looked right at this moment; tell me what differs" (`baselines/`, migration `1747300000000_network_baselines.js`, the `/baselines` page under Scanning).
+
+**A baseline is a moment, not a copy.** It stores `approved_at`, and its deviations are the Subnets Changes comparison from that moment to now: `subnets/changes.ts`'s `computeNetworkChanges`, extracted from the route for exactly this. The page, the list counts and the alert therefore cannot disagree about what changed, and no snapshot table has to be kept in step with the observations. Accepting deviations is approving again, which moves the moment to now. Scope follows `scan_excludes`: a NULL `scanner_agent_id` covers every scanner's hosts in the range. Two partial unique indexes keep one baseline per network and scope, and a network typed differently (`10.96.0.77/24`, `10.96.0`) is normalised by Postgres's `network()` to the same one.
+
+**`baseline.deviation` alerts once per deviation** (`checkBaselines`, a five-minute ticker). `alerted_keys` holds what the previous check already reported. Only keys not in it alert, and the set is replaced each time, so a port that closes again is forgotten and alerts afresh if it reopens. That is the come-and-go idea `scanner.offline` uses. New hosts and opened and closed ports alert. **Hosts not seen since the approval do not**: "not seen" equally means "not scanned", and alerting on every host of a range nobody swept this week would make the alert useless in exactly the weeks it matters. They are listed on the page beside the number of scans since approval, and right after an approval, with no scan since, the row says so instead of listing every host as not seen.
+
+Approving is operator-level, like triage: it is an analyst's statement about what is expected. A restricted session must name one of its own scanners, since a baseline over every scanner would alert on hosts it cannot see. It sees global baselines with their deviations narrowed to its scanners. Pinned by `baselines.integration.test.ts`, which covers the deviation lists, a real webhook delivery fired once, a second check staying quiet, only a new port alerting on the third, re-approval clearing everything, and the restricted-session rules.
+
+### Single sign-on over OpenID Connect
+
+`auth/oidc.ts` and migration `1747400000000_oidc_sso.js`, configured on the Settings page. The flow is the authorization code flow with PKCE, a state and a nonce. **ID token validation is `openid-client`'s, not ours.** That is the opposite call from TOTP, which is hand-written, and deliberately so: a small mistake in token validation is a full authentication bypass, and a maintained library that does only this is the better trade there.
+
+**The provider is reached over `lib/outbound.ts`, not `fetch`**, so the configured proxy and the uploaded CA bundle apply to it like to every other outbound call. An identity provider behind a private CA is the common case. That needed `outboundFetch`, a fetch-compatible request over the same three paths that returns status, headers and error bodies, which the two existing helpers deliberately drop. The integration test proves the route rather than assuming it: with an unreachable proxy configured, the connection test fails at the proxy. A plain `http://` issuer is allowed only when the admin typed one (a lab provider). The library refuses it otherwise.
+
+Decisions worth keeping:
+
+- **Identity is `(issuer, subject)`, never the name.** Names are reassigned at providers and subjects are not. A name already taken, by a local account or another subject, is **refused rather than merged**, so registering "admin" at the provider cannot take over the local admin.
+- **The role comes from the provider's groups at every sign-in.** The highest mapped group wins, names compare case-insensitively, and `groupsClaim` may be a dotted path such as Keycloak's `realm_access.roles`. When the ID token lacks the claim, userinfo is consulted. Someone in no mapped group is refused unless a default role is set, and that default can be user or operator but never admin.
+- **An SSO account has no local password.** `password_hash` is NULL, `verifyPassword` treats NULL as no match, and the password-change, 2FA-setup and admin password-reset endpoints refuse SSO accounts with the reason. A local password would be a second way in that the provider knows nothing about and that stays valid after the provider disables the person. The "require 2FA for admins" setting does not apply to SSO accounts, whose second factor is the provider's.
+- **Every failure ends on the login page with a reason** (`/login?sso_error=`), since the callback is a browser navigation. A pending login is single-use, so a replayed callback is refused.
+- **Local login keeps working** when SSO is on, so an admin can always get in when the provider is down.
+
+The client secret is withheld from the settings API like `smtp_password`, and `POST /api/settings/oidc/test` runs discovery over the real transport. Pinned by `oidc.integration.test.ts` against an in-process provider that serves discovery, JWKS, PKCE-bound codes, signed ID tokens and userinfo. It covers first sign-in, a role change on the next one, groups from userinfo, refusal and default role, the name-collision refusal, a forged state, a wrong nonce and a replayed callback, and the closed password routes. Verified in a real browser through the full redirect chain against an auto-approving provider.
+
 ### Two inventory dimensions: software product, and hardware manufacturer
 
 "What are we running, and on what" was answerable only by exporting and

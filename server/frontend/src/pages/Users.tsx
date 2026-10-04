@@ -195,7 +195,14 @@ export default function Users({ me, onLogout }: { me: Me; onLogout: () => void }
             <tbody>
               {users.map((u) => (
                 <tr key={u.id}>
-                  <td>{u.username}</td>
+                  <td>
+                    {u.username}
+                    {u.auth_source === "oidc" && (
+                      <span className="chip chip-sso" title="Signs in through single sign-on. Role comes from the identity provider's groups at every sign-in.">
+                        SSO
+                      </span>
+                    )}
+                  </td>
                   <td>{u.role}</td>
                   <td>
                     {u.role !== "admin" && editingUserId === u.id ? (
@@ -227,9 +234,12 @@ export default function Users({ me, onLogout }: { me: Me; onLogout: () => void }
                           <IconLogOut /> End sessions ({u.activeSessions})
                         </button>
                       )}
-                      <button className="btn-icon-label" onClick={() => handleResetPassword(u)}>
-                        <IconKey /> Reset password
-                      </button>
+                      {/* An SSO account has no local password to reset. */}
+                      {u.auth_source !== "oidc" && (
+                        <button className="btn-icon-label" onClick={() => handleResetPassword(u)}>
+                          <IconKey /> Reset password
+                        </button>
+                      )}
                       {u.totp_enabled && (
                         <button className="btn-icon-label" onClick={() => handleResetTwoFactor(u)}>
                           <IconRefresh /> Reset 2FA

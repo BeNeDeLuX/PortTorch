@@ -8,6 +8,7 @@ import { hashApiKey } from "../ingest/apiKeyAuth";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
+import { getAutoUpdateStatus } from "../scannerUpdate/autoUpdate";
 import { requestScannerUpdate } from "../scannerUpdate/requestUpdate";
 import { requestTemplateUpdate } from "../scannerUpdate/requestTemplateUpdate";
 import { syncScannerRelease } from "../scannerUpdate/githubSync";
@@ -64,6 +65,19 @@ agentsRouter.post("/latest-release/refresh", requireAdmin, asyncHandler(async (r
   });
 }));
 
+// Where the fleet's auto-update stands: the fleet default, the latest
+// release, and whether the canary gate is open. Not admin-gated, like
+// latest-release beside it - Fleet Health is shown to every role, and the
+// answer is no more sensitive than the version column already is.
+//
+// A restricted session sees only the canaries it may see; the gate itself
+// is reported regardless, since it decides when its own scanners update.
+agentsRouter.get("/auto-update-status", asyncHandler(async (req, res) => {
+  const status = await getAutoUpdateStatus();
+  const allowed = getAllowedScannerAgentIds(req);
+  res.json(allowed ? { ...status, canaries: status.canaries.filter((c) => allowed.includes(c.id)) } : status);
+}));
+
 agentsRouter.get("/", asyncHandler(async (req, res) => {
   const allowed = getAllowedScannerAgentIds(req);
   let query = db
@@ -80,6 +94,7 @@ agentsRouter.get("/", asyncHandler(async (req, res) => {
       "update_request_status",
       "update_failure_reason",
       "auto_update",
+      "update_canary",
       "submit_queue_pending",
       "scan_slots_running",
       "scan_slots_max",
@@ -261,7 +276,13 @@ agentsRouter.post("/:id/request-update", requireAdmin, asyncHandler(async (req, 
 // fleet-wide default on the Settings page. Admin-only like request-update,
 // since turning it on lets the webserver replace that scanner's binary
 // without anyone clicking anything. See scannerUpdate/autoUpdate.ts.
-const autoUpdateSchema = z.object({ autoUpdate: z.boolean().nullable() });
+//
+// canary marks a scanner that takes a new release first (see autoUpdate's
+// staggering). Both fields optional so the page can change one without
+// resending the other; at least one is required.
+const autoUpdateSchema = z
+  .object({ autoUpdate: z.boolean().nullable().optional(), canary: z.boolean().optional() })
+  .refine((v) => v.autoUpdate !== undefined || v.canary !== undefined, { message: "nothing to update" });
 
 agentsRouter.put("/:id/auto-update", requireAdmin, asyncHandler(async (req, res) => {
   if (!uuidSchema.safeParse(req.params.id).success) {
@@ -275,7 +296,10 @@ agentsRouter.put("/:id/auto-update", requireAdmin, asyncHandler(async (req, res)
   }
   const result = await db
     .updateTable("scanner_agents")
-    .set({ auto_update: parsed.data.autoUpdate })
+    .set({
+      ...(parsed.data.autoUpdate !== undefined ? { auto_update: parsed.data.autoUpdate } : {}),
+      ...(parsed.data.canary !== undefined ? { update_canary: parsed.data.canary } : {}),
+    })
     .where("id", "=", req.params.id as string)
     .executeTakeFirst();
   if (result.numUpdatedRows === 0n) {
@@ -286,12 +310,14 @@ agentsRouter.put("/:id/auto-update", requireAdmin, asyncHandler(async (req, res)
     event: "agent.auto_update_changed",
     scanner_agent_id: req.params.id,
     auto_update: parsed.data.autoUpdate,
+    canary: parsed.data.canary,
     updated_by: req.session.username,
     source_ip: req.ip,
   });
   recordAudit("agent.auto_update_changed", req.session.username, req.ip, {
     scanner_agent_id: req.params.id,
     auto_update: parsed.data.autoUpdate,
+    canary: parsed.data.canary,
   });
   res.status(204).end();
 }));
