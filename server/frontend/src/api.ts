@@ -99,6 +99,7 @@ export interface ProxySettings {
 
 export interface AppSettings {
   requireAdminTotp: boolean;
+  scannerAutoUpdate: boolean;
   hostRetentionDays: number;
   staleScanThresholdMinutes: number;
   scanQueueWarningThreshold: number;
@@ -919,6 +920,8 @@ export interface ScannerAgent {
   update_requested_at: string | null;
   update_request_status: "pending" | "failed" | null;
   update_failure_reason: string | null;
+  // Auto-update override: null follows the Settings page's fleet default.
+  auto_update: boolean | null;
   // internal/submitqueue's current backlog size on this scanner, reported
   // on every request - null until a scanner build with this support has
   // made at least one request (see apiKeyAuth.ts).
@@ -1308,6 +1311,45 @@ export interface SubnetsResult {
   subnets: SubnetEntry[];
 }
 
+export interface SubnetChangeHost {
+  hostId: string;
+  ip: string;
+  hostname: string | null;
+  scannerAgentName: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string | null;
+  openPorts: string[];
+}
+
+export interface SubnetChangePort {
+  hostId: string;
+  ip: string;
+  hostname: string | null;
+  port: number;
+  protocol: string;
+  serviceName: string | null;
+  observedAt: string;
+}
+
+export interface SubnetChangeList<T> {
+  items: T[];
+  truncated: boolean;
+}
+
+export interface SubnetChangesResult {
+  network: string;
+  from: string;
+  to: string;
+  hostsBefore: number;
+  hostsAfter: number;
+  scansInPeriod: number;
+  limit: number;
+  newHosts: SubnetChangeList<SubnetChangeHost>;
+  unseenHosts: SubnetChangeList<SubnetChangeHost>;
+  openedPorts: SubnetChangeList<SubnetChangePort>;
+  closedPorts: SubnetChangeList<SubnetChangePort>;
+}
+
 export type ScanAnomaly =
   | {
       kind: "dominant_service";
@@ -1509,6 +1551,16 @@ export const api = {
         ...(hideRetired ? { hideRetired: "1" } : {}),
       }).toString()}`
     ),
+  subnetChanges: (network: string, from: string, to: string, scannerAgentIds: string[] = [], hideRetired = false) =>
+    request<SubnetChangesResult>(
+      `/api/subnets/changes?${new URLSearchParams({
+        network,
+        from,
+        to,
+        ...(scannerAgentIds.length ? { scannerAgentId: scannerAgentIds.join(",") } : {}),
+        ...(hideRetired ? { hideRetired: "1" } : {}),
+      }).toString()}`
+    ),
   scanStats: (scannerAgentIds: string[] = [], hideRetired = false, compareDays: number | null = null) =>
     request<ScanStatsResult>(
       `/api/scan-stats?${new URLSearchParams({
@@ -1553,6 +1605,8 @@ export const api = {
   latestScannerRelease: () => request<ScannerReleaseInfo>("/api/agents/latest-release"),
   refreshScannerRelease: () => request<ScannerReleaseInfo>("/api/agents/latest-release/refresh", { method: "POST" }),
   requestScannerUpdate: (id: string) => request<void>(`/api/agents/${id}/request-update`, { method: "POST" }),
+  setScannerAutoUpdate: (id: string, autoUpdate: boolean | null) =>
+    request<void>(`/api/agents/${id}/auto-update`, { method: "PUT", body: JSON.stringify({ autoUpdate }) }),
   requestTemplateUpdate: (id: string) =>
     request<void>(`/api/agents/${id}/request-template-update`, { method: "POST" }),
   scannerTunables: () => request<ScannerTunable[]>("/api/agents/config/tunables"),

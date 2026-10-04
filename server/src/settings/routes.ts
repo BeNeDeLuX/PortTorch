@@ -17,6 +17,7 @@ import {
   getAppSettings,
   setHostRetentionDays,
   setRequireAdminTotp,
+  setScannerAutoUpdate,
   setDigestEmailHourUtc,
   setEpssAlertThreshold,
   setQueueBacklogThresholdMinutes,
@@ -147,6 +148,7 @@ settingsRouter.get("/app", asyncHandler(async (_req, res) => {
 // field independently rather than as one combined form.
 const appSettingsSchema = z.object({
   requireAdminTotp: z.boolean().optional(),
+  scannerAutoUpdate: z.boolean().optional(),
   hostRetentionDays: z.number().int().min(0).optional(),
   staleScanThresholdMinutes: z.number().int().min(1).optional(),
   scanQueueWarningThreshold: z.number().int().min(1).optional(),
@@ -238,6 +240,19 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
     });
     recordAudit("settings.require_admin_totp_updated", req.session.username, req.ip, {
       require_admin_totp: parsed.data.requireAdminTotp,
+    });
+  }
+
+  if ("scannerAutoUpdate" in req.body && parsed.data.scannerAutoUpdate !== undefined) {
+    await setScannerAutoUpdate(parsed.data.scannerAutoUpdate);
+    logger.info({
+      event: "settings.scanner_auto_update_updated",
+      scanner_auto_update: parsed.data.scannerAutoUpdate,
+      updated_by: req.session.username,
+      source_ip: req.ip,
+    });
+    recordAudit("settings.scanner_auto_update_updated", req.session.username, req.ip, {
+      scanner_auto_update: parsed.data.scannerAutoUpdate,
     });
   }
 

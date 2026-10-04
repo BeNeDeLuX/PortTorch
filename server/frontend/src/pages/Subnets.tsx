@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { api, Me, ScannerAgent, SubnetEntry, SubnetsResult } from "../api";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
+import SubnetChanges from "../components/SubnetChanges";
 import TableExport from "../components/TableExport";
 import { formatDateTime } from "../lib/formatDate";
 import {
@@ -19,7 +20,7 @@ import {
   type SubnetRisk,
 } from "../lib/subnets";
 
-type View = "map" | "table";
+type View = "map" | "table" | "changes";
 type MapMetric = "risk" | "hosts" | "openPorts";
 type SortKey = "subnet" | "hosts" | "openPorts" | "hostsWithCves" | "criticalHosts" | "kevHosts" | "risk" | "lastSeenAt";
 type SortDirection = "asc" | "desc";
@@ -58,6 +59,9 @@ export default function Subnets({ me, onLogout }: { me: Me; onLogout: () => void
   const [view, setView] = useState<View>("map");
   const [metric, setMetricState] = useState<MapMetric>(storedMetric);
   const [prefix, setPrefix] = useState(24);
+  // The network the Changes view compares, handed over from a map card or
+  // a table row.
+  const [changesNetwork, setChangesNetwork] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("subnet");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [result, setResult] = useState<SubnetsResult | null>(null);
@@ -81,7 +85,13 @@ export default function Subnets({ me, onLogout }: { me: Me; onLogout: () => void
     }
   }
 
+  function openChanges(network: string) {
+    setChangesNetwork(network);
+    setView("changes");
+  }
+
   useEffect(() => {
+    if (view === "changes") return;
     setLoading(true);
     setError(null);
     api
@@ -89,7 +99,7 @@ export default function Subnets({ me, onLogout }: { me: Me; onLogout: () => void
       .then(setResult)
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load subnets"))
       .finally(() => setLoading(false));
-  }, [effectivePrefix, scannerFilterIds, hideRetired]);
+  }, [effectivePrefix, scannerFilterIds, hideRetired, view]);
 
   const subnets = result?.subnets ?? [];
   const totals = useMemo(
@@ -169,113 +179,125 @@ export default function Subnets({ me, onLogout }: { me: Me; onLogout: () => void
           <button className={view === "table" ? "active" : ""} onClick={() => setView("table")}>
             Table
           </button>
+          <button className={view === "changes" ? "active" : ""} onClick={() => setView("changes")}>
+            Changes
+          </button>
         </div>
       </div>
 
-      <div className="list-controls">
-        {view === "map" ? (
-          <div className="filter-chips">
-            <span className="empty">Colour by</span>
-            {(
-              [
-                ["hosts", "Hosts"],
-                ["openPorts", "Open ports"],
-                ["risk", "Risk"],
-              ] as [MapMetric, string][]
-            ).map(([key, label]) => (
-              <button key={key} className={`chip ${metric === key ? "active" : ""}`} onClick={() => setMetric(key)}>
-                {label}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div className="filter-chips">
-            <span className="empty">Group IPv4 by</span>
-            {PREFIXES.map((p) => (
-              <button key={p} className={`chip ${prefix === p ? "active" : ""}`} onClick={() => setPrefix(p)}>
-                /{p}
-              </button>
-            ))}
-          </div>
-        )}
-        {view === "table" && result && (
-          <TableExport
-            rows={sorted}
-            filenameBase={`porttorch-subnets-${effectivePrefix}`}
-            columns={[
-              { header: "subnet", value: (s) => s.subnet },
-              { header: "hosts", value: (s) => s.hosts },
-              { header: "open_ports", value: (s) => s.openPorts },
-              { header: "hosts_with_cves", value: (s) => s.hostsWithCves },
-              { header: "critical_hosts", value: (s) => s.criticalHosts },
-              { header: "kev_hosts", value: (s) => s.kevHosts },
-              { header: "max_cvss", value: (s) => s.maxCvss },
-              { header: "last_seen_at", value: (s) => s.lastSeenAt },
-            ]}
-          />
-        )}
-      </div>
-
-      {error && <p className="callout-danger">{error}</p>}
-
-      {loading && !result ? (
-        <p>Loading...</p>
-      ) : subnets.length === 0 ? (
-        <p className="empty">No hosts match the current filter.</p>
+      {view === "changes" ? (
+        <SubnetChanges me={me} network={changesNetwork} scannerAgentIds={scannerFilterIds} hideRetired={hideRetired} />
       ) : (
         <>
-          <div className="stat-tiles">
-            <Tile label="Subnets" value={totals.subnets} />
-            <Tile label="Hosts" value={totals.hosts} />
-            <Tile label="Subnets with a KEV finding" value={totals.withKev} />
-            <Tile label="Subnets with a critical CVE" value={totals.withCritical} />
+          <div className="list-controls">
+            {view === "map" ? (
+              <div className="filter-chips">
+                <span className="empty">Colour by</span>
+                {(
+                  [
+                    ["hosts", "Hosts"],
+                    ["openPorts", "Open ports"],
+                    ["risk", "Risk"],
+                  ] as [MapMetric, string][]
+                ).map(([key, label]) => (
+                  <button key={key} className={`chip ${metric === key ? "active" : ""}`} onClick={() => setMetric(key)}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="filter-chips">
+                <span className="empty">Group IPv4 by</span>
+                {PREFIXES.map((p) => (
+                  <button key={p} className={`chip ${prefix === p ? "active" : ""}`} onClick={() => setPrefix(p)}>
+                    /{p}
+                  </button>
+                ))}
+              </div>
+            )}
+            {view === "table" && result && (
+              <TableExport
+                rows={sorted}
+                filenameBase={`porttorch-subnets-${effectivePrefix}`}
+                columns={[
+                  { header: "subnet", value: (s) => s.subnet },
+                  { header: "hosts", value: (s) => s.hosts },
+                  { header: "open_ports", value: (s) => s.openPorts },
+                  { header: "hosts_with_cves", value: (s) => s.hostsWithCves },
+                  { header: "critical_hosts", value: (s) => s.criticalHosts },
+                  { header: "kev_hosts", value: (s) => s.kevHosts },
+                  { header: "max_cvss", value: (s) => s.maxCvss },
+                  { header: "last_seen_at", value: (s) => s.lastSeenAt },
+                ]}
+              />
+            )}
           </div>
-          {view === "map" ? (
-            <SubnetMap subnets={subnets} metric={metric} />
+
+          {error && <p className="callout-danger">{error}</p>}
+
+          {loading && !result ? (
+            <p>Loading...</p>
+          ) : subnets.length === 0 ? (
+            <p className="empty">No hosts match the current filter.</p>
           ) : (
-            <div className="table-scroll">
-              <table className="sortable">
-                <thead>
-                  <tr>
-                    <th onClick={() => setSort("subnet")}>Subnet{sortIndicator("subnet")}</th>
-                    <th onClick={() => setSort("hosts")}>Hosts{sortIndicator("hosts")}</th>
-                    <th onClick={() => setSort("openPorts")}>Open ports{sortIndicator("openPorts")}</th>
-                    <th onClick={() => setSort("hostsWithCves")}>Hosts with CVEs{sortIndicator("hostsWithCves")}</th>
-                    <th onClick={() => setSort("criticalHosts")}>Critical hosts{sortIndicator("criticalHosts")}</th>
-                    <th onClick={() => setSort("kevHosts")}>KEV hosts{sortIndicator("kevHosts")}</th>
-                    <th onClick={() => setSort("risk")}>Risk{sortIndicator("risk")}</th>
-                    <th onClick={() => setSort("lastSeenAt")}>Last seen{sortIndicator("lastSeenAt")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sorted.map((s) => (
-                    <tr key={s.subnet}>
-                      <td>
-                        <Link className="port-link" to={`/?q=${encodeURIComponent(s.subnet)}`}>
-                          {s.subnet}
-                        </Link>
-                      </td>
-                      <td>
-                        <div className="subnet-bar-cell">
-                          <span>{s.hosts.toLocaleString()}</span>
-                          <span className="subnet-bar" aria-hidden="true">
-                            <span style={{ width: `${maxHosts ? (s.hosts / maxHosts) * 100 : 0}%` }} />
-                          </span>
-                        </div>
-                      </td>
-                      <td>{s.openPorts.toLocaleString()}</td>
-                      <td>{s.hostsWithCves.toLocaleString()}</td>
-                      <td>{s.criticalHosts.toLocaleString()}</td>
-                      <td>{s.kevHosts.toLocaleString()}</td>
-                      <td>
-                        <RiskBadge subnet={s} />
-                      </td>
-                      <td>{s.lastSeenAt ? formatDateTime(s.lastSeenAt, me.preferences) : "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="stat-tiles">
+                <Tile label="Subnets" value={totals.subnets} />
+                <Tile label="Hosts" value={totals.hosts} />
+                <Tile label="Subnets with a KEV finding" value={totals.withKev} />
+                <Tile label="Subnets with a critical CVE" value={totals.withCritical} />
+              </div>
+              {view === "map" ? (
+                <SubnetMap subnets={subnets} metric={metric} onCompare={openChanges} />
+              ) : (
+                <div className="table-scroll">
+                  <table className="sortable">
+                    <thead>
+                      <tr>
+                        <th onClick={() => setSort("subnet")}>Subnet{sortIndicator("subnet")}</th>
+                        <th onClick={() => setSort("hosts")}>Hosts{sortIndicator("hosts")}</th>
+                        <th onClick={() => setSort("openPorts")}>Open ports{sortIndicator("openPorts")}</th>
+                        <th onClick={() => setSort("hostsWithCves")}>Hosts with CVEs{sortIndicator("hostsWithCves")}</th>
+                        <th onClick={() => setSort("criticalHosts")}>Critical hosts{sortIndicator("criticalHosts")}</th>
+                        <th onClick={() => setSort("kevHosts")}>KEV hosts{sortIndicator("kevHosts")}</th>
+                        <th onClick={() => setSort("risk")}>Risk{sortIndicator("risk")}</th>
+                        <th onClick={() => setSort("lastSeenAt")}>Last seen{sortIndicator("lastSeenAt")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sorted.map((s) => (
+                        <tr key={s.subnet}>
+                          <td>
+                            <Link className="port-link" to={`/?q=${encodeURIComponent(s.subnet)}`}>
+                              {s.subnet}
+                            </Link>{" "}
+                            <button type="button" className="link-button subnet-changes-link" onClick={() => openChanges(s.subnet)}>
+                              changes
+                            </button>
+                          </td>
+                          <td>
+                            <div className="subnet-bar-cell">
+                              <span>{s.hosts.toLocaleString()}</span>
+                              <span className="subnet-bar" aria-hidden="true">
+                                <span style={{ width: `${maxHosts ? (s.hosts / maxHosts) * 100 : 0}%` }} />
+                              </span>
+                            </div>
+                          </td>
+                          <td>{s.openPorts.toLocaleString()}</td>
+                          <td>{s.hostsWithCves.toLocaleString()}</td>
+                          <td>{s.criticalHosts.toLocaleString()}</td>
+                          <td>{s.kevHosts.toLocaleString()}</td>
+                          <td>
+                            <RiskBadge subnet={s} />
+                          </td>
+                          <td>{s.lastSeenAt ? formatDateTime(s.lastSeenAt, me.preferences) : "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </>
       )}
@@ -343,7 +365,15 @@ function describeNetwork(g: SixteenGroup): string {
 // Clicking a square narrows the cards to that /16; the cards can also be
 // filtered by typing a prefix, sorted, and are paged rather than all
 // rendered at once.
-function SubnetMap({ subnets, metric }: { subnets: SubnetEntry[]; metric: MapMetric }) {
+function SubnetMap({
+  subnets,
+  metric,
+  onCompare,
+}: {
+  subnets: SubnetEntry[];
+  metric: MapMetric;
+  onCompare: (network: string) => void;
+}) {
   const { groups, other } = useMemo(() => groupIntoSixteens(subnets), [subnets]);
   const eights = useMemo(() => groupIntoEights(groups), [groups]);
   const [filter, setFilter] = useState("");
@@ -498,7 +528,10 @@ function SubnetMap({ subnets, metric }: { subnets: SubnetEntry[]; metric: MapMet
                   {" "}
                   · {g.subnets} subnet{g.subnets === 1 ? "" : "s"} · {g.hosts.toLocaleString()} host
                   {g.hosts === 1 ? "" : "s"}
-                </span>
+                </span>{" "}
+                <button type="button" className="link-button subnet-changes-link" onClick={() => onCompare(g.parent)}>
+                  changes
+                </button>
               </h3>
               <div className="subnet-grid">
                 {g.cells.map((s, i) =>

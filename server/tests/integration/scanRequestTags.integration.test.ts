@@ -133,16 +133,27 @@ describe("scan-requested tags", () => {
 
   it("records the two kinds of tag under different audit actors", async () => {
     const hostId = await hostIdFor(agent, IP);
-    const rows = await db
-      .selectFrom("audit_log")
-      .select(["actor", "details"])
-      .where("event", "=", "host.tag_added")
-      .where("actor", "in", ["auto-tag", "scan-tag"])
-      .execute();
-
-    const byTag = new Map(rows.map((r) => [(r.details as { tag?: string; host_id?: string })?.tag, r]));
-    const sshEntry = [...rows].find((r) => (r.details as { tag?: string })?.tag === "SSH-Server" && (r.details as { host_id?: string })?.host_id === hostId);
-    const auditEntry = [...rows].find((r) => (r.details as { tag?: string })?.tag === "Q3-Audit" && (r.details as { host_id?: string })?.host_id === hostId);
+    // recordAudit is deliberately not awaited on the ingest path (a slow
+    // audit write must not hold up a scanner's submission), so the rows
+    // can land a moment after the response. Wait for them rather than
+    // racing them - this failed intermittently in the full suite.
+    const find = async () => {
+      const rows = await db
+        .selectFrom("audit_log")
+        .select(["actor", "details"])
+        .where("event", "=", "host.tag_added")
+        .where("actor", "in", ["auto-tag", "scan-tag"])
+        .execute();
+      const entry = (tag: string) =>
+        rows.find((r) => (r.details as { tag?: string })?.tag === tag && (r.details as { host_id?: string })?.host_id === hostId);
+      return { sshEntry: entry("SSH-Server"), auditEntry: entry("Q3-Audit") };
+    };
+    let found = await find();
+    for (let i = 0; i < 20 && !(found.sshEntry && found.auditEntry); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      found = await find();
+    }
+    const { sshEntry, auditEntry } = found;
     expect(sshEntry?.actor).toBe("auto-tag");
     expect(auditEntry?.actor).toBe("scan-tag");
   });

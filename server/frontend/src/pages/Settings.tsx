@@ -8,6 +8,7 @@ import ProxyCard from "./settings/ProxyCard";
 import RequireTotpCard from "./settings/RequireTotpCard";
 import RetentionCard from "./settings/RetentionCard";
 import ScanLogRetentionCard from "./settings/ScanLogRetentionCard";
+import ScannerAutoUpdateCard from "./settings/ScannerAutoUpdateCard";
 import ScanningCard from "./settings/ScanningCard";
 import SmtpCard from "./settings/SmtpCard";
 import StorageCard from "./settings/StorageCard";
@@ -67,6 +68,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
         <h3 className="settings-group-title">Scanning</h3>
         <div className="settings-grid">
           {settings && <ScanningCard settings={settings} onUpdated={setSettings} />}
+          {settings && <ScannerAutoUpdateCard settings={settings} onUpdated={setSettings} />}
         </div>
       </section>
 

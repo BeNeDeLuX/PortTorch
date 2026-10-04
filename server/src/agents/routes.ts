@@ -79,6 +79,7 @@ agentsRouter.get("/", asyncHandler(async (req, res) => {
       "update_requested_at",
       "update_request_status",
       "update_failure_reason",
+      "auto_update",
       "submit_queue_pending",
       "scan_slots_running",
       "scan_slots_max",
@@ -253,6 +254,45 @@ agentsRouter.post("/:id/request-update", requireAdmin, asyncHandler(async (req, 
   });
   recordAudit("agent.update_requested", req.session.username, req.ip, { scanner_agent_id: req.params.id });
 
+  res.status(204).end();
+}));
+
+// Per-scanner auto-update override: true/false pin it, null follows the
+// fleet-wide default on the Settings page. Admin-only like request-update,
+// since turning it on lets the webserver replace that scanner's binary
+// without anyone clicking anything. See scannerUpdate/autoUpdate.ts.
+const autoUpdateSchema = z.object({ autoUpdate: z.boolean().nullable() });
+
+agentsRouter.put("/:id/auto-update", requireAdmin, asyncHandler(async (req, res) => {
+  if (!uuidSchema.safeParse(req.params.id).success) {
+    res.status(400).json({ error: "invalid scanner agent id" });
+    return;
+  }
+  const parsed = autoUpdateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const result = await db
+    .updateTable("scanner_agents")
+    .set({ auto_update: parsed.data.autoUpdate })
+    .where("id", "=", req.params.id as string)
+    .executeTakeFirst();
+  if (result.numUpdatedRows === 0n) {
+    res.status(404).json({ error: "scanner agent not found" });
+    return;
+  }
+  logger.info({
+    event: "agent.auto_update_changed",
+    scanner_agent_id: req.params.id,
+    auto_update: parsed.data.autoUpdate,
+    updated_by: req.session.username,
+    source_ip: req.ip,
+  });
+  recordAudit("agent.auto_update_changed", req.session.username, req.ip, {
+    scanner_agent_id: req.params.id,
+    auto_update: parsed.data.autoUpdate,
+  });
   res.status(204).end();
 }));
 

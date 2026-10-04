@@ -207,6 +207,17 @@ exited, and `Wait` returned at once. So `command` sets `Setpgid`, a
 backstop for anything that still refuses to go: `Wait` returns regardless
 rather than holding the worker forever.
 
+### A host whose nmap call failed is tried once more
+
+A failed enrichment call used to be final for that scan. The host was counted processed for progress and left in the resume remainder, so only a manual Resume ever looked at it again. The usual causes are transient: a dropped probe, a host busy for a moment, a `--host-timeout` hit on a slow link. `RunScan` therefore collects such hosts and, once every other host has had its turn, runs them through the same worker pool once more (`processHost(j, lastAttempt)`). A host that succeeds then is handled exactly like any other: sub-tasks, `onHostComplete`, coverage. Only a second failure counts as failed.
+
+Two cases are deliberately not retried:
+
+- **Three or more hosts failed and none succeeded.** That points at nmap itself, a flag the sudo wrapper refuses or a script name that does not exist, and a second round would only double the time to the same error. One or two failures say nothing about nmap, so a scan of a single host still gets its retry.
+- **The scan was cancelled.** A cancellation is not a failure.
+
+The cost is bounded by the failures: a host that hit `--host-timeout` can cost that timeout once more, and nothing else is repeated. Pinned by `orchestrator_retry_test.go` against a stand-in nmap that fails a chosen address once: the retried host completes and leaves no remainder, a single-host scan is retried, and an all-failed scan runs nmap exactly once per host and keeps every host in the remainder.
+
 ### nmap's root-only features go through a validating sudo wrapper
 
 Two nmap features this pipeline wants are refused for anyone but uid 0:

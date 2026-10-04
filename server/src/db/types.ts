@@ -51,6 +51,10 @@ export interface ScannerAgentsTable {
   update_request_status: "pending" | "failed" | null;
   update_failure_reason: string | null;
   update_attempt_count: ColumnType<number, number | undefined, number>;
+  // Per-scanner auto-update override: null follows
+  // app_settings.scanner_auto_update, true/false pin it. See
+  // scannerUpdate/autoUpdate.ts.
+  auto_update: ColumnType<boolean | null, boolean | null | undefined, boolean | null>;
   // Dedup state for the scan_queue.backlog webhook (see
   // webhooks/operationalAlerts.ts) - unlike most alert-dedup columns in
   // this codebase, this one is cleared back to null once the backlog
@@ -860,6 +864,9 @@ export interface AppSettingsTable {
   proxy_https_url: ColumnType<string | null, string | null | undefined, string | null>;
   proxy_no_proxy: ColumnType<string | null, string | null | undefined, string | null>;
   require_admin_totp: ColumnType<boolean, boolean | undefined, boolean>;
+  // Fleet-wide default for scanner auto-update, off unless an admin turns
+  // it on - see scannerUpdate/autoUpdate.ts.
+  scanner_auto_update: ColumnType<boolean, boolean | undefined, boolean>;
   // Was config.ts's HOST_RETENTION_DAYS env var - moved here so it's
   // live-editable from the Settings page (see retention.ts). 0 disables
   // the sweep entirely, same semantics the env var always had.

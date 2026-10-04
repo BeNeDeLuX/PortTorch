@@ -130,6 +130,9 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
   const [scanQueue, setScanQueue] = useState<QueuedScanRequest[]>([]);
   const [queueScannerFilterIds, setQueueScannerFilterIds] = useState<string[]>([]);
   const [latestRelease, setLatestRelease] = useState<ScannerReleaseInfo | null>(null);
+  // The fleet-wide auto-update default, so a scanner that follows it can
+  // say which way it currently goes. Admin-only, like the setting itself.
+  const [fleetAutoUpdate, setFleetAutoUpdate] = useState<boolean | null>(null);
   const [checkingRelease, setCheckingRelease] = useState(false);
   const [checkReleaseError, setCheckReleaseError] = useState<string | null>(null);
   const [configuringAgent, setConfiguringAgent] = useState<ScannerAgent | null>(null);
@@ -171,6 +174,12 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
       .latestScannerRelease()
       .then(setLatestRelease)
       .catch(() => setLatestRelease(null));
+    if (isAdmin) {
+      api
+        .appSettings()
+        .then((s) => setFleetAutoUpdate(s.scannerAutoUpdate))
+        .catch(() => setFleetAutoUpdate(null));
+    }
   }, []);
 
   useEffect(() => {
@@ -261,6 +270,12 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
       return;
     }
     await api.requestScannerUpdate(a.id);
+    await load();
+  }
+
+  async function handleAutoUpdateChange(a: ScannerAgent, value: string) {
+    const autoUpdate = value === "on" ? true : value === "off" ? false : null;
+    await api.setScannerAutoUpdate(a.id, autoUpdate);
     await load();
   }
 
@@ -438,6 +453,25 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
             <span className="update-failed-badge">update failed</span>
             {a.update_failure_reason && <span className="update-failure-reason">{a.update_failure_reason}</span>}
           </>
+        )}
+
+        {isAdmin && !a.revoked_at && (
+          <label
+            className="auto-update-select"
+            title="Auto-update requests the latest release for this scanner by itself within five minutes of it being published. The scanner applies it once it is idle, so a running scan is never interrupted. A failed update is not retried automatically."
+          >
+            Auto-update
+            <select
+              value={a.auto_update === null ? "default" : a.auto_update ? "on" : "off"}
+              onChange={(e) => handleAutoUpdateChange(a, e.target.value)}
+            >
+              <option value="default">
+                Fleet default{fleetAutoUpdate === null ? "" : fleetAutoUpdate ? " (on)" : " (off)"}
+              </option>
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
+          </label>
         )}
 
         {/* Not gated on serve mode, unlike the two update actions: this

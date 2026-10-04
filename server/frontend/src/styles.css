@@ -2536,6 +2536,19 @@ th {
    rather than --danger: an agent not running in serve mode is a normal
    state (a one-shot "scan"/"menu" host, or a stopped service), not a
    failure, so it must not read as an error. */
+.auto-update-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.auto-update-select select {
+  font-size: 0.8rem;
+  padding: 0.2rem 0.3rem;
+}
+
 .update-unavailable-note {
   flex-basis: 100%;
   color: var(--muted);
@@ -2887,6 +2900,27 @@ button.subnet-cell:focus-visible,
 
 .subnet-chip-risk-medium {
   border-color: var(--warning);
+}
+
+.subnet-changes-link {
+  font-size: 0.8rem;
+  font-weight: normal;
+}
+
+.subnet-changes-form input:not([type]) {
+  width: 12rem;
+}
+
+.subnet-changes-section {
+  margin-bottom: 1.2rem;
+}
+
+/* The four lists share one column layout, so they read as one report
+   rather than four tables each sized to its own content. */
+.subnet-changes-section .table-scroll > table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 40rem;
 }
 
 .subnet-filter {

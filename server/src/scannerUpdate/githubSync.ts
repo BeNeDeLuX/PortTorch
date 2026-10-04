@@ -23,7 +23,7 @@ interface GitHubRelease {
 // Plain X.Y.Z compare - matches the scanner's own version.go convention
 // (no pre-release/build-metadata suffixes in a scanner-vX.Y.Z tag), same
 // "pragmatic, not spec-complete" tradeoff as cve/cpe.ts's cpe22to23.
-function compareSemver(a: string, b: string): number {
+export function compareSemver(a: string, b: string): number {
   const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
   const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
   for (let i = 0; i < 3; i++) {

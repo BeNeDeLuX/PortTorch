@@ -17,6 +17,7 @@ import { startKevSync } from "./cve/kevSync";
 import { startScheduler } from "./scheduler";
 import { startRetention } from "./retention";
 import { startDailyDigestEmail } from "./digest/emailDigest";
+import { startScannerAutoUpdate } from "./scannerUpdate/autoUpdate";
 import { startGithubSync } from "./scannerUpdate/githubSync";
 import { startWebserverReleaseSync } from "./webserverUpdate/dockerHubSync";
 
@@ -51,5 +52,6 @@ startEpssSync();
 startKevSync();
 startDailyDigestEmail();
 startGithubSync();
+startScannerAutoUpdate();
 startWebserverReleaseSync();
 startWebhookRetryQueue();

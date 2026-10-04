@@ -1388,6 +1388,17 @@ The page (`/subnets`, in the Statistics menu) has two views:
 Shading is logarithmic. Host counts per network are heavily skewed, and on the original linear scale one /24 with 250 hosts painted every network holding five the same pale shade as one holding a single host.
 - **Table** widens the grouping, sorts and exports.
 
+**The third view, Changes, compares one network between two moments** (`GET /api/subnets/changes?network=&from=&to=`, `components/SubnetChanges.tsx`). It is the network-sized counterpart to Host Detail's comparison of two scans of one host, which until then existed only per host or as the fleet-wide Digest. It reports four lists:
+
+- hosts first found in between;
+- hosts known before that no scan reported in between;
+- ports that opened on hosts that already existed;
+- ports that closed on them.
+
+Each moment is reconstructed the way `current_host_ports` defines "now": the newest observation per host, port and protocol at or before that instant. Two consequences are stated in the UI rather than hidden. A port only counts as closed once a scan recorded it closed, for the same masscan reason as everywhere else. And a host "not seen" may be gone or may simply not have been scanned, which is why the response carries the number of scans that touched the network in between, and the page warns when that is zero.
+
+The network may be a CIDR, an address, or a partial IPv4 address read as the block it names, the same rule as `ip:`. Scoping matches the rest of the page. Each list is capped at 1000 and says when it was. Each map card and table row has a "changes" link that opens the view on that network. Pinned by `subnetChanges.integration.test.ts`, which covers state measured at each moment rather than now, the partial address, a restricted session, and every refusal.
+
 Both link each subnet to the Dashboard with the CIDR as its search, which `applyHostFilters` already matches. The grouping and risk logic lives in `frontend/src/lib/subnets.ts`, unit-tested. `--accent` is unused in the map, as in every chart, so a user's accent colour never reads as data.
 
 ### CVE correlation is synced daily, not looked up live

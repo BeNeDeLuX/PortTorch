@@ -566,181 +566,238 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 		}
 	}()
 
-	var nmapWG sync.WaitGroup
 	var nmapOK, nmapFailed int
 	var nmapCountMu sync.Mutex
-	for i := 0; i < cfg.Concurrency; i++ {
-		nmapWG.Add(1)
-		go func() {
-			defer nmapWG.Done()
-			for j := range nmapJobs {
-				// Deliberately doesn't call tracker.complete on panic,
-				// unlike every sub-task worker pool below - a panic here
-				// can happen before tracker.register (e.g. inside RunNmap
-				// itself), and calling complete for a host that was never
-				// registered dereferences a nil *HostResult (a second
-				// panic). The accepted tradeoff: a panic during this
-				// specific host's processing means that host's result is
-				// simply lost (or, if it panicked after registering but
-				// before every sub-task was dispatched, its remaining
-				// count never reaches zero and onHostComplete never fires
-				// for it) - never ideal, but strictly better than the
-				// panic taking down every other host and every other
-				// in-progress scan in the same "serve" process with it.
-				recoverJob(func(r any) {
-					onProgress("nmap", fmt.Sprintf("panic recovered probing %s: %v", j.ip, r))
-				}, func() {
-					onProgress("nmap", fmt.Sprintf("probing %s (%d port(s))", j.ip, len(j.ports)))
-					host, err := RunNmap(ctx, cfg.nmapCmd(), j.ip, j.ports, nseScripts)
-					if err != nil {
-						onProgress("nmap", fmt.Sprintf("failed for %s: %v", j.ip, err))
-						nmapCountMu.Lock()
-						nmapFailed++
-						nmapCountMu.Unlock()
-						// Dealt with, as far as progress goes - otherwise one
-						// unreachable host holds the bar short of its end.
-						coverage.hostProcessed()
+	// Hosts whose first nmap call failed, retried once after every other
+	// host has had its turn - see the retry pass below the worker pool.
+	var retryJobs []nmapJob
+	processHost := func(j nmapJob, lastAttempt bool) {
+		// Deliberately doesn't call tracker.complete on panic,
+		// unlike every sub-task worker pool below - a panic here
+		// can happen before tracker.register (e.g. inside RunNmap
+		// itself), and calling complete for a host that was never
+		// registered dereferences a nil *HostResult (a second
+		// panic). The accepted tradeoff: a panic during this
+		// specific host's processing means that host's result is
+		// simply lost (or, if it panicked after registering but
+		// before every sub-task was dispatched, its remaining
+		// count never reaches zero and onHostComplete never fires
+		// for it) - never ideal, but strictly better than the
+		// panic taking down every other host and every other
+		// in-progress scan in the same "serve" process with it.
+		recoverJob(func(r any) {
+			onProgress("nmap", fmt.Sprintf("panic recovered probing %s: %v", j.ip, r))
+		}, func() {
+			onProgress("nmap", fmt.Sprintf("probing %s (%d port(s))", j.ip, len(j.ports)))
+			host, err := RunNmap(ctx, cfg.nmapCmd(), j.ip, j.ports, nseScripts)
+			if err != nil {
+				if !lastAttempt && ctx.Err() == nil {
+					onProgress("nmap", fmt.Sprintf("failed for %s, will retry once at the end: %v", j.ip, err))
+					nmapCountMu.Lock()
+					retryJobs = append(retryJobs, j)
+					nmapCountMu.Unlock()
+					return
+				}
+				onProgress("nmap", fmt.Sprintf("failed for %s: %v", j.ip, err))
+				nmapCountMu.Lock()
+				nmapFailed++
+				nmapCountMu.Unlock()
+				// Dealt with, as far as progress goes - otherwise one
+				// unreachable host holds the bar short of its end.
+				coverage.hostProcessed()
+				return
+			}
+			nmapCountMu.Lock()
+			nmapOK++
+			nmapCountMu.Unlock()
+
+			subTasks := 0
+			for _, p := range host.Ports {
+				if p.State != "open" {
+					continue
+				}
+				if isHTTP, _ := isHTTPPort(p); isHTTP {
+					subTasks++
+					if nucleiProfile != nil {
+						subTasks++
+					}
+				}
+				if isRDPPort(p) {
+					subTasks++ // screenshot
+					subTasks++ // certificate, via the X.224 negotiation
+				} else if isTLSPort(p) {
+					subTasks++
+				}
+			}
+			// SNMP, IPMI, DNS recursion, and UPnP are all unconditional
+			// (every host, not gated on any already-discovered port -
+			// see snmp.go's doc comment for why; ipmi.go's
+			// RunIPMIProbe, dnsrecursion.go's RunDNSRecursionProbe, and
+			// upnp.go's RunUPnPProbe are the identical exception for
+			// UDP/623, UDP/53, and UDP/1900 respectively), except when
+			// an exclude specifically covers that port for this host -
+			// none of the TCP-only exclude mechanisms above would
+			// otherwise ever see any of these four ports.
+			probeSNMP := !isPortExcludedForHost(host.IP, 161, excludes)
+			if probeSNMP {
+				subTasks++
+			}
+			probeIPMI := !isPortExcludedForHost(host.IP, 623, excludes)
+			if probeIPMI {
+				subTasks++
+			}
+			probeDNSRecursion := !isPortExcludedForHost(host.IP, 53, excludes)
+			if probeDNSRecursion {
+				subTasks++
+			}
+			probeUPnP := !isPortExcludedForHost(host.IP, 1900, excludes)
+			if probeUPnP {
+				subTasks++
+			}
+			// Registered before any job is enqueued below, so the
+			// tracker always knows the full expected count before a
+			// worker could possibly report one sub-task done - see
+			// hostTracker's own comment for why this ordering matters.
+			tracker.register(host, subTasks)
+			sniHostname := probeHostnames[host.IP] // "" if no override
+
+			if probeSNMP {
+				select {
+				case snmpJobs <- snmpJob{ip: host.IP}:
+				case <-ctx.Done():
+					tracker.complete(host.IP, nil)
+				}
+			}
+			if probeIPMI {
+				select {
+				case ipmiJobs <- ipmiJob{ip: host.IP}:
+				case <-ctx.Done():
+					tracker.complete(host.IP, nil)
+				}
+			}
+			if probeDNSRecursion {
+				select {
+				case dnsRecursionJobs <- dnsRecursionJob{ip: host.IP}:
+				case <-ctx.Done():
+					tracker.complete(host.IP, nil)
+				}
+			}
+			if probeUPnP {
+				select {
+				case upnpJobs <- upnpJob{ip: host.IP}:
+				case <-ctx.Done():
+					tracker.complete(host.IP, nil)
+				}
+			}
+
+			for _, p := range host.Ports {
+				if p.State != "open" {
+					continue
+				}
+				if isHTTP, useTLS := isHTTPPort(p); isHTTP {
+					select {
+					case shotJobs <- shotJob{ip: host.IP, port: p, useTLS: useTLS, sniHostname: sniHostname}:
+					case <-ctx.Done():
+						// register above already counted this sub-task
+						// as expected - if it's never actually
+						// enqueued, it must still be marked complete
+						// (as a no-op) or this host's remaining count
+						// would never reach zero and it would never be
+						// reported at all.
+						tracker.complete(host.IP, nil)
+					}
+					if nucleiProfile != nil {
+						select {
+						case nucleiJobs <- nucleiJob{ip: host.IP, port: p, useTLS: useTLS, sniHostname: sniHostname}:
+						case <-ctx.Done():
+							tracker.complete(host.IP, nil)
+						}
+					}
+				}
+				if isRDPPort(p) {
+					select {
+					case rdpJobs <- rdpJob{ip: host.IP, port: p.Port}:
+					case <-ctx.Done():
+						tracker.complete(host.IP, nil)
+					}
+				}
+				// An RDP port takes the RDP-negotiating variant instead
+				// of the plain one, never both: nmap sometimes reports
+				// 3389 as ssl/ms-wbt-server, which would otherwise
+				// enqueue a second, guaranteed-to-fail plain handshake
+				// against the same port.
+				if isRDPPort(p) {
+					select {
+					case tlsJobs <- tlsJob{ip: host.IP, port: p.Port, sniHostname: sniHostname, rdp: true}:
+					case <-ctx.Done():
+						tracker.complete(host.IP, nil)
+					}
+				} else if isTLSPort(p) {
+					select {
+					case tlsJobs <- tlsJob{ip: host.IP, port: p.Port, sniHostname: sniHostname}:
+					case <-ctx.Done():
+						tracker.complete(host.IP, nil)
+					}
+				}
+			}
+		})
+	}
+	runPool := func(jobs <-chan nmapJob, lastAttempt bool) {
+		var wg sync.WaitGroup
+		for i := 0; i < cfg.Concurrency; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := range jobs {
+					processHost(j, lastAttempt)
+				}
+			}()
+		}
+		wg.Wait()
+	}
+	runPool(nmapJobs, false)
+	<-producerDone
+
+	// A host whose nmap call failed gets one more attempt, after every
+	// other host has had its turn: a dropped probe or a host busy for a
+	// moment is the common cause, and by now the moment has usually
+	// passed. Without this such a host was only ever picked up again by a
+	// manual resume. Not retried when three or more hosts failed and none
+	// succeeded, since that points at nmap itself (a refused flag, a bad
+	// script name) rather than at the hosts, and a second round would only
+	// double the time to the same error; and not after a cancellation,
+	// which is not a failure.
+	if len(retryJobs) > 0 {
+		retry := retryJobs
+		retryJobs = nil
+		// Three or more hosts failing with none succeeding is the
+		// systemic case; a scan of one or two hosts gets its retry, since
+		// a single failure there says nothing about nmap itself.
+		systemic := nmapOK == 0 && len(retry) >= 3
+		if ctx.Err() != nil || systemic {
+			if ctx.Err() == nil {
+				onProgress("nmap", fmt.Sprintf("not retrying %d failed host(s): every host failed, which points at nmap rather than the hosts", len(retry)))
+			}
+			for range retry {
+				nmapFailed++
+				coverage.hostProcessed()
+			}
+		} else {
+			onProgress("nmap", fmt.Sprintf("retrying %d host(s) whose nmap call failed", len(retry)))
+			jobs := make(chan nmapJob)
+			go func() {
+				defer close(jobs)
+				for _, j := range retry {
+					select {
+					case jobs <- j:
+					case <-ctx.Done():
 						return
 					}
-					nmapCountMu.Lock()
-					nmapOK++
-					nmapCountMu.Unlock()
-
-					subTasks := 0
-					for _, p := range host.Ports {
-						if p.State != "open" {
-							continue
-						}
-						if isHTTP, _ := isHTTPPort(p); isHTTP {
-							subTasks++
-							if nucleiProfile != nil {
-								subTasks++
-							}
-						}
-						if isRDPPort(p) {
-							subTasks++ // screenshot
-							subTasks++ // certificate, via the X.224 negotiation
-						} else if isTLSPort(p) {
-							subTasks++
-						}
-					}
-					// SNMP, IPMI, DNS recursion, and UPnP are all unconditional
-					// (every host, not gated on any already-discovered port -
-					// see snmp.go's doc comment for why; ipmi.go's
-					// RunIPMIProbe, dnsrecursion.go's RunDNSRecursionProbe, and
-					// upnp.go's RunUPnPProbe are the identical exception for
-					// UDP/623, UDP/53, and UDP/1900 respectively), except when
-					// an exclude specifically covers that port for this host -
-					// none of the TCP-only exclude mechanisms above would
-					// otherwise ever see any of these four ports.
-					probeSNMP := !isPortExcludedForHost(host.IP, 161, excludes)
-					if probeSNMP {
-						subTasks++
-					}
-					probeIPMI := !isPortExcludedForHost(host.IP, 623, excludes)
-					if probeIPMI {
-						subTasks++
-					}
-					probeDNSRecursion := !isPortExcludedForHost(host.IP, 53, excludes)
-					if probeDNSRecursion {
-						subTasks++
-					}
-					probeUPnP := !isPortExcludedForHost(host.IP, 1900, excludes)
-					if probeUPnP {
-						subTasks++
-					}
-					// Registered before any job is enqueued below, so the
-					// tracker always knows the full expected count before a
-					// worker could possibly report one sub-task done - see
-					// hostTracker's own comment for why this ordering matters.
-					tracker.register(host, subTasks)
-					sniHostname := probeHostnames[host.IP] // "" if no override
-
-					if probeSNMP {
-						select {
-						case snmpJobs <- snmpJob{ip: host.IP}:
-						case <-ctx.Done():
-							tracker.complete(host.IP, nil)
-						}
-					}
-					if probeIPMI {
-						select {
-						case ipmiJobs <- ipmiJob{ip: host.IP}:
-						case <-ctx.Done():
-							tracker.complete(host.IP, nil)
-						}
-					}
-					if probeDNSRecursion {
-						select {
-						case dnsRecursionJobs <- dnsRecursionJob{ip: host.IP}:
-						case <-ctx.Done():
-							tracker.complete(host.IP, nil)
-						}
-					}
-					if probeUPnP {
-						select {
-						case upnpJobs <- upnpJob{ip: host.IP}:
-						case <-ctx.Done():
-							tracker.complete(host.IP, nil)
-						}
-					}
-
-					for _, p := range host.Ports {
-						if p.State != "open" {
-							continue
-						}
-						if isHTTP, useTLS := isHTTPPort(p); isHTTP {
-							select {
-							case shotJobs <- shotJob{ip: host.IP, port: p, useTLS: useTLS, sniHostname: sniHostname}:
-							case <-ctx.Done():
-								// register above already counted this sub-task
-								// as expected - if it's never actually
-								// enqueued, it must still be marked complete
-								// (as a no-op) or this host's remaining count
-								// would never reach zero and it would never be
-								// reported at all.
-								tracker.complete(host.IP, nil)
-							}
-							if nucleiProfile != nil {
-								select {
-								case nucleiJobs <- nucleiJob{ip: host.IP, port: p, useTLS: useTLS, sniHostname: sniHostname}:
-								case <-ctx.Done():
-									tracker.complete(host.IP, nil)
-								}
-							}
-						}
-						if isRDPPort(p) {
-							select {
-							case rdpJobs <- rdpJob{ip: host.IP, port: p.Port}:
-							case <-ctx.Done():
-								tracker.complete(host.IP, nil)
-							}
-						}
-						// An RDP port takes the RDP-negotiating variant instead
-						// of the plain one, never both: nmap sometimes reports
-						// 3389 as ssl/ms-wbt-server, which would otherwise
-						// enqueue a second, guaranteed-to-fail plain handshake
-						// against the same port.
-						if isRDPPort(p) {
-							select {
-							case tlsJobs <- tlsJob{ip: host.IP, port: p.Port, sniHostname: sniHostname, rdp: true}:
-							case <-ctx.Done():
-								tracker.complete(host.IP, nil)
-							}
-						} else if isTLSPort(p) {
-							select {
-							case tlsJobs <- tlsJob{ip: host.IP, port: p.Port, sniHostname: sniHostname}:
-							case <-ctx.Done():
-								tracker.complete(host.IP, nil)
-							}
-						}
-					}
-				})
-			}
-		}()
+				}
+			}()
+			runPool(jobs, true)
+		}
 	}
-	nmapWG.Wait()
-	<-producerDone
 	// Only the nmap workers ever enqueue onto these six channels, and
 	// they've all finished now - safe to close so the sub-task worker
 	// pools can drain and exit.
