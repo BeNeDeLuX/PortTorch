@@ -8,6 +8,7 @@ import NucleiProfilePicker from "../components/NucleiProfilePicker";
 import ScanPriorityPicker from "../components/ScanPriorityPicker";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanRateSupportNote from "../components/ScanRateSupportNote";
+import ScannerSplitFields from "../components/ScannerSplitFields";
 import PortSpecHint from "../components/PortSpecHint";
 import { formatDateTime } from "../lib/formatDate";
 import { parseTagList } from "../lib/scanTags";
@@ -190,7 +191,9 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
   const [loading, setLoading] = useState(true);
   const [scannerFilterIds, setScannerFilterIds] = useState<string[]>([]);
 
-  const [scannerAgentId, setScannerAgentId] = useState("");
+  const [scannerAgentIds, setScannerAgentIds] = useState<string[]>([]);
+  const [rateSplit, setRateSplit] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const [targetSpec, setTargetSpec] = useState("");
   const [portSpec, setPortSpec] = useState("");
   // profileTouched tracks whether the user actually interacted with the
@@ -288,9 +291,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
       setSchedules(scheduleList);
       const activeAgents = agentList.filter((a) => !a.revoked_at);
       setAgents(activeAgents);
-      if (activeAgents.length > 0 && !scannerAgentId) {
-        setScannerAgentId(activeAgents[0].id);
-      }
+      setScannerAgentIds((current) => (current.length === 0 && activeAgents.length > 0 ? [activeAgents[0].id] : current));
     } finally {
       setLoading(false);
     }
@@ -345,7 +346,8 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
   // the exact stored string instead of guessing.
   function handleEdit(s: Schedule) {
     setEditingId(s.id);
-    setScannerAgentId(s.scanner_agent_id);
+    setScannerAgentIds(s.scanner_agent_ids);
+    setRateSplit(s.masscan_rate_split);
     setTargetSpec(s.target_spec);
     setPortSpec(s.port_spec);
     setProfile({ kind: s.nse_profile === "custom" ? "default" : s.nse_profile });
@@ -391,9 +393,27 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  // Errors from the server are shown rather than lost: saving now checks
+  // that a split target actually divides between the chosen scanners,
+  // and an unexplained no-op is the worst way to learn it did not.
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
-    if (!scannerAgentId || !targetSpec.trim() || !portSpec.trim()) return;
+    setFormError(null);
+    try {
+      await submitSchedule();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Failed to save the schedule");
+    }
+  }
+
+  async function submitSchedule() {
+    if (scannerAgentIds.length === 0 || !targetSpec.trim() || !portSpec.trim()) return;
+    // One scanner is sent the way it always was; several carry the whole
+    // set and whether the rate is divided between them.
+    const scannerPayload =
+      scannerAgentIds.length === 1
+        ? { scannerAgentId: scannerAgentIds[0], masscanRateSplit: false }
+        : { scannerAgentIds, masscanRateSplit: rateSplit };
 
       const windowPayload = windowEnabled
         ? {
@@ -411,7 +431,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
       const base = {
         targetSpec: targetSpec.trim(),
         portSpec: portSpec.trim(),
-        scannerAgentId,
+        ...scannerPayload,
         ...(profileTouched ? { profile } : {}),
         ...(nucleiProfileTouched ? { nucleiProfile } : {}),
         ...(masscanRate.trim() ? { masscanRate: Number(masscanRate) } : {}),
@@ -442,7 +462,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     if (scheduleType === "interval") {
       await api.createSchedule({
         scheduleType: "interval",
-        scannerAgentId,
+        ...scannerPayload,
         targetSpec: targetSpec.trim(),
         portSpec: portSpec.trim(),
         intervalMinutes,
@@ -463,7 +483,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
       const [datePart, timePart] = runAt.split("T");
       await api.createSchedule({
         scheduleType: "once",
-        scannerAgentId,
+        ...scannerPayload,
         targetSpec: targetSpec.trim(),
         portSpec: portSpec.trim(),
         runAt: zonedDateTimeToUtcIso(datePart, timePart, timezone),
@@ -479,7 +499,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
       if (!cronExpression) return;
       await api.createSchedule({
         scheduleType: "cron",
-        scannerAgentId,
+        ...scannerPayload,
         targetSpec: targetSpec.trim(),
         portSpec: portSpec.trim(),
         cronExpression,
@@ -566,7 +586,15 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
           {describeWindow(s) && <div className="host-meta">only {describeWindow(s)}</div>}
           {s.tags && s.tags.length > 0 && <div className="host-meta">tags: {s.tags.join(", ")}</div>}
         </td>
-        <td>{s.scanner_agent_name ?? "?"}</td>
+        <td>
+          {s.scanner_agent_names.join(", ")}
+          {s.scanner_agent_names.length > 1 && (
+            <div className="host-meta">
+              split across {s.scanner_agent_names.length}
+              {s.masscan_rate_split && s.masscan_rate !== null ? `, ${s.masscan_rate} pps in total` : ""}
+            </div>
+          )}
+        </td>
         <td>
           {/* A fired "once" schedule keeps its original run_at as
               next_run_at (see scheduler.ts) - showing that stale past
@@ -627,16 +655,14 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
         </p>
       ) : (
         <form className="schedule-form" onSubmit={handleCreate}>
-          <label>
-            Scanner
-            <select value={scannerAgentId} onChange={(e) => setScannerAgentId(e.target.value)}>
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <ScannerSplitFields
+            agents={agents}
+            selectedIds={scannerAgentIds}
+            onChange={setScannerAgentIds}
+            rateSplit={rateSplit}
+            onRateSplitChange={setRateSplit}
+            masscanRate={masscanRate}
+          />
           <label>
             Target
             <input placeholder="192.168.1.0/24 or 2001:db8::1" value={targetSpec} onChange={(e) => setTargetSpec(e.target.value)} />
@@ -741,7 +767,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
               </p>
             </>
           )}
-          <ScanRateSupportNote agent={agents.find((a) => a.id === scannerAgentId)} rate={masscanRate} />
+          <ScanRateSupportNote agents={scannerAgentIds.map((id) => agents.find((a) => a.id === id))} rate={masscanRate} />
           <label>
             Schedule type
             <select
@@ -880,6 +906,8 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
           )}
         </form>
       )}
+
+      {formError && <p className="callout-danger">{formError}</p>}
 
       {loading ? (
         <p>Loading...</p>

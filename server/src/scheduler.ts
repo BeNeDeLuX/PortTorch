@@ -2,6 +2,7 @@ import { db } from "./db";
 import { logger } from "./logger";
 import { nextCronRun } from "./lib/cron";
 import { isWithinScanWindow } from "./lib/scanWindow";
+import { queueScan } from "./scanGroups/queue";
 
 const TICK_INTERVAL_MS = 60_000;
 
@@ -105,14 +106,33 @@ async function tick(injectedNow?: Date): Promise<void> {
       continue;
     }
 
+    // A schedule split across several scanners hands its share only to
+    // scanners that can still claim it: a revoked or deleted one would sit
+    // on its part of the target forever. Dropping it re-splits the target
+    // over the rest, which is the honest outcome - that scanner is not
+    // coming back to scan its share. A single-scanner schedule is not
+    // filtered at all, exactly as before.
+    let scannerIds = [schedule.scanner_agent_id];
+    if (schedule.scanner_agent_ids && schedule.scanner_agent_ids.length > 1) {
+      const live = await db
+        .selectFrom("scanner_agents")
+        .select("id")
+        .where("id", "in", schedule.scanner_agent_ids)
+        .where("revoked_at", "is", null)
+        .execute();
+      const liveIds = new Set(live.map((a) => a.id));
+      scannerIds = schedule.scanner_agent_ids.filter((id) => liveIds.has(id));
+      if (scannerIds.length === 0) scannerIds = [schedule.scanner_agent_id];
+    }
+
+    let queueError = null as string | null;
     await db.transaction().execute(async (trx) => {
-      await trx
-        .insertInto("scan_requests")
-        .values({
-          scanner_agent_id: schedule.scanner_agent_id,
+      const queued = await queueScan(
+        trx,
+        schedule.target_spec,
+        scannerIds,
+        {
           schedule_id: schedule.id,
-          host_id: null,
-          target_spec: schedule.target_spec,
           port_spec: schedule.port_spec,
           requested_by: "schedule",
           // Copied straight from the schedule's own already-resolved
@@ -135,8 +155,13 @@ async function tick(injectedNow?: Date): Promise<void> {
           // touches (ingest/routes.ts's ingestHostPayload), so an admin
           // editing the schedule's tags only changes future runs.
           tags: schedule.tags,
-        })
-        .execute();
+        },
+        schedule.masscan_rate_split
+      );
+      // Validated when the schedule was saved, so this only happens if
+      // something changed underneath it. The run still counts as due-and-
+      // handled below, so a broken schedule does not retry every minute.
+      if (!queued.ok) queueError = queued.error;
 
       // A "once" schedule has nothing to reschedule to - it fires exactly
       // once, then disables itself (kept, not deleted, so it stays visible
@@ -163,10 +188,15 @@ async function tick(injectedNow?: Date): Promise<void> {
       }
     });
 
+    if (queueError) {
+      logger.error({ event: "schedule.queue_failed", schedule_id: schedule.id, target_spec: schedule.target_spec, error: queueError });
+      continue;
+    }
     logger.info({
       event: "schedule.triggered",
       schedule_id: schedule.id,
       scanner_agent_id: schedule.scanner_agent_id,
+      scanner_agent_ids: scannerIds,
       target_spec: schedule.target_spec,
       port_spec: schedule.port_spec,
     });

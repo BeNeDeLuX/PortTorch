@@ -49,6 +49,40 @@ All three features (dashboard "Rescan" button on a host, `scan_schedules` — th
 
 Note this is strict priority, not weighted fairness: a continuous stream of `'high'` requests genuinely would starve a `'low'` one. That's accepted rather than solved - the queue is operator-driven at human rates, not a saturated work queue - but it's why the picker's own help text says only that same-priority requests stay FIFO, and deliberately doesn't claim Low can't be starved. Snapshotted from `scan_schedules` onto each spawned request by `scheduler.ts`, same idiom as the profile columns. The dashboard's Ad-hoc Scans form pre-selects `'high'` (someone typing a target in is by definition waiting on it) while the API itself still defaults to `'normal'` when the field is omitted, which is what keeps the External API's own `POST /api/v1/scans/adhoc` and `/hosts/rescan` behaving exactly as before the column existed - both accept an optional `priority` now.
 
+### One scan split across several scanners
+
+An ad-hoc scan or a schedule can name several scanners, and the target is then divided between them. `scanGroups/queue.ts`'s `queueScan` is now the one place a scan request is created from a target. Both the ad-hoc route and `scheduler.ts`'s `tick()` call it, so the two cannot divide a target differently. With one scanner it inserts exactly the row it always did: target as typed, no group. With several it writes a `scan_groups` row plus one `scan_requests` row per scanner, each carrying its share and `group_part`/`group_parts` (migration `1746900000000`). Those rows are ordinary queue entries, so claiming, the progress bar, cancelling and resuming all work per part with no code of their own. The scanner side needed no change at all.
+
+**The same address always goes to the same scanner, and that is the requirement the whole design follows from.** Host identity is `(ip, scanner_agent_id)`, so a split that moved an address between scanners from one run to the next would leave a second host row for it every time - the duplicate-coverage problem Fleet Health already reports. `lib/scanSplit.ts` therefore assigns each /28 block by rendezvous hashing: the scanner with the highest `sha256(scannerId|block)` wins. That gives four properties, all pinned by `scanSplit.test.ts`:
+
+- **Independent of the rest of the target.** `10.0.0.37` lands on the same scanner in a scan of a /28, a /24 or a /16.
+- **Independent of scanner order.** The same set in any order gives the same split.
+- **Stable when the set changes.** A newly added scanner takes over only the blocks it wins; nothing moves between the existing ones.
+- **Fine-grained enough for small targets.** /28 rather than /24 means even a single /24 spreads across several scanners.
+
+The cost of stability is balance. For a /16 the shares stay within 15% of each other, but a small target can come out visibly uneven: a /22 measured 240/432/352. The UI says so and "Estimate time" shows every share.
+
+Each part is one masscan argument, so it must fit `MAX_TARGET_SPEC_LENGTH`. Beyond roughly a /15, /28 blocks scatter into too many ranges, and the split falls back to /24 and then /20 blocks. Those are still deterministic for that target, but an address can then belong to a different scanner than when it is part of a smaller target. That trade is documented rather than refused. IPv6 addresses and hostnames are assigned whole, by the same hash.
+
+**Splitting speeds up different halves of a scan depending on the rate setting, and the form says which.** `masscan_rate_split` makes the entered rate a total that is divided between the parts (`partRate`).
+
+- **Divided rate:** the target network sees the same packets per second as one scanner. Discovery therefore takes as long as it did, and only the enrichment after it (nmap, screenshots, nuclei) runs in parallel.
+- **Full rate per scanner:** discovery finishes up to N times sooner, at up to N times the load.
+
+This was found by driving the real form. The first version of the hint promised "roughly 3 times faster" in both cases, which the estimate beside it contradicted: 7 minutes split against 6 on one scanner with the rate divided. `POST /api/scan-estimate` takes `scannerAgentIds` and returns per-scanner `parts`, each at that scanner's real rate. The wall-clock time is the slowest part, not the sum.
+
+**Refusals and edge cases:**
+
+- Everything is checked when the scan or schedule is saved: every scanner exists, the caller may use it (403 for a restricted operator naming an out-of-scope one), none of a split set is revoked (its share would never be claimed), the target actually splits, and a divided rate has a rate to divide.
+- At run time the scheduler drops scanners revoked since, so their share goes to the rest instead of waiting forever. A single-scanner schedule is not filtered, exactly as before.
+- `scan_schedules.scanner_agent_id` always holds the first scanner of the set, so its `ON DELETE CASCADE` and every older reader keep working.
+- The scheduler's "skip while the previous run is still queued" check covers a split run unchanged, because each part carries `schedule_id`.
+- Scan History and the queue show "part i/N". Rescan on a part re-queues the whole split scan, with its full target on all its scanners: re-running one share on its own is a scan nobody asked for.
+
+The schedule form also gained error display in the same change. Server errors from it used to vanish as an unhandled rejection, which mattered now that saving can refuse a split.
+
+Verified by `scanGroups.integration.test.ts` (ad-hoc split coverage and determinism, rate division, every refusal, the scheduler split, the skip, a revoked scanner's share moving to the rest, history and queue fields) and in a real browser against a disposable stack: three scanners picked in the ad-hoc form, the per-scanner estimate, three parts queued, and a schedule saved through the form showing "split across 3".
+
 ### Ad-hoc Scans: a one-shot trigger against an arbitrary target, including a DNS hostname
 
 `server/src/adhocScans/routes.ts`'s `POST /api/adhoc-scans` (`requireOperator`, same access tier as the Rescan button — not `requireAdmin` like Schedule creation, since this is a one-shot operational action, not persistent config) inserts a single `scan_requests` row directly, structurally identical to what `scheduler.ts`'s `tick()` inserts when firing a schedule (`host_id: null`, `requested_by: req.session.username`, resolved NSE/nuclei profile columns via the same `resolveNSEProfile`/`resolveNucleiProfile` Schedule creation already uses) — just triggered immediately instead of by a cron/interval check, and with no `scan_schedules` row created at all (no recurrence, nothing left behind once the scanner claims it). Because this route is reachable by restricted operator/user accounts (unlike Schedule creation, `requireAdmin`-only, where every admin is always unrestricted), it's the one scan-request-creation path that has to explicitly re-check `getAllowedScannerAgentIds(req)` against the chosen `scannerAgentId` before inserting.

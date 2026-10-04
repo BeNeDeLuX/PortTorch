@@ -974,6 +974,10 @@ export interface ScanEstimate {
   rate: number;
   rateSource: "override" | "scanner" | "default";
   masscanSeconds: number | null;
+  // Per scanner, when the scan is split - it takes as long as its
+  // slowest part. splitError says why a split is not possible.
+  parts?: Array<Omit<ScanEstimate, "parts" | "splitError"> & { scannerAgentId: string; targetSpec: string }>;
+  splitError?: string;
 }
 
 export interface WebserverReleaseStatus {
@@ -1063,6 +1067,9 @@ export interface QueuedScanRequest {
   host_ip: string | null;
   host_hostname: string | null;
   priority: ScanPriority;
+  // Set when this request is one scanner's share of a split scan.
+  group_part: number | null;
+  group_parts: number | null;
 }
 
 export interface ScannerAgentWithKey extends ScannerAgent {
@@ -1168,6 +1175,11 @@ export interface FleetNucleiFinding extends NucleiFinding {
 export interface Schedule {
   id: string;
   scanner_agent_id: string;
+  // Every scanner the schedule uses (one element unless it is split),
+  // and their names in the same order.
+  scanner_agent_ids: string[];
+  scanner_agent_names: string[];
+  masscan_rate_split: boolean;
   target_spec: string;
   port_spec: string;
   schedule_type: "interval" | "cron" | "once";
@@ -1218,6 +1230,9 @@ export interface AdhocScanResult {
   priority: ScanPriority;
   scannerAgentName: string;
   tags: string[] | null;
+  // Set when the scan was split across several scanners.
+  scanGroupId?: string | null;
+  parts?: Array<{ id: string; scannerAgentId: string; scannerAgentName?: string; targetSpec: string; addresses: number | null; masscanRate: number | null; part: number | null }>;
 }
 
 export interface ScanHistoryEntry {
@@ -1249,6 +1264,12 @@ export interface ScanHistoryEntry {
   // covering anything.
   remaining_target_spec: string | null;
   resumed_at: string | null;
+  // One scanner's share of a split scan: which part of how many, and
+  // the target of the scan as a whole.
+  group_part: number | null;
+  group_parts: number | null;
+  group_target_spec: string | null;
+  group_scanner_agent_ids: string[] | null;
 }
 
 // One subnet that holds at least one known host - see the webserver's
@@ -1579,9 +1600,9 @@ export const api = {
   schedules: () => request<Schedule[]>("/api/schedules"),
   createSchedule: (
     input: (
-      | { scheduleType: "interval"; scannerAgentId: string; targetSpec: string; portSpec: string; intervalMinutes: number }
-      | { scheduleType: "cron"; scannerAgentId: string; targetSpec: string; portSpec: string; cronExpression: string }
-      | { scheduleType: "once"; scannerAgentId: string; targetSpec: string; portSpec: string; runAt: string }
+      | { scheduleType: "interval"; scannerAgentId?: string; targetSpec: string; portSpec: string; intervalMinutes: number }
+      | { scheduleType: "cron"; scannerAgentId?: string; targetSpec: string; portSpec: string; cronExpression: string }
+      | { scheduleType: "once"; scannerAgentId?: string; targetSpec: string; portSpec: string; runAt: string }
     ) & {
       profile?: NSEProfileSelection;
       nucleiProfile?: NucleiProfileSelection;
@@ -1592,6 +1613,10 @@ export const api = {
       windowDays?: number[] | null;
       windowTimezone?: string | null;
       tags?: string[];
+      // Several scanners split each run's target between them; the
+      // scanner set may be given here instead of scannerAgentId.
+      scannerAgentIds?: string[];
+      masscanRateSplit?: boolean;
     }
   ) => request<{ id: string }>("/api/schedules", { method: "POST", body: JSON.stringify(input) }),
   setScheduleEnabled: (id: string, enabled: boolean) =>
@@ -1602,6 +1627,8 @@ export const api = {
       targetSpec?: string;
       portSpec?: string;
       scannerAgentId?: string;
+      scannerAgentIds?: string[];
+      masscanRateSplit?: boolean;
       intervalMinutes?: number;
       cronExpression?: string;
       runAt?: string;
@@ -1620,7 +1647,11 @@ export const api = {
   deleteSchedule: (id: string) => request<void>(`/api/schedules/${id}`, { method: "DELETE" }),
 
   createAdhocScan: (input: {
-    scannerAgentId: string;
+    // One scanner, or several to split the target between them.
+    scannerAgentId?: string;
+    scannerAgentIds?: string[];
+    // With several scanners: masscanRate is the total, divided between them.
+    masscanRateSplit?: boolean;
     targetSpec: string;
     portSpec: string;
     profile?: NSEProfileSelection;
@@ -1714,7 +1745,14 @@ export const api = {
 
   tlsCertificate: () => request<TlsCertificateInfo>("/api/settings/tls-certificate"),
 
-  estimateScan: (body: { targetSpec: string; portSpec: string; scannerAgentId?: string; masscanRate?: number }) =>
+  estimateScan: (body: {
+    targetSpec: string;
+    portSpec: string;
+    scannerAgentId?: string;
+    scannerAgentIds?: string[];
+    masscanRate?: number;
+    masscanRateSplit?: boolean;
+  }) =>
     request<ScanEstimate>("/api/scan-estimate", { method: "POST", body: JSON.stringify(body) }),
 
   webserverRelease: () => request<WebserverReleaseStatus>("/api/settings/webserver-release"),

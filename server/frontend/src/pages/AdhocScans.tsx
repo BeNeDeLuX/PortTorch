@@ -8,6 +8,7 @@ import ScanProfilePicker from "../components/ScanProfilePicker";
 import NucleiProfilePicker from "../components/NucleiProfilePicker";
 import ScanPriorityPicker from "../components/ScanPriorityPicker";
 import ScanRateSupportNote from "../components/ScanRateSupportNote";
+import ScannerSplitFields from "../components/ScannerSplitFields";
 import PortSpecHint from "../components/PortSpecHint";
 import { MAX_TARGET_SPEC_LENGTH, parseTargetList } from "../lib/targetList";
 import { parseTagList } from "../lib/scanTags";
@@ -23,6 +24,8 @@ interface RescanNavState {
   targetSpec?: string;
   portSpec?: string;
   scannerAgentId?: string;
+  // A split scan comes back as its whole scanner set.
+  scannerAgentIds?: string[];
 }
 
 // A one-shot "scan this right now" page - Schedule Scans minus all the
@@ -40,7 +43,10 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
   const [agents, setAgents] = useState<ScannerAgent[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [scannerAgentId, setScannerAgentId] = useState(navState?.scannerAgentId ?? "");
+  const [scannerAgentIds, setScannerAgentIds] = useState<string[]>(
+    navState?.scannerAgentIds ?? (navState?.scannerAgentId ? [navState.scannerAgentId] : [])
+  );
+  const [rateSplit, setRateSplit] = useState(false);
   const [targetSpec, setTargetSpec] = useState(navState?.targetSpec ?? "");
   // What the last uploaded file produced, shown under the field - a spec
   // of a few thousand addresses is not something anyone reads back out of
@@ -78,10 +84,10 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
       // no longer exists among the active agents - deleted or revoked
       // since that scan ran - rather than leaving the <select> pointed at
       // an id with no matching option.
-      const stillValid = scannerAgentId !== "" && activeAgents.some((a) => a.id === scannerAgentId);
-      if (activeAgents.length > 0 && !stillValid) {
-        setScannerAgentId(activeAgents[0].id);
-      }
+      setScannerAgentIds((current) => {
+        const stillValid = current.filter((id) => activeAgents.some((a) => a.id === id));
+        return stillValid.length > 0 ? stillValid : activeAgents.length > 0 ? [activeAgents[0].id] : [];
+      });
     } finally {
       setLoading(false);
     }
@@ -130,14 +136,14 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!scannerAgentId || !targetSpec.trim() || !portSpec.trim()) return;
+    if (scannerAgentIds.length === 0 || !targetSpec.trim() || !portSpec.trim()) return;
 
     setSubmitting(true);
     setError(null);
     setLastResult(null);
     try {
       const result = await api.createAdhocScan({
-        scannerAgentId,
+        ...(scannerAgentIds.length === 1 ? { scannerAgentId: scannerAgentIds[0] } : { scannerAgentIds, masscanRateSplit: rateSplit }),
         targetSpec: targetSpec.trim(),
         portSpec: portSpec.trim(),
         profile,
@@ -185,16 +191,14 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
         </p>
       ) : (
         <form className="schedule-form" onSubmit={handleSubmit}>
-          <label>
-            Scanner
-            <select value={scannerAgentId} onChange={(e) => setScannerAgentId(e.target.value)}>
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <ScannerSplitFields
+            agents={agents}
+            selectedIds={scannerAgentIds}
+            onChange={setScannerAgentIds}
+            rateSplit={rateSplit}
+            onRateSplitChange={setRateSplit}
+            masscanRate={masscanRate}
+          />
           <label>
             Target
             <input
@@ -277,7 +281,7 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
               onChange={(e) => setMasscanRate(e.target.value)}
             />
           </label>
-          <ScanRateSupportNote agent={agents.find((a) => a.id === scannerAgentId)} rate={masscanRate} />
+          <ScanRateSupportNote agents={scannerAgentIds.map((id) => agents.find((a) => a.id === id))} rate={masscanRate} />
           <p className="empty">
             Packets per second for the masscan discovery pass. Leave blank to use whatever the chosen scanner has
             configured (default 1000). Lower it for fragile or sensitive network segments; only affects this scan.
@@ -293,14 +297,20 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
           </p>
 
           <div className="inline-actions">
-            <button type="submit" className="btn-icon-label" disabled={submitting}>
+            <button
+              type="submit"
+              className="btn-icon-label"
+              disabled={submitting || scannerAgentIds.length === 0 || (scannerAgentIds.length > 1 && rateSplit && !masscanRate.trim())}
+            >
               <IconPlay /> {submitting ? "Queuing..." : "Start scan"}
             </button>
             <ScanEstimateButton
               targetSpec={targetSpec}
               portSpec={portSpec}
-              scannerAgentId={scannerAgentId}
+              scannerAgentIds={scannerAgentIds}
               masscanRate={masscanRate}
+              rateSplit={rateSplit}
+              agents={agents}
             />
           </div>
         </form>
@@ -309,13 +319,28 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
       {error && <p className="callout-danger">{error}</p>}
 
       {lastResult && (
-        <p className="callout-success">
-          Scan queued for {lastResult.scannerAgentName} at {formatDateTime(lastResult.created_at, me.preferences)}.
-          Profile: {lastResult.nse_profile_label ?? "Default"}
-          {lastResult.nuclei_profile_label ? `, Nuclei: ${lastResult.nuclei_profile_label}` : ""}, priority:{" "}
-          {lastResult.priority}
-          {lastResult.tags && lastResult.tags.length > 0 ? `, tags: ${lastResult.tags.join(", ")}` : ""}.
-        </p>
+        <div className="callout-success">
+          <p>
+            {lastResult.parts && lastResult.parts.length > 1
+              ? `Scan split across ${lastResult.parts.length} scanners and queued`
+              : `Scan queued for ${lastResult.scannerAgentName}`}{" "}
+            at {formatDateTime(lastResult.created_at, me.preferences)}. Profile: {lastResult.nse_profile_label ?? "Default"}
+            {lastResult.nuclei_profile_label ? `, Nuclei: ${lastResult.nuclei_profile_label}` : ""}, priority:{" "}
+            {lastResult.priority}
+            {lastResult.tags && lastResult.tags.length > 0 ? `, tags: ${lastResult.tags.join(", ")}` : ""}.
+          </p>
+          {lastResult.parts && lastResult.parts.length > 1 && (
+            <ul className="scan-split-parts">
+              {lastResult.parts.map((p) => (
+                <li key={p.id}>
+                  {p.scannerAgentName ?? "?"}:{" "}
+                  {p.addresses !== null ? `${p.addresses.toLocaleString()} addresses` : "its share of the target"}
+                  {p.masscanRate !== null ? ` at ${p.masscanRate.toLocaleString()} pps` : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
     </div>
   );

@@ -170,6 +170,14 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
                 <tr key={s.id}>
                   <td className="spec-cell">
                     {s.target_spec}
+                    {s.group_parts !== null && s.group_parts > 1 && (
+                      <span
+                        className="scan-part-badge"
+                        title={`One share of a scan of ${s.group_target_spec ?? "?"} split across ${s.group_parts} scanners`}
+                      >
+                        part {s.group_part}/{s.group_parts}
+                      </span>
+                    )}
                     {(s.anomalies ?? []).map((a, i) => (
                       <span key={i} className="scan-anomaly-badge" title={describeScanAnomaly(a)}>
                         <IconWarning /> {anomalyLabel(a)}
@@ -210,17 +218,24 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
                         <button
                           className="btn-icon-label"
                           title={
-                            s.scanner_agent_id
-                              ? "Queue this exact target and ports again"
-                              : "The scanner that ran this is gone - pick one on the next page"
+                            s.group_target_spec
+                              ? "Queue the whole split scan again - its full target, on all of its scanners"
+                              : s.scanner_agent_id
+                                ? "Queue this exact target and ports again"
+                                : "The scanner that ran this is gone - pick one on the next page"
                           }
                           onClick={() =>
                             navigate("/adhoc-scans", {
-                              state: {
-                                targetSpec: s.target_spec,
-                                portSpec: s.port_spec,
-                                ...(s.scanner_agent_id ? { scannerAgentId: s.scanner_agent_id } : {}),
-                              },
+                              // A share of a split scan rescans the scan as a
+                              // whole: rerunning one share on its own would be
+                              // a scan nobody asked for.
+                              state: s.group_target_spec
+                                ? { targetSpec: s.group_target_spec, portSpec: s.port_spec, scannerAgentIds: s.group_scanner_agent_ids ?? undefined }
+                                : {
+                                    targetSpec: s.target_spec,
+                                    portSpec: s.port_spec,
+                                    ...(s.scanner_agent_id ? { scannerAgentId: s.scanner_agent_id } : {}),
+                                  },
                             })
                           }
                         >

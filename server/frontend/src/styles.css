@@ -2411,6 +2411,46 @@ th {
   height: 0.85em;
 }
 
+/* One share of a scan split across several scanners (Scan History, the
+   queue). Muted rather than warning-coloured: being a part is a fact
+   about the scan, not something wrong with it. */
+.scan-part-badge {
+  display: inline-block;
+  margin-left: 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* The per-scanner breakdown under Estimate time, and the parts list in
+   the confirmation after queueing a split scan. */
+.scan-split-table {
+  width: auto;
+  margin: 0.5rem 0;
+  font-size: 0.85rem;
+}
+
+.scan-split-table td,
+.scan-split-table th {
+  padding: 0.25rem 0.75rem 0.25rem 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.scan-split-parts {
+  margin: 0.4rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.schedule-form .scanner-split-note {
+  flex-basis: 100%;
+  margin: 0;
+}
+
 .cert-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(620px, 1fr));

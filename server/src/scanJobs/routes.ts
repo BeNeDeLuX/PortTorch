@@ -126,6 +126,23 @@ scanJobsRouter.get("/history", asyncHandler(async (req, res) => {
       "scanner_agents.name as scanner_agent_name",
       "scan_jobs.remaining_target_spec as remaining_target_spec",
       "scan_jobs.resumed_at as resumed_at",
+      // Which share of a split scan this job was, and the target of the
+      // scan as a whole - so a row reading "10.0.0.0-10.0.0.15,..." can
+      // say it is part 2 of 3 of 10.0.0.0/24. Scalar subqueries: a job
+      // has at most one request (scan_requests.scan_job_id is set once,
+      // when it finishes), so these cannot fan out.
+      sql<number | null>`(select sr.group_part from scan_requests sr where sr.scan_job_id = scan_jobs.id limit 1)`.as("group_part"),
+      sql<number | null>`(select sr.group_parts from scan_requests sr where sr.scan_job_id = scan_jobs.id limit 1)`.as("group_parts"),
+      sql<string | null>`(
+        select g.target_spec from scan_requests sr
+        join scan_groups g on g.id = sr.scan_group_id
+        where sr.scan_job_id = scan_jobs.id limit 1
+      )`.as("group_target_spec"),
+      sql<string[] | null>`(
+        select g.scanner_agent_ids from scan_requests sr
+        join scan_groups g on g.id = sr.scan_group_id
+        where sr.scan_job_id = scan_jobs.id limit 1
+      )`.as("group_scanner_agent_ids"),
       sql<number>`(select count(distinct host_id) from host_port_observations where scan_job_id = scan_jobs.id)`.as(
         "hosts_scanned"
       ),
@@ -341,6 +358,8 @@ scanJobsRouter.get("/queue", asyncHandler(async (req, res) => {
       "scan_requests.requested_by as requested_by",
       "scan_requests.created_at as created_at",
       "scan_requests.priority as priority",
+      "scan_requests.group_part as group_part",
+      "scan_requests.group_parts as group_parts",
       "scanner_agents.name as scanner_agent_name",
       "hosts.ip as host_ip",
       "hosts.hostname as host_hostname",

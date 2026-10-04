@@ -657,7 +657,14 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
                       <td>
                         <span className={`priority-badge priority-${q.priority}`}>{q.priority}</span>
                       </td>
-                      <td className="spec-cell">{q.target_spec}</td>
+                      <td className="spec-cell">
+                        {q.target_spec}
+                        {q.group_parts !== null && q.group_parts > 1 && (
+                          <span className="scan-part-badge" title={`One share of a scan split across ${q.group_parts} scanners`}>
+                            part {q.group_part}/{q.group_parts}
+                          </span>
+                        )}
+                      </td>
                       <td className="spec-cell">{q.port_spec}</td>
                       <td>{q.scanner_agent_name ?? "-"}</td>
                       <td>{q.host_hostname ?? q.host_ip ?? "-"}</td>

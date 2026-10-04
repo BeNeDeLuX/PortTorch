@@ -13,6 +13,7 @@ import { NucleiProfileNotFoundError, resolveNucleiProfile } from "../nucleiProfi
 import { DEFAULT_SCAN_PRIORITY, scanPrioritySchema } from "../scanPriority";
 import { isWithinScanWindow } from "../lib/scanWindow";
 import { normalizeScanTags, scanTagsSchema } from "../lib/scanTags";
+import { MAX_SPLIT_SCANNERS, splitTargetSpec } from "../lib/scanSplit";
 
 export const schedulesRouter = Router();
 schedulesRouter.use(requireAuth);
@@ -58,6 +59,8 @@ schedulesRouter.get("/", asyncHandler(async (req, res) => {
       // never once rendered, on any deployment.
       "scan_schedules.skipped_runs as skipped_runs",
       "scan_schedules.last_skipped_at as last_skipped_at",
+      "scan_schedules.scanner_agent_ids as scanner_agent_ids",
+      "scan_schedules.masscan_rate_split as masscan_rate_split",
       "scanner_agents.name as scanner_agent_name",
     ]);
 
@@ -65,7 +68,25 @@ schedulesRouter.get("/", asyncHandler(async (req, res) => {
     query = query.where("scan_schedules.scanner_agent_id", "in", allowed);
   }
 
-  const schedules = await query.orderBy("scan_schedules.created_at", "desc").execute();
+  const rows = await query.orderBy("scan_schedules.created_at", "desc").execute();
+
+  // Every scanner a split schedule uses, by name, in one lookup rather
+  // than a join per schedule. A deleted scanner keeps its slot as "?" so
+  // the list still shows how many the schedule was set up with.
+  const splitIds = [...new Set(rows.flatMap((s) => s.scanner_agent_ids ?? []))];
+  const names = new Map(
+    splitIds.length > 0
+      ? (await db.selectFrom("scanner_agents").select(["id", "name"]).where("id", "in", splitIds).execute()).map((a) => [a.id, a.name])
+      : []
+  );
+  const schedules = rows.map((s) => ({
+    ...s,
+    scanner_agent_ids: s.scanner_agent_ids && s.scanner_agent_ids.length > 0 ? s.scanner_agent_ids : [s.scanner_agent_id],
+    scanner_agent_names:
+      s.scanner_agent_ids && s.scanner_agent_ids.length > 0
+        ? s.scanner_agent_ids.map((id) => names.get(id) ?? "?")
+        : [s.scanner_agent_name ?? "?"],
+  }));
 
   // window_blocked is computed here rather than left to the client: it's
   // the answer to "why hasn't this run yet", and the client's own clock
@@ -102,7 +123,14 @@ const nucleiProfileSelectionSchema = z.discriminatedUnion("kind", [
 ]);
 
 const baseScheduleFields = {
-  scannerAgentId: z.string().uuid(),
+  // One scanner, or several to split each run's target between them -
+  // see lib/scanSplit.ts. At least one of the two is required (checked in
+  // the handler, since a discriminated union cannot carry a refine).
+  scannerAgentId: z.string().uuid().optional(),
+  scannerAgentIds: z.array(z.string().uuid()).min(1).max(MAX_SPLIT_SCANNERS).optional(),
+  // The rate is the total for the whole run and is divided between the
+  // scanners, rather than each scanner running at it.
+  masscanRateSplit: z.boolean().optional(),
   targetSpec: targetSpecSchema,
   portSpec: z.string().min(1),
   // Omitted = Default, same as every scan-profile picker elsewhere.
@@ -149,15 +177,17 @@ schedulesRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
     return;
   }
 
+  const scannerAgentIds = [...new Set(parsed.data.scannerAgentIds ?? (parsed.data.scannerAgentId ? [parsed.data.scannerAgentId] : []))];
+  const scannerProblem = await checkScheduleScanners(scannerAgentIds, parsed.data.targetSpec, parsed.data.masscanRate ?? null, parsed.data.masscanRateSplit ?? false);
+  if (scannerProblem) {
+    res.status(400).json({ error: scannerProblem });
+    return;
+  }
   const agent = await db
     .selectFrom("scanner_agents")
     .select(["id", "name"])
-    .where("id", "=", parsed.data.scannerAgentId)
-    .executeTakeFirst();
-  if (!agent) {
-    res.status(400).json({ error: "unknown scanner agent" });
-    return;
-  }
+    .where("id", "=", scannerAgentIds[0])
+    .executeTakeFirstOrThrow();
 
   let resolvedProfile;
   try {
@@ -189,7 +219,9 @@ schedulesRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
   const schedule = await db
     .insertInto("scan_schedules")
     .values({
-      scanner_agent_id: parsed.data.scannerAgentId,
+      scanner_agent_id: scannerAgentIds[0],
+      scanner_agent_ids: scannerAgentIds.length > 1 ? scannerAgentIds : null,
+      masscan_rate_split: scannerAgentIds.length > 1 && (parsed.data.masscanRateSplit ?? false),
       target_spec: parsed.data.targetSpec,
       port_spec: parsed.data.portSpec,
       schedule_type: parsed.data.scheduleType,
@@ -222,7 +254,8 @@ schedulesRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
   logger.info({
     event: "schedule.created",
     schedule_id: schedule.id,
-    scanner_agent_id: parsed.data.scannerAgentId,
+    scanner_agent_id: scannerAgentIds[0],
+    scanner_agent_ids: scannerAgentIds,
     scanner_agent_name: agent.name,
     target_spec: parsed.data.targetSpec,
     port_spec: parsed.data.portSpec,
@@ -237,12 +270,31 @@ schedulesRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
   recordAudit("schedule.created", req.session.username, req.ip, {
     schedule_id: schedule.id,
     target_spec: parsed.data.targetSpec,
-    scanner_agent_id: parsed.data.scannerAgentId,
+    scanner_agent_id: scannerAgentIds[0],
+    scanner_agent_ids: scannerAgentIds,
     scanner_agent_name: agent.name,
   });
 
   res.status(201).json(schedule);
 }));
+
+// Everything that has to hold for a schedule's scanner set, checked when
+// it is saved rather than discovered on its first run: every scanner
+// exists, none of a split set is revoked (its share would never be
+// scanned), the target actually splits into parts a scanner can take, and
+// a divided rate has a rate to divide. Returns the problem, or null.
+async function checkScheduleScanners(ids: string[], targetSpec: string, rate: number | null, rateSplit: boolean): Promise<string | null> {
+  if (ids.length === 0) return "pick at least one scanner";
+  const agents = await db.selectFrom("scanner_agents").select(["id", "revoked_at"]).where("id", "in", ids).execute();
+  if (agents.length !== ids.length) return "unknown scanner agent";
+  if (ids.length > 1) {
+    if (agents.some((a) => a.revoked_at)) return "a revoked scanner cannot take part in a split scan";
+    const split = splitTargetSpec(targetSpec, ids);
+    if (!split.ok) return split.error;
+    if (rateSplit && rate === null) return "dividing the rate between scanners needs a rate to divide";
+  }
+  return null;
+}
 
 const uuidSchema = z.string().uuid();
 
@@ -259,6 +311,10 @@ const updateScheduleSchema = z.object({
   targetSpec: targetSpecSchema.optional(),
   portSpec: z.string().min(1).optional(),
   scannerAgentId: z.string().uuid().optional(),
+  // Replaces the whole scanner set; a one-element list (or scannerAgentId
+  // alone) turns a split schedule back into an ordinary one.
+  scannerAgentIds: z.array(z.string().uuid()).min(1).max(MAX_SPLIT_SCANNERS).optional(),
+  masscanRateSplit: z.boolean().optional(),
   runAt: z.string().datetime().optional(),
   // Omitted = leave unchanged, same discipline as every other optional
   // field here.
@@ -309,7 +365,17 @@ schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
 
   const existing = await db
     .selectFrom("scan_schedules")
-    .select(["schedule_type", "next_run_at", "interval_minutes", "cron_expression"])
+    .select([
+      "schedule_type",
+      "next_run_at",
+      "interval_minutes",
+      "cron_expression",
+      "target_spec",
+      "scanner_agent_id",
+      "scanner_agent_ids",
+      "masscan_rate",
+      "masscan_rate_split",
+    ])
     .where("id", "=", req.params.id)
     .executeTakeFirst();
   if (!existing) {
@@ -380,6 +446,46 @@ schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
     scannerAgentName = agent.name;
   }
 
+  // The scanner set as it will be after this edit, checked as a whole -
+  // a new target can fail to split over the existing scanners just as a
+  // new scanner set can over the existing target.
+  const nextIds = [
+    ...new Set(
+      parsed.data.scannerAgentIds ??
+        (parsed.data.scannerAgentId !== undefined
+          ? [parsed.data.scannerAgentId]
+          : existing.scanner_agent_ids && existing.scanner_agent_ids.length > 0
+            ? existing.scanner_agent_ids
+            : [existing.scanner_agent_id])
+    ),
+  ];
+  const nextRateSplit = nextIds.length > 1 && (parsed.data.masscanRateSplit ?? existing.masscan_rate_split);
+  const touchesScanners =
+    parsed.data.scannerAgentIds !== undefined ||
+    parsed.data.scannerAgentId !== undefined ||
+    parsed.data.masscanRateSplit !== undefined ||
+    (nextIds.length > 1 && (parsed.data.targetSpec !== undefined || parsed.data.masscanRate !== undefined));
+  if (touchesScanners) {
+    const problem = await checkScheduleScanners(
+      nextIds,
+      parsed.data.targetSpec ?? existing.target_spec,
+      parsed.data.masscanRate ?? existing.masscan_rate,
+      nextRateSplit
+    );
+    if (problem) {
+      res.status(400).json({ error: problem });
+      return;
+    }
+  }
+  const scannerColumns =
+    parsed.data.scannerAgentIds !== undefined || parsed.data.scannerAgentId !== undefined || parsed.data.masscanRateSplit !== undefined
+      ? {
+          scanner_agent_id: nextIds[0],
+          scanner_agent_ids: nextIds.length > 1 ? nextIds : null,
+          masscan_rate_split: nextRateSplit,
+        }
+      : {};
+
   // Re-enabling a schedule whose next_run_at is stuck in the past (from
   // however long it sat paused) used to leave it there - the scheduler's
   // tick() treats "next_run_at <= now()" as due, so it would still fire
@@ -435,7 +541,7 @@ schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
       ...(parsed.data.cronExpression !== undefined ? { cron_expression: parsed.data.cronExpression } : {}),
       ...(parsed.data.targetSpec !== undefined ? { target_spec: parsed.data.targetSpec } : {}),
       ...(parsed.data.portSpec !== undefined ? { port_spec: parsed.data.portSpec } : {}),
-      ...(parsed.data.scannerAgentId !== undefined ? { scanner_agent_id: parsed.data.scannerAgentId } : {}),
+      ...scannerColumns,
       ...(parsed.data.runAt !== undefined ? { run_at: parsed.data.runAt } : {}),
       ...(nextRunAt !== undefined ? { next_run_at: nextRunAt } : {}),
       ...(resolvedProfile !== undefined

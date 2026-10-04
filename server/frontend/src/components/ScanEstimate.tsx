@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, ScanEstimate as Estimate } from "../api";
+import { api, ScanEstimate as Estimate, ScannerAgent } from "../api";
 import { IconInfo } from "./icons";
 
 // Answers "how long will this take?" before the scan is queued - the same
@@ -14,13 +14,20 @@ import { IconInfo } from "./icons";
 export default function ScanEstimateButton({
   targetSpec,
   portSpec,
-  scannerAgentId,
+  scannerAgentIds = [],
   masscanRate,
+  rateSplit = false,
+  agents = [],
 }: {
   targetSpec: string;
   portSpec: string;
-  scannerAgentId?: string;
+  // Several scanners: the estimate is per scanner, and the scan as a
+  // whole takes as long as its slowest part.
+  scannerAgentIds?: string[];
   masscanRate?: string;
+  rateSplit?: boolean;
+  // For naming the parts.
+  agents?: ScannerAgent[];
 }) {
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [busy, setBusy] = useState(false);
@@ -38,7 +45,8 @@ export default function ScanEstimateButton({
         await api.estimateScan({
           targetSpec: targetSpec.trim(),
           portSpec: portSpec.trim(),
-          ...(scannerAgentId ? { scannerAgentId } : {}),
+          ...(scannerAgentIds.length === 1 ? { scannerAgentId: scannerAgentIds[0] } : {}),
+          ...(scannerAgentIds.length > 1 ? { scannerAgentIds, masscanRateSplit: rateSplit } : {}),
           ...(rate && Number.isFinite(rate) && rate > 0 ? { masscanRate: rate } : {}),
         })
       );
@@ -55,12 +63,12 @@ export default function ScanEstimateButton({
         <IconInfo /> {busy ? "Calculating..." : "Estimate time"}
       </button>
       {error && <p className="error">{error}</p>}
-      {estimate && <EstimateResult estimate={estimate} />}
+      {estimate && <EstimateResult estimate={estimate} agents={agents} />}
     </>
   );
 }
 
-function EstimateResult({ estimate }: { estimate: Estimate }) {
+function EstimateResult({ estimate, agents }: { estimate: Estimate; agents: ScannerAgent[] }) {
   // A target this cannot count is a hostname, which is a perfectly valid
   // thing to scan - so it says which half is unknown and why, rather than
   // failing or showing a zero.
@@ -102,12 +110,53 @@ function EstimateResult({ estimate }: { estimate: Estimate }) {
           <strong>{formatDuration(estimate.masscanSeconds ?? 0)}</strong>
         </dd>
       </dl>
+      {estimate.splitError && <p className="callout-warning">{estimate.splitError}</p>}
+      {estimate.parts && estimate.parts.length > 1 && <SplitEstimate estimate={estimate} agents={agents} />}
       <p className="empty">
         That is masscan's discovery pass only. What follows it - nmap service detection, screenshots, nuclei - depends
         entirely on how many open ports are actually found, so it cannot be estimated up front. A scan that finds a lot
         will take meaningfully longer than this.
       </p>
     </div>
+  );
+}
+
+// The point of splitting a scan, made concrete: what each scanner gets,
+// how long its pass takes at its own rate, and the wall-clock time of the
+// whole scan - which is its slowest part, not the sum.
+function SplitEstimate({ estimate, agents }: { estimate: Estimate; agents: ScannerAgent[] }) {
+  const parts = estimate.parts ?? [];
+  const slowest = Math.max(...parts.map((p) => p.masscanSeconds ?? 0));
+  const countable = parts.every((p) => p.masscanSeconds !== null);
+  return (
+    <>
+      <table className="scan-split-table">
+        <thead>
+          <tr>
+            <th>Scanner</th>
+            <th>Addresses</th>
+            <th>Rate</th>
+            <th>Discovery</th>
+          </tr>
+        </thead>
+        <tbody>
+          {parts.map((p) => (
+            <tr key={p.scannerAgentId}>
+              <td>{agents.find((a) => a.id === p.scannerAgentId)?.name ?? "?"}</td>
+              <td>{p.addresses !== null ? p.addresses.toLocaleString() : "-"}</td>
+              <td>{p.rate.toLocaleString()} pps</td>
+              <td>{p.masscanSeconds !== null ? formatDuration(p.masscanSeconds) : "-"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {countable && (
+        <p>
+          Split across {parts.length} scanners, discovery takes <strong>{formatDuration(slowest)}</strong> - the slowest
+          part - instead of {formatDuration(estimate.masscanSeconds ?? 0)} on one scanner.
+        </p>
+      )}
+    </>
   );
 }
 

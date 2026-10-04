@@ -430,6 +430,27 @@ export interface ScanSchedulesTable {
   // visible on the schedules page instead of only in a log stream.
   skipped_runs: ColumnType<number, number | undefined, number>;
   last_skipped_at: ColumnType<Date | null, string | undefined, string | null>;
+  // The full scanner set when this schedule is split across several (see
+  // the scan_groups migration). scanner_agent_id above always holds the
+  // first of them; NULL here means just that one.
+  scanner_agent_ids: ColumnType<string[] | null, string[] | null | undefined, string[] | null>;
+  // masscan_rate is the total for the whole group and is divided between
+  // the parts, rather than applying to each scanner on its own.
+  masscan_rate_split: ColumnType<boolean, boolean | undefined, boolean>;
+}
+
+// One scan split across several scanners - see the scan_groups migration
+// and lib/scanSplit.ts. Each scanner's share is its own scan_requests row.
+export interface ScanGroupsTable {
+  id: Generated<string>;
+  target_spec: string;
+  port_spec: string;
+  parts: number;
+  scanner_agent_ids: string[];
+  masscan_rate_split: ColumnType<boolean, boolean | undefined, boolean>;
+  requested_by: string | null;
+  schedule_id: string | null;
+  created_at: ColumnType<Date, string | undefined, never>;
 }
 
 export interface ScanRequestsTable {
@@ -474,6 +495,11 @@ export interface ScanRequestsTable {
   // none requested, which is what every row before this column existed
   // already means.
   tags: string[] | null;
+  // Set when this request is one scanner's share of a split scan: which
+  // group, and which part of how many. NULL for an ordinary request.
+  scan_group_id: ColumnType<string | null, string | null | undefined, string | null>;
+  group_part: ColumnType<number | null, number | null | undefined, number | null>;
+  group_parts: ColumnType<number | null, number | null | undefined, number | null>;
 }
 
 export interface ScanProfilesTable {
@@ -936,6 +962,7 @@ export interface Database {
   rdp_screenshots: RdpScreenshotsTable;
   scan_schedules: ScanSchedulesTable;
   scan_requests: ScanRequestsTable;
+  scan_groups: ScanGroupsTable;
   tls_certificates: TlsCertificatesTable;
   ssh_host_keys: SshHostKeysTable;
   scan_profiles: ScanProfilesTable;
