@@ -835,6 +835,12 @@ const oidcSchema = z.object({
   userGroups: groupList,
   defaultRole: z.enum(["user", "operator"]).nullable(),
   buttonLabel: z.string().trim().min(1).max(60),
+  // Optional so a caller that predates them keeps the stored mappings.
+  scannerGroups: z
+    .array(z.object({ group: z.string().trim().min(1).max(200), scannerAgentIds: z.array(z.string().uuid()).min(1).max(200) }))
+    .max(100)
+    .optional(),
+  scannerUnmatched: z.enum(["all", "deny"]).optional(),
 });
 
 settingsRouter.put("/oidc", asyncHandler(async (req, res) => {
@@ -843,7 +849,21 @@ settingsRouter.put("/oidc", asyncHandler(async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  const merged = { ...(await getOidcSettings()), ...parsed.data };
+  const current = await getOidcSettings();
+  const merged = {
+    ...current,
+    ...parsed.data,
+    scannerGroups: parsed.data.scannerGroups ?? current.scannerGroups,
+    scannerUnmatched: parsed.data.scannerUnmatched ?? current.scannerUnmatched,
+  };
+  const mappedIds = [...new Set(merged.scannerGroups.flatMap((m) => m.scannerAgentIds))];
+  if (mappedIds.length > 0) {
+    const found = await db.selectFrom("scanner_agents").select("id").where("id", "in", mappedIds).execute();
+    if (found.length !== mappedIds.length) {
+      res.status(400).json({ error: "a scanner group mapping names a scanner that does not exist" });
+      return;
+    }
+  }
   // Turning it on half-configured would put a button on the login page
   // that can only fail, so it is refused with what is missing.
   const missing = missingSettings({ ...merged, clientSecret: merged.clientSecret ?? null });
@@ -851,7 +871,7 @@ settingsRouter.put("/oidc", asyncHandler(async (req, res) => {
     res.status(400).json({ error: `cannot enable single sign-on without: ${missing.join(", ")}` });
     return;
   }
-  await setOidcSettings(parsed.data);
+  await setOidcSettings({ ...merged, clientSecret: parsed.data.clientSecret });
   logger.info({
     event: "settings.oidc_updated",
     enabled: parsed.data.enabled,

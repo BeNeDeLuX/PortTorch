@@ -31,6 +31,7 @@ import { trendsRouter } from "./trends/routes";
 import { scanStatsRouter } from "./scanStats/routes";
 import { subnetsRouter } from "./subnets/routes";
 import { baselinesRouter } from "./baselines/routes";
+import { portPoliciesRouter } from "./portPolicies/routes";
 import { scanGroupsRouter } from "./scanGroups/routes";
 import { webhooksRouter } from "./webhooks/routes";
 import { auditRouter } from "./audit/routes";
@@ -102,6 +103,7 @@ export function buildApp() {
   app.use("/api/scan-stats", scanStatsRouter);
   app.use("/api/subnets", subnetsRouter);
   app.use("/api/baselines", baselinesRouter);
+  app.use("/api/port-policies", portPoliciesRouter);
   app.use("/api/scan-groups", scanGroupsRouter);
   app.use("/api/webhooks", webhooksRouter);
   app.use("/api/audit", auditRouter);

@@ -16,7 +16,7 @@ import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { VERSION } from "../version";
 import { getAppSettings } from "../settings/appSettings";
-import { authorizationRedirect, completeLogin, getOidcSettings, missingSettings, roleForGroups } from "./oidc";
+import { authorizationRedirect, completeLogin, getOidcSettings, missingSettings, roleForGroups, scannersForGroups } from "./oidc";
 
 export const authRouter = Router();
 
@@ -807,6 +807,16 @@ authRouter.get("/oidc/callback", asyncHandler(async (req, res) => {
     return;
   }
 
+  // Admins see every scanner regardless; for everyone else the groups may
+  // decide, when scanner mappings are configured at all.
+  const scanners = role === "admin" ? null : scannersForGroups(identity.groups, s);
+  if (scanners === "deny") {
+    logger.warn({ event: "auth.sso_denied", reason: "no_scanner_group", username: identity.username, groups: identity.groups, source_ip: req.ip });
+    recordAudit("auth.sso_denied", identity.username, req.ip, { groups: identity.groups, reason: "no scanner group" });
+    ssoFailed(res, "Your account is not in any group that grants access to a scanner.");
+    return;
+  }
+
   const columns = [
     "id",
     "username",
@@ -862,6 +872,21 @@ authRouter.get("/oidc/callback", asyncHandler(async (req, res) => {
     logger.info({ event: "auth.sso_role_changed", username: user.username, from: user.role, to: role, source_ip: req.ip });
     recordAudit("auth.sso_role_changed", user.username, req.ip, { from: user.role, to: role });
     user = { ...user, role };
+  }
+
+  if (scanners !== null) {
+    // The provider is the source of truth for access as well as role: the
+    // rows are replaced, so leaving a group removes the scanner next time.
+    const userId = user.id;
+    await db.transaction().execute(async (trx) => {
+      await trx.deleteFrom("user_scanner_agents").where("user_id", "=", userId).execute();
+      if (scanners.length > 0) {
+        await trx
+          .insertInto("user_scanner_agents")
+          .values(scanners.map((scanner_agent_id) => ({ user_id: userId, scanner_agent_id })))
+          .execute();
+      }
+    });
   }
 
   const scannerAgentIds =

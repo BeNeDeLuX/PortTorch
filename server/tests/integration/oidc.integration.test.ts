@@ -5,7 +5,18 @@ import { exportJWK, generateKeyPair, SignJWT, type CryptoKey } from "jose";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "../../src/db";
-import { closeDb, createTestUser, deleteTestUser, getApp, loginAs, type SessionClient, type TestUser } from "./helpers";
+import {
+  closeDb,
+  createTestAgent,
+  createTestUser,
+  deleteTestAgent,
+  deleteTestUser,
+  getApp,
+  loginAs,
+  type SessionClient,
+  type TestAgent,
+  type TestUser,
+} from "./helpers";
 
 const CLIENT_ID = "porttorch-test";
 const CLIENT_SECRET = "test-client-secret-0123456789";
@@ -307,6 +318,82 @@ describe("single sign-on (OIDC)", () => {
 
     const listed = (await adminClient.get("/api/users")).body.find((u: { id: number }) => u.id === user.id);
     expect(listed.auth_source).toBe("oidc");
+  });
+
+  it("lets provider groups decide which scanners a user sees", async () => {
+    const siteA = await createTestAgent("it-sso-site-a");
+    const siteB = await createTestAgent("it-sso-site-b");
+    try {
+      const withGroups = (unmatched: "all" | "deny") => ({
+        ...settings(),
+        clientSecret: undefined,
+        scannerGroups: [
+          { group: "Site-A", scannerAgentIds: [siteA.id] },
+          { group: "site-b", scannerAgentIds: [siteB.id] },
+        ],
+        scannerUnmatched: unmatched,
+      });
+      expect((await adminClient.put("/api/settings/oidc").send(withGroups("all"))).status).toBe(200);
+      // Stored lower-cased, matched case-insensitively.
+      expect((await adminClient.get("/api/settings/oidc")).body.scannerGroups).toEqual([
+        { group: "site-a", scannerAgentIds: [siteA.id] },
+        { group: "site-b", scannerAgentIds: [siteB.id] },
+      ]);
+
+      const scannersOf = async (username: string) =>
+        (
+          await db
+            .selectFrom("user_scanner_agents")
+            .innerJoin("users", "users.id", "user_scanner_agents.user_id")
+            .select("scanner_agent_id")
+            .where("users.username", "=", username)
+            .execute()
+        )
+          .map((r) => r.scanner_agent_id)
+          .sort();
+
+      const frank = { sub: "frank-1", claims: { preferred_username: "it-sso-frank", groups: ["porttorch-analysts", "SITE-A"] } };
+      await ssoLogin(provider, frank);
+      expect(await scannersOf("it-sso-frank")).toEqual([siteA.id]);
+
+      // Moving groups at the provider moves access at the next sign-in.
+      await ssoLogin(provider, { ...frank, claims: { ...frank.claims, groups: ["porttorch-analysts", "site-a", "site-b"] } });
+      expect(await scannersOf("it-sso-frank")).toEqual([siteA.id, siteB.id].sort());
+      const restrictedSession = await ssoLogin(provider, { ...frank, claims: { ...frank.claims, groups: ["porttorch-analysts", "site-b"] } });
+      expect(await scannersOf("it-sso-frank")).toEqual([siteB.id]);
+      // And the session enforces it: only site-b is visible.
+      const agents = await request(getApp()).get("/api/agents").set("Cookie", restrictedSession.cookie!);
+      expect(agents.body.map((a: { id: string }) => a.id)).toEqual([siteB.id]);
+
+      // In no mapped group: unrestricted by default ...
+      await ssoLogin(provider, { ...frank, claims: { ...frank.claims, groups: ["porttorch-analysts"] } });
+      expect(await scannersOf("it-sso-frank")).toEqual([]);
+      // ... or refused, when configured so.
+      await adminClient.put("/api/settings/oidc").send(withGroups("deny"));
+      const refused = await ssoLogin(provider, { ...frank, claims: { ...frank.claims, groups: ["porttorch-analysts"] } });
+      expect(ssoError(refused.location)).toContain("grants access to a scanner");
+
+      // Admins see everything whatever their groups say.
+      const admin = await ssoLogin(provider, { sub: "gina-1", claims: { preferred_username: "it-sso-gina", groups: ["porttorch-admins"] } });
+      expect(admin.location).toBe("/");
+      expect(await scannersOf("it-sso-gina")).toEqual([]);
+
+      // The users page says access is SSO-managed rather than offering an
+      // edit the next sign-in would undo.
+      const listed = (await adminClient.get("/api/users")).body.find((u: { username: string }) => u.username === "it-sso-frank");
+      expect(listed.scannerAccessFromSso).toBe(true);
+
+      // Mapping a scanner that does not exist is refused.
+      const bogus = await adminClient.put("/api/settings/oidc").send({
+        ...withGroups("all"),
+        scannerGroups: [{ group: "x", scannerAgentIds: ["00000000-0000-4000-8000-000000000000"] }],
+      });
+      expect(bogus.status).toBe(400);
+    } finally {
+      await adminClient.put("/api/settings/oidc").send({ ...settings(), clientSecret: undefined, scannerGroups: [], scannerUnmatched: "all" });
+      await deleteTestAgent(siteA.id);
+      await deleteTestAgent(siteB.id);
+    }
   });
 
   it("sends the browser back to the login page when SSO is off", async () => {

@@ -78,6 +78,10 @@ services:
     volumes:
       - certs:/data/certs
       - screenshots:/data/screenshots
+      # Scheduled backups to a directory (Settings -> Scheduled backups):
+      # mount the share on the host - NFS, SMB, anything - and pass it in
+      # here, then enter /backups as the directory. Not needed for S3.
+      # - /mnt/porttorch-backups:/backups
 
 volumes:
   pgdata:

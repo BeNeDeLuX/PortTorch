@@ -3,6 +3,8 @@ import { Link } from "react-router";
 import { api, Me, SoftwareRow, SoftwareSource } from "../api";
 import { cveSeverityClass } from "../lib/cveSeverity";
 import { formatDateTime } from "../lib/formatDate";
+import { LIFECYCLE_CAVEAT, lifecycleOf } from "../lib/softwareLifecycle";
+import LifecycleBadge from "../components/LifecycleBadge";
 import PageHeader from "../components/PageHeader";
 import TableExport from "../components/TableExport";
 import TablePager, { pageSlice } from "../components/TablePager";
@@ -70,6 +72,7 @@ export default function Software({ me, onLogout }: { me: Me; onLogout: () => voi
   const [query, setQuery] = useState("");
   const [onlyVulnerable, setOnlyVulnerable] = useState(false);
   const [onlyUnknownVersion, setOnlyUnknownVersion] = useState(false);
+  const [onlyEndOfLife, setOnlyEndOfLife] = useState(false);
   const [sourceFilter, setSourceFilter] = useState<"all" | SoftwareSource>("all");
   const [page, setPage] = useState(1);
 
@@ -108,11 +111,13 @@ export default function Software({ me, onLogout }: { me: Me; onLogout: () => voi
   const distinctProducts = useMemo(() => new Set(rows.map((r) => r.product)).size, [rows]);
   const vulnerableCount = useMemo(() => rows.filter((r) => r.cveCount > 0).length, [rows]);
   const unknownVersionCount = useMemo(() => rows.filter((r) => r.version === null).length, [rows]);
+  const endOfLifeCount = useMemo(() => rows.filter((r) => lifecycleOf(r.product, r.version)?.status === "ended").length, [rows]);
 
   const trimmed = query.trim().toLowerCase();
   const filtered = rows.filter((r) => {
     if (onlyVulnerable && r.cveCount === 0) return false;
     if (onlyUnknownVersion && r.version !== null) return false;
+    if (onlyEndOfLife && !lifecycleOf(r.product, r.version)) return false;
     if (sourceFilter !== "all" && !r.sources.includes(sourceFilter)) return false;
     if (!trimmed) return true;
     return (
@@ -166,6 +171,10 @@ export default function Software({ me, onLogout }: { me: Me; onLogout: () => voi
               <span className="summary-card-value">{unknownVersionCount}</span>
               <span className="summary-card-label">version undetermined</span>
             </div>
+            <div className={`summary-card${endOfLifeCount > 0 ? " summary-card-warn" : ""}`} title={LIFECYCLE_CAVEAT}>
+              <span className="summary-card-value">{endOfLifeCount}</span>
+              <span className="summary-card-label">past upstream end of life</span>
+            </div>
           </div>
 
           <form className="search-bar" onSubmit={(e) => e.preventDefault()}>
@@ -202,6 +211,17 @@ export default function Software({ me, onLogout }: { me: Me; onLogout: () => voi
                 />
                 Only undetermined versions
               </label>
+              <label className="hide-empty-toggle" title={LIFECYCLE_CAVEAT}>
+                <input
+                  type="checkbox"
+                  checked={onlyEndOfLife}
+                  onChange={(e) => {
+                    setOnlyEndOfLife(e.target.checked);
+                    setPage(1);
+                  }}
+                />
+                Only end of life or ending soon
+              </label>
               <label className="hide-empty-toggle">
                 Source
                 <select
@@ -229,6 +249,7 @@ export default function Software({ me, onLogout }: { me: Me; onLogout: () => voi
                 { header: "cve_count", value: (r) => r.cveCount },
                 { header: "max_cvss_score", value: (r) => r.maxCvssScore },
                 { header: "kev", value: (r) => (r.hasKev ? "yes" : "no") },
+                { header: "upstream_support_end", value: (r) => lifecycleOf(r.product, r.version)?.date ?? null },
                 { header: "sources", value: (r) => r.sources.join(" ") },
                 { header: "scanners", value: (r) => r.scanners.join(" ") },
                 { header: "first_seen", value: (r) => r.firstSeen },
@@ -237,7 +258,7 @@ export default function Software({ me, onLogout }: { me: Me; onLogout: () => voi
             />
           </div>
           <p className="host-meta">
-            {trimmed || onlyVulnerable || onlyUnknownVersion || sourceFilter !== "all"
+            {trimmed || onlyVulnerable || onlyUnknownVersion || onlyEndOfLife || sourceFilter !== "all"
               ? `${sorted.length} of ${rows.length} shown`
               : `${rows.length} total`}
           </p>
@@ -279,7 +300,10 @@ export default function Software({ me, onLogout }: { me: Me; onLogout: () => voi
                           the machines". */}
                       <Link to={`/?product=${encodeURIComponent(r.product)}`}>{r.product}</Link>
                     </td>
-                    <td>{r.version ?? <span className="host-meta">undetermined</span>}</td>
+                    <td>
+                      {r.version ?? <span className="host-meta">undetermined</span>}{" "}
+                      <LifecycleBadge product={r.product} version={r.version} />
+                    </td>
                     <td>{r.hosts}</td>
                     <td>{r.ports}</td>
                     <td>

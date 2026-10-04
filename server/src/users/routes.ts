@@ -29,12 +29,18 @@ usersRouter.get("/", asyncHandler(async (_req, res) => {
   }
 
   const sessionCounts = await countSessionsByUser();
+  // With scanner group mappings configured, an SSO account's access is
+  // rewritten from its groups at every sign-in - so a manual edit here
+  // would silently be undone, and the page says so instead of offering it.
+  const ssoManagesAccess =
+    (await db.selectFrom("oidc_scanner_groups").select("group_name").limit(1).executeTakeFirst()) !== undefined;
 
   res.json(
     users.map((u) => ({
       ...u,
       scannerAgentIds: scannerIdsByUser.get(u.id) ?? [],
       activeSessions: sessionCounts.get(u.id) ?? 0,
+      scannerAccessFromSso: ssoManagesAccess && u.auth_source === "oidc",
     }))
   );
 }));

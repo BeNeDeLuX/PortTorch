@@ -16,6 +16,7 @@ subnetsRouter.use(requireAuth);
 // /64, the one prefix length that means "a subnet" there.
 export const SUBNET_PREFIXES = [16, 20, 22, 24] as const;
 const DEFAULT_PREFIX = 24;
+export const NEW_HOST_WINDOWS = [1, 7, 30, 90];
 // A malformed id would otherwise reach the uuid[] cast and turn a bad
 // query string into a 500.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -30,6 +31,7 @@ interface SubnetRow {
   kev_hosts: string | number;
   max_cvss: number | null;
   last_seen_at: Date | null;
+  new_hosts: string | number;
 }
 
 // "Which network is the problem?" had no answer on any page: the host
@@ -56,6 +58,11 @@ subnetsRouter.get("/", asyncHandler(async (req, res) => {
       ? req.query.scannerAgentId.split(",").map((v) => v.trim()).filter((v) => UUID.test(v))
       : [];
   const hideRetired = req.query.hideRetired === "1" || req.query.hideRetired === "true";
+  // How far back "new" reaches for the map's "new hosts" colouring. An
+  // allowlist like Scan Stats' comparison window, so a query string cannot
+  // ask for an arbitrary interval.
+  const requestedNewDays = parseInt(String(req.query.newDays ?? "7"), 10);
+  const newDays = NEW_HOST_WINDOWS.includes(requestedNewDays) ? requestedNewDays : 7;
 
   const conditions = [sql`true`];
   if (allowed) conditions.push(sql`h.scanner_agent_id = ANY(${allowed}::uuid[])`);
@@ -64,7 +71,7 @@ subnetsRouter.get("/", asyncHandler(async (req, res) => {
 
   const { rows } = await sql<SubnetRow>`
     WITH scoped AS (
-      SELECT h.id, h.last_seen_at,
+      SELECT h.id, h.last_seen_at, h.first_seen_at,
              network(set_masklen(h.ip, CASE WHEN family(h.ip) = 4 THEN ${prefix}::int ELSE 64 END)) AS subnet
       FROM hosts h
       WHERE ${sql.join(conditions, sql` AND `)}
@@ -97,7 +104,8 @@ subnetsRouter.get("/", asyncHandler(async (req, res) => {
            count(*) FILTER (WHERE r.max_cvss >= 9) AS critical_hosts,
            count(*) FILTER (WHERE r.has_kev) AS kev_hosts,
            max(r.max_cvss) AS max_cvss,
-           max(s.last_seen_at) AS last_seen_at
+           max(s.last_seen_at) AS last_seen_at,
+           count(*) FILTER (WHERE s.first_seen_at > now() - make_interval(days => ${newDays}::int)) AS new_hosts
     FROM scoped s
     LEFT JOIN ports p ON p.host_id = s.id
     LEFT JOIN risk r ON r.host_id = s.id
@@ -111,6 +119,7 @@ subnetsRouter.get("/", asyncHandler(async (req, res) => {
   // repeatedly; see server/CLAUDE.md's Scan History notes).
   res.json({
     prefix,
+    newDays,
     subnets: rows.map((r) => ({
       subnet: r.subnet,
       family: Number(r.family),
@@ -121,6 +130,7 @@ subnetsRouter.get("/", asyncHandler(async (req, res) => {
       kevHosts: Number(r.kev_hosts),
       maxCvss: r.max_cvss === null ? null : Number(r.max_cvss),
       lastSeenAt: r.last_seen_at,
+      newHosts: Number(r.new_hosts),
     })),
   });
 }));

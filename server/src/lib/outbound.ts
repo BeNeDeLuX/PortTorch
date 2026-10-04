@@ -361,6 +361,11 @@ export async function outboundGet(targetUrl: string, options: OutboundGetOptions
 }
 
 export interface OutboundFetchOptions {
+  // A body too large to hold in memory - a backup archive - streamed from
+  // its source instead of passed as init.body. contentLength is required
+  // with it: object stores refuse a PUT without one.
+  bodyStream?: NodeJS.ReadableStream;
+  contentLength?: number;
   ca?: string[];
   verifyTls?: boolean;
   timeoutMs?: number;
@@ -403,8 +408,13 @@ export async function outboundFetch(
   new Headers(input instanceof Request ? input.headers : undefined).forEach((v, k) => (headers[k] = v));
   new Headers(init.headers).forEach((v, k) => (headers[k] = v));
 
-  let payload: Buffer | null = null;
+  let payload: Buffer | NodeJS.ReadableStream | null = null;
   const body = init.body ?? null;
+  if (options.bodyStream) {
+    if (options.contentLength === undefined) throw new TypeError("contentLength is required with bodyStream");
+    payload = options.bodyStream;
+    headers["content-length"] = String(options.contentLength);
+  }
   if (body !== null && body !== undefined) {
     if (typeof body === "string") payload = Buffer.from(body, "utf8");
     else if (body instanceof URLSearchParams) {
@@ -414,7 +424,7 @@ export async function outboundFetch(
     else if (ArrayBuffer.isView(body)) payload = Buffer.from(body.buffer, body.byteOffset, body.byteLength);
     else throw new TypeError("unsupported request body");
   }
-  if (payload) headers["content-length"] = String(payload.byteLength);
+  if (Buffer.isBuffer(payload)) headers["content-length"] = String(payload.byteLength);
 
   const timeoutMs = options.timeoutMs ?? 20_000;
   const maxBytes = options.maxResponseBytes ?? 4 * 1024 * 1024;
@@ -500,7 +510,7 @@ export async function outboundFetch(
 function rawRequest(
   transport: typeof http | typeof https,
   options: http.RequestOptions & Record<string, unknown>,
-  payload: Buffer | null,
+  payload: Buffer | NodeJS.ReadableStream | null,
   maxBytes: number
 ): Promise<RawResponse> {
   return new Promise<RawResponse>((resolve, reject) => {
@@ -520,6 +530,11 @@ function rawRequest(
     });
     req.on("timeout", () => req.destroy(new Error("target did not respond in time")));
     req.on("error", reject);
-    req.end(payload ?? undefined);
+    if (payload && !Buffer.isBuffer(payload)) {
+      payload.on("error", (err: Error) => req.destroy(err));
+      payload.pipe(req);
+    } else {
+      req.end(payload ?? undefined);
+    }
   });
 }

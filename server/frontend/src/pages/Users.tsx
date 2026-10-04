@@ -216,7 +216,10 @@ export default function Users({ me, onLogout }: { me: Me; onLogout: () => void }
                         </button>
                       </div>
                     ) : (
-                      scannerAccessLabel(u.scannerAgentIds, agents)
+                      <>
+                        {scannerAccessLabel(u.scannerAgentIds, agents)}
+                        {u.scannerAccessFromSso && <div className="host-meta">from SSO groups</div>}
+                      </>
                     )}
                   </td>
                   <td>{formatDateTime(u.created_at, me.preferences)}</td>
@@ -224,7 +227,7 @@ export default function Users({ me, onLogout }: { me: Me; onLogout: () => void }
                   <td>{u.totp_enabled ? "enabled" : "disabled"}</td>
                   <td>
                     <div className="actions-cell">
-                      {u.role !== "admin" && editingUserId !== u.id && (
+                      {u.role !== "admin" && editingUserId !== u.id && !u.scannerAccessFromSso && (
                         <button className="btn-icon-label" onClick={() => startEditAccess(u)}>
                           <IconEdit /> Edit access
                         </button>

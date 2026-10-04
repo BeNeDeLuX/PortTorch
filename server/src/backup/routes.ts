@@ -3,6 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import multer from "multer";
+import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
@@ -13,6 +14,7 @@ import {
   requiredFreeBytes,
 } from "./archive";
 import { RestoreError, RestoreSchemaError, restoreFromArchive } from "./restore";
+import { getBackupSchedule, missingBackupSettings, runScheduledBackup, setBackupSchedule } from "./schedule";
 
 // Mounted under the settings router, so requireAuth + requireAdmin
 // already apply. Both actions warrant that tier on their own: the archive
@@ -179,5 +181,88 @@ backupRouter.post(
         // Best effort.
       }
     }
+  })
+);
+
+// --- Scheduled backups -------------------------------------------------------
+//
+// The same archive as the download above, made on a schedule and delivered
+// off this host - see schedule.ts.
+function clientSchedule(s: Awaited<ReturnType<typeof getBackupSchedule>>) {
+  const { secretKey, ...s3 } = s.s3;
+  return { ...s, s3: { ...s3, secretKeySet: Boolean(secretKey) }, missing: missingBackupSettings(s) };
+}
+
+backupRouter.get(
+  "/schedule",
+  asyncHandler(async (_req, res) => {
+    res.json(clientSchedule(await getBackupSchedule()));
+  })
+);
+
+const scheduleSchema = z.object({
+  enabled: z.boolean(),
+  hourUtc: z.number().int().min(0).max(23),
+  keep: z.number().int().min(1).max(365),
+  target: z.enum(["directory", "s3"]),
+  // An absolute path inside the container: a relative one would land
+  // wherever the process happens to run from.
+  directory: z.string().trim().max(500).refine((v) => v.startsWith("/"), { message: "must be an absolute path" }).nullable(),
+  s3: z.object({
+    endpoint: z.string().trim().url().max(500).nullable(),
+    region: z.string().trim().min(1).max(50),
+    bucket: z.string().trim().min(3).max(63).regex(/^[a-z0-9.-]+$/, "bucket names are lower-case letters, digits, dots and hyphens").nullable(),
+    // Empty, or ending in "/" so the archives sit under it as a folder.
+    prefix: z.string().trim().max(200).refine((v) => v === "" || v.endsWith("/"), { message: "must be empty or end with /" }),
+    accessKey: z.string().trim().min(1).max(200).nullable(),
+    secretKey: z.string().min(1).max(500).nullable().optional(),
+    pathStyle: z.boolean(),
+  }),
+});
+
+backupRouter.put(
+  "/schedule",
+  asyncHandler(async (req, res) => {
+    const parsed = scheduleSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const current = await getBackupSchedule();
+    const merged = { ...parsed.data, s3: { ...parsed.data.s3, secretKey: parsed.data.s3.secretKey === undefined ? current.s3.secretKey : parsed.data.s3.secretKey } };
+    const missing = missingBackupSettings(merged);
+    // Switching on a schedule that can only fail would just produce a
+    // failure alert every night.
+    if (parsed.data.enabled && missing.length > 0) {
+      res.status(400).json({ error: `cannot enable scheduled backups without: ${missing.join(", ")}` });
+      return;
+    }
+    await setBackupSchedule(parsed.data);
+    logger.info({
+      event: "settings.backup_schedule_updated",
+      enabled: parsed.data.enabled,
+      target: parsed.data.target,
+      updated_by: req.session.username,
+      source_ip: req.ip,
+    });
+    await recordAudit("settings.backup_schedule_updated", req.session.username, req.ip, {
+      enabled: parsed.data.enabled,
+      target: parsed.data.target,
+      hour_utc: parsed.data.hourUtc,
+      keep: parsed.data.keep,
+      secret_changed: parsed.data.s3.secretKey !== undefined,
+    });
+    res.json(clientSchedule(await getBackupSchedule()));
+  })
+);
+
+// Runs the scheduled backup now, with the saved settings - the way to
+// test a destination before relying on it at 2 a.m. The response is the
+// outcome; a delivery failure is a 200 with ok:false, like the SMTP test.
+backupRouter.post(
+  "/schedule/run-now",
+  asyncHandler(async (req, res) => {
+    const result = await runScheduledBackup(req.session.username ?? "unknown");
+    res.json({ ...result, schedule: clientSchedule(await getBackupSchedule()) });
   })
 );

@@ -13,6 +13,7 @@ import Lightbox, { LightboxItem } from "../components/Lightbox";
 import HostExportModal from "../components/HostExportModal";
 import RescanModal from "../components/RescanModal";
 import WindowsBuildBadge from "../components/WindowsBuildBadge";
+import LifecycleBadge from "../components/LifecycleBadge";
 import { IconDownload, IconPlus, IconRefresh, IconSave, IconTrash, IconX } from "../components/icons";
 
 // Router state Dashboard.tsx hands off when navigating to a host - see
@@ -765,7 +766,8 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
                     <td>{p.protocol}</td>
                     <td>{p.service_name}</td>
                     <td>
-                      {p.service_product} {p.service_version}
+                      {p.service_product} {p.service_version}{" "}
+                      <LifecycleBadge product={p.service_product} version={p.service_version} />
                       {(p.os_type || p.extra_info) && (
                         <div className="host-meta">{[p.os_type, p.extra_info].filter(Boolean).join(" · ")}</div>
                       )}

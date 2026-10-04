@@ -25,6 +25,15 @@ export interface OidcSettings {
   userGroups: string[];
   defaultRole: "user" | "operator" | null;
   buttonLabel: string;
+  // Provider groups -> scanners their members may see. Empty means scanner
+  // access stays the manually assigned one.
+  scannerGroups: ScannerGroupMapping[];
+  scannerUnmatched: "all" | "deny";
+}
+
+export interface ScannerGroupMapping {
+  group: string;
+  scannerAgentIds: string[];
 }
 
 // Same "omitted keeps the stored one" rule as the SMTP password and the
@@ -48,9 +57,17 @@ export async function getOidcSettings(): Promise<OidcSettings> {
       "oidc_user_groups",
       "oidc_default_role",
       "oidc_button_label",
+      "oidc_scanner_unmatched",
     ])
     .where("id", "=", 1)
     .executeTakeFirstOrThrow();
+  const mappingRows = await db
+    .selectFrom("oidc_scanner_groups")
+    .select(["group_name", "scanner_agent_id"])
+    .orderBy("group_name")
+    .execute();
+  const byGroup = new Map<string, string[]>();
+  for (const m of mappingRows) byGroup.set(m.group_name, [...(byGroup.get(m.group_name) ?? []), m.scanner_agent_id]);
   return {
     enabled: r.oidc_enabled,
     issuerUrl: r.oidc_issuer_url,
@@ -65,29 +82,43 @@ export async function getOidcSettings(): Promise<OidcSettings> {
     userGroups: r.oidc_user_groups,
     defaultRole: r.oidc_default_role,
     buttonLabel: r.oidc_button_label,
+    scannerGroups: [...byGroup].map(([group, scannerAgentIds]) => ({ group, scannerAgentIds })),
+    scannerUnmatched: r.oidc_scanner_unmatched,
   };
 }
 
 export async function setOidcSettings(input: OidcSettingsInput): Promise<void> {
-  await db
-    .updateTable("app_settings")
-    .set({
-      oidc_enabled: input.enabled,
-      oidc_issuer_url: input.issuerUrl,
-      oidc_client_id: input.clientId,
-      oidc_redirect_uri: input.redirectUri,
-      oidc_scopes: input.scopes,
-      oidc_username_claim: input.usernameClaim,
-      oidc_groups_claim: input.groupsClaim,
-      oidc_admin_groups: input.adminGroups,
-      oidc_operator_groups: input.operatorGroups,
-      oidc_user_groups: input.userGroups,
-      oidc_default_role: input.defaultRole,
-      oidc_button_label: input.buttonLabel,
-      ...(input.clientSecret === undefined ? {} : { oidc_client_secret: input.clientSecret }),
-    })
-    .where("id", "=", 1)
-    .execute();
+  // Replaced as a whole, in one transaction with the settings row, so a
+  // sign-in never sees half of an edit.
+  await db.transaction().execute(async (trx) => {
+    await trx.deleteFrom("oidc_scanner_groups").execute();
+    const rows = input.scannerGroups.flatMap((m) =>
+      [...new Set(m.scannerAgentIds)].map((id) => ({ group_name: m.group.trim().toLowerCase(), scanner_agent_id: id }))
+    );
+    if (rows.length > 0) {
+      await trx.insertInto("oidc_scanner_groups").values(rows).onConflict((oc) => oc.doNothing()).execute();
+    }
+    await trx
+      .updateTable("app_settings")
+      .set({
+        oidc_enabled: input.enabled,
+        oidc_issuer_url: input.issuerUrl,
+        oidc_client_id: input.clientId,
+        oidc_redirect_uri: input.redirectUri,
+        oidc_scopes: input.scopes,
+        oidc_username_claim: input.usernameClaim,
+        oidc_groups_claim: input.groupsClaim,
+        oidc_admin_groups: input.adminGroups,
+        oidc_operator_groups: input.operatorGroups,
+        oidc_user_groups: input.userGroups,
+        oidc_default_role: input.defaultRole,
+        oidc_button_label: input.buttonLabel,
+        oidc_scanner_unmatched: input.scannerUnmatched,
+        ...(input.clientSecret === undefined ? {} : { oidc_client_secret: input.clientSecret }),
+      })
+      .where("id", "=", 1)
+      .execute();
+  });
   cached = null;
 }
 
@@ -190,6 +221,24 @@ export function roleForGroups(groups: string[], s: Pick<OidcSettings, "adminGrou
   if (any(s.operatorGroups)) return "operator";
   if (any(s.userGroups)) return "user";
   return s.defaultRole;
+}
+
+// Which scanners an SSO user may see, from their groups. null means "leave
+// the assignment alone" (no mappings configured); an empty list means "no
+// restriction" (the existing convention for zero assignment rows); "deny"
+// means the user is in no mapped group and unmatched users are refused.
+export function scannersForGroups(
+  groups: string[],
+  s: Pick<OidcSettings, "scannerGroups" | "scannerUnmatched">
+): string[] | null | "deny" {
+  if (s.scannerGroups.length === 0) return null;
+  const have = new Set(groups.map((g) => g.toLowerCase()));
+  const ids = new Set<string>();
+  for (const m of s.scannerGroups) {
+    if (have.has(m.group.toLowerCase())) for (const id of m.scannerAgentIds) ids.add(id);
+  }
+  if (ids.size > 0) return [...ids].sort();
+  return s.scannerUnmatched === "deny" ? "deny" : [];
 }
 
 export interface OidcIdentity {

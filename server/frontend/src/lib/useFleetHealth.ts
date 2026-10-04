@@ -3,6 +3,7 @@ import {
   ActiveScanJob,
   api,
   AutoUpdateStatus,
+  BackupSchedule,
   Me,
   QueuedScanRequest,
   ScannerAgent,
@@ -81,6 +82,9 @@ export interface FleetHealthData {
   // not reporting or stuck on a failed update, so the rest of the fleet
   // waits for something that will not happen on its own.
   autoUpdateBlockedReason: string | null;
+  // Admin-only, like the settings it reads; null for other roles.
+  backupStatus: HealthStatus;
+  backup: BackupSchedule | null;
   setOverlap: (o: ScannerOverlap) => void;
 }
 
@@ -104,6 +108,7 @@ export function useFleetHealth(me: Me): FleetHealthData {
   const [queueWarningThreshold, setQueueWarningThreshold] = useState(1);
   const [overlap, setOverlap] = useState<ScannerOverlap | null>(null);
   const [autoUpdate, setAutoUpdate] = useState<AutoUpdateStatus | null>(null);
+  const [backup, setBackup] = useState<BackupSchedule | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -122,9 +127,11 @@ export function useFleetHealth(me: Me): FleetHealthData {
       // endpoint is scanner-scoped like every other fleet-wide read.
       api.hostsOverlap().catch(() => null),
       api.autoUpdateStatus().catch(() => null),
+      me.role === "admin" ? api.backupSchedule().catch(() => null) : Promise.resolve(null),
     ])
-      .then(([a, release, ws, threshold, serverRelease, dup, auto]) => {
+      .then(([a, release, ws, threshold, serverRelease, dup, auto, schedule]) => {
         setAutoUpdate(auto);
+        setBackup(schedule);
         setAgents(a);
         setLatestRelease(release);
         setWebserverCert(ws);
@@ -290,6 +297,22 @@ export function useFleetHealth(me: Me): FleetHealthData {
   // because it never resolves by itself.
   const autoUpdateStatus: HealthStatus = autoUpdateBlockedReason ? "warning" : "ok";
 
+  // A failed last run is critical: every night it keeps failing is a night
+  // of changes with no copy anywhere. A schedule that has not produced a
+  // success in two days (the run itself failing, or the ticker not running)
+  // is a warning. No schedule at all is not flagged - choosing to back up by
+  // hand or by the host's own timer is legitimate - but the card says so.
+  const lastSuccessAge = backup?.last.successAt ? Date.now() - new Date(backup.last.successAt).getTime() : null;
+  // A schedule switched on but not yet due has simply not run - not stale.
+  const backupStatus: HealthStatus =
+    !backup?.enabled || backup.last.runAt === null
+      ? "ok"
+      : backup.last.status === "failed"
+        ? "critical"
+        : lastSuccessAge === null || lastSuccessAge > 2 * 86_400_000
+          ? "warning"
+          : "ok";
+
   const overall = worstOf(
     scannerStatus,
     updatesStatus,
@@ -298,6 +321,7 @@ export function useFleetHealth(me: Me): FleetHealthData {
     nucleiTemplatesStatus,
     overlapStatus,
     autoUpdateStatus,
+    backupStatus,
     webserverCert ? webserverCertStatus : "ok",
     webserverVersionStatus
   );
@@ -313,6 +337,8 @@ export function useFleetHealth(me: Me): FleetHealthData {
     autoUpdatingAgents,
     autoUpdateOffAgents,
     autoUpdateBlockedReason,
+    backupStatus,
+    backup,
     // Acknowledging replaces the card's own data rather than re-running
     // every request the page makes - the other cards did not change.
     setOverlap,

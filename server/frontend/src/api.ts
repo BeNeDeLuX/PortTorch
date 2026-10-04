@@ -212,6 +212,9 @@ export interface DashboardUser {
   scannerAgentIds: string[];
   // Unexpired sessions currently signed in as this account.
   activeSessions: number;
+  // Rewritten from the user's SSO groups at every sign-in, so not
+  // editable here.
+  scannerAccessFromSso: boolean;
 }
 
 export type LoginResult = Me | { requiresTotp: true };
@@ -1310,7 +1313,83 @@ export interface SubnetEntry {
   kevHosts: number;
   maxCvss: number | null;
   lastSeenAt: string | null;
+  // Hosts first seen within the result's newDays.
+  newHosts: number;
 }
+
+export interface PortPolicy {
+  id: string;
+  name: string;
+  network: string;
+  scanner_agent_id: string | null;
+  scanner_agent_name: string | null;
+  // allow: only these ports may be open. deny: these may never be.
+  mode: "allow" | "deny";
+  ports: string;
+  note: string | null;
+  enabled: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PortPolicySummary extends PortPolicy {
+  violations: number;
+  violatingHosts: number;
+  truncated: boolean;
+}
+
+export interface PortPolicyViolation {
+  hostId: string;
+  ip: string;
+  hostname: string | null;
+  scannerAgentName: string | null;
+  port: number;
+  protocol: string;
+  serviceName: string | null;
+  serviceProduct: string | null;
+  observedAt: string;
+}
+
+export interface PortPolicyInput {
+  name: string;
+  network: string;
+  scannerAgentId: string | null;
+  mode: "allow" | "deny";
+  ports: string;
+  note: string | null;
+  enabled?: boolean;
+}
+
+export interface BackupSchedule {
+  enabled: boolean;
+  hourUtc: number;
+  keep: number;
+  target: "directory" | "s3";
+  directory: string | null;
+  s3: {
+    endpoint: string | null;
+    region: string;
+    bucket: string | null;
+    prefix: string;
+    accessKey: string | null;
+    secretKeySet: boolean;
+    pathStyle: boolean;
+  };
+  last: {
+    runAt: string | null;
+    status: "succeeded" | "failed" | null;
+    error: string | null;
+    location: string | null;
+    bytes: number | null;
+    successAt: string | null;
+  };
+  missing: string[];
+}
+
+export type BackupScheduleInput = Omit<BackupSchedule, "last" | "missing" | "s3"> & {
+  s3: Omit<BackupSchedule["s3"], "secretKeySet"> & { secretKey?: string | null };
+};
 
 export interface NetworkBaseline {
   id: string;
@@ -1350,6 +1429,8 @@ export interface OidcSettings {
   userGroups: string[];
   defaultRole: "user" | "operator" | null;
   buttonLabel: string;
+  scannerGroups: { group: string; scannerAgentIds: string[] }[];
+  scannerUnmatched: "all" | "deny";
   // What still has to be filled in before it can be turned on.
   missing: string[];
 }
@@ -1368,6 +1449,7 @@ export interface AutoUpdateStatus {
 
 export interface SubnetsResult {
   prefix: number;
+  newDays: number;
   subnets: SubnetEntry[];
 }
 
@@ -1603,10 +1685,11 @@ export const api = {
   vulnerabilities: () => request<LimitedResult<FleetVulnerability>>("/api/vulnerabilities"),
   digest: (from: string, to: string) =>
     request<DigestResult>(`/api/digest?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
-  subnets: (prefix: number, scannerAgentIds: string[] = [], hideRetired = false) =>
+  subnets: (prefix: number, scannerAgentIds: string[] = [], hideRetired = false, newDays = 7) =>
     request<SubnetsResult>(
       `/api/subnets?${new URLSearchParams({
         prefix: String(prefix),
+        newDays: String(newDays),
         ...(scannerAgentIds.length ? { scannerAgentId: scannerAgentIds.join(",") } : {}),
         ...(hideRetired ? { hideRetired: "1" } : {}),
       }).toString()}`
@@ -1669,6 +1752,14 @@ export const api = {
     request<void>(`/api/agents/${id}/auto-update`, { method: "PUT", body: JSON.stringify(change) }),
   autoUpdateStatus: () => request<AutoUpdateStatus>("/api/agents/auto-update-status"),
   baselines: () => request<NetworkBaselineSummary[]>("/api/baselines"),
+  portPolicies: () => request<PortPolicySummary[]>("/api/port-policies"),
+  portPolicy: (id: string) =>
+    request<{ policy: PortPolicy; violations: { items: PortPolicyViolation[]; truncated: boolean } }>(`/api/port-policies/${id}`),
+  createPortPolicy: (input: PortPolicyInput) =>
+    request<{ id: string; network: string }>("/api/port-policies", { method: "POST", body: JSON.stringify(input) }),
+  updatePortPolicy: (id: string, change: Partial<PortPolicyInput>) =>
+    request<void>(`/api/port-policies/${id}`, { method: "PATCH", body: JSON.stringify(change) }),
+  deletePortPolicy: (id: string) => request<void>(`/api/port-policies/${id}`, { method: "DELETE" }),
   oidcLoginInfo: () => request<{ enabled: boolean; label: string }>("/auth/oidc"),
   oidcSettings: () => request<OidcSettings>("/api/settings/oidc"),
   updateOidcSettings: (input: OidcSettingsInput) =>
@@ -1973,6 +2064,14 @@ export const api = {
     }),
   storageUsage: () => request<StorageUsage>("/api/settings/storage"),
   backupEstimate: () => request<BackupEstimate>("/api/settings/backup/estimate"),
+  backupSchedule: () => request<BackupSchedule>("/api/settings/backup/schedule"),
+  updateBackupSchedule: (input: BackupScheduleInput) =>
+    request<BackupSchedule>("/api/settings/backup/schedule", { method: "PUT", body: JSON.stringify(input) }),
+  runBackupNow: () =>
+    request<{ ok: boolean; location?: string; bytes?: number; pruned?: number; error?: string; schedule: BackupSchedule }>(
+      "/api/settings/backup/schedule/run-now",
+      { method: "POST" }
+    ),
   // Deliberately not a fetch() returning a Blob: the browser streams a
   // plain navigation straight to disk, while a Blob would hold the whole
   // archive in memory first - fine for a small fleet, not for one with

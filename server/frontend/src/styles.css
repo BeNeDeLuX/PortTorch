@@ -368,6 +368,20 @@ input {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
+.oidc-scanner-groups {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.oidc-scanner-groups legend {
+  color: var(--muted);
+  padding: 0 0.3rem;
+}
+
 .login-divider {
   text-align: center;
   color: var(--muted);
@@ -2333,6 +2347,28 @@ th {
 /* CISA KEV (Known Exploited Vulnerabilities) badge - confirmed active
    exploitation, a stronger signal than any CVSS severity level, so it
    gets its own distinct treatment rather than reusing .cve-critical. */
+/* Upstream end of life: ended in the danger colour, ending soon in the
+   warning one - the same pair certificate expiry uses. */
+.lifecycle-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.05rem 0.4rem;
+  border-radius: 4px;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.lifecycle-ended {
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+
+.lifecycle-ending {
+  color: var(--warning);
+  border: 1px solid var(--warning);
+}
+
 .kev-badge {
   display: inline-block;
   font-size: 0.7rem;
@@ -2938,6 +2974,10 @@ button.subnet-cell:focus-visible,
   flex-wrap: wrap;
   gap: 0.3rem;
   align-items: center;
+}
+
+.row-muted td {
+  opacity: 0.6;
 }
 
 .baseline-ok {

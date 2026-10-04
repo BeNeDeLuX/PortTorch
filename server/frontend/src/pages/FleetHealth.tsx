@@ -277,6 +277,24 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
           </HealthCard>
         )}
 
+        {health.backup && (
+          <HealthCard to="/settings" title="Backups" status={health.backupStatus}>
+            {!health.backup.enabled
+              ? "No scheduled backup - set one up under Settings"
+              : health.backup.last.runAt === null
+                ? `Scheduled daily at ${String(health.backup.hourUtc).padStart(2, "0")}:00 UTC, not run yet`
+                : health.backup.last.status === "failed"
+                  ? `Last run failed: ${health.backup.last.error}`
+                  : `Last backup ${elapsedLabel(health.backup.last.successAt!)} ago`}
+            <br />
+            <span className="host-meta">
+              {health.backup.enabled
+                ? `To ${health.backup.target === "s3" ? "S3" : health.backup.directory}, keeping ${health.backup.keep}`
+                : "Downloads and scripts/backup.sh still work as before"}
+            </span>
+          </HealthCard>
+        )}
+
         <HealthCard to="/agents" title="Scan Queue" status={health.queueStatus}>
           {health.scanQueue.length} pending request{health.scanQueue.length === 1 ? "" : "s"}
           <br />

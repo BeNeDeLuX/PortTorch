@@ -27,6 +27,7 @@ interface Subnet {
   criticalHosts: number;
   kevHosts: number;
   maxCvss: number | null;
+  newHosts: number;
 }
 
 // "Which network is the problem?" - hosts grouped by the subnet their
@@ -163,6 +164,19 @@ describe("GET /api/subnets", () => {
     expect([...narrowed.keys()]).toEqual(["240.61.4.0/24"]);
     // A malformed id is ignored rather than turned into a 500.
     expect((await op.get("/api/subnets?scannerAgentId=not-a-uuid")).status).toBe(200);
+  });
+
+  it("counts hosts first seen within the requested window, and only allowed windows", async () => {
+    // Everything in 240.61.1.0/24 was created just now; age one of them.
+    await sql`UPDATE hosts SET first_seen_at = now() - interval '10 days' WHERE ip = (
+      SELECT ip FROM hosts WHERE ip <<= '240.61.1.0/24'::cidr ORDER BY ip LIMIT 1)`.execute(db);
+    const week = (await mine(op, "?newDays=7")).get("240.61.1.0/24")!;
+    expect(week.newHosts).toBe(1);
+    const month = await op.get("/api/subnets?newDays=30");
+    expect(month.body.newDays).toBe(30);
+    expect(month.body.subnets.find((s: Subnet) => s.subnet === "240.61.1.0/24").newHosts).toBe(2);
+    // An arbitrary window falls back to the default rather than running.
+    expect((await op.get("/api/subnets?newDays=4000")).body.newDays).toBe(7);
   });
 
   it("never shows a restricted user a scanner outside their scope", async () => {

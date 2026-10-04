@@ -3,6 +3,7 @@ import { api, AppSettings, Me } from "../api";
 import PageHeader from "../components/PageHeader";
 import AlertingCard from "./settings/AlertingCard";
 import BackupCard from "./settings/BackupCard";
+import ScheduledBackupCard from "./settings/ScheduledBackupCard";
 import HecCard from "./settings/HecCard";
 import OidcCard from "./settings/OidcCard";
 import ProxyCard from "./settings/ProxyCard";
@@ -89,6 +90,9 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
         <div className="settings-grid">
           <div className="settings-grid-wide">
             <BackupCard />
+          </div>
+          <div className="settings-grid-wide">
+            <ScheduledBackupCard me={me} />
           </div>
         </div>
       </section>

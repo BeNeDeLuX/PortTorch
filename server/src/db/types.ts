@@ -864,6 +864,29 @@ export interface WebhookRetryQueueTable {
 
 // Singleton row (id always 1) of global, admin-configurable toggles that
 // don't belong to any one user's account - see settings/appSettings.ts.
+// A provider group grants visibility of a scanner (auth/oidc.ts).
+export interface OidcScannerGroupsTable {
+  group_name: string;
+  scanner_agent_id: string;
+}
+
+// What ports a network may have open - see portPolicies/ and migration
+// 1747600000000_port_policies.js.
+export interface PortPoliciesTable {
+  id: Generated<string>;
+  name: string;
+  network: string;
+  scanner_agent_id: string | null;
+  mode: "allow" | "deny";
+  ports: string;
+  note: string | null;
+  enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  alerted_keys: ColumnType<string[], string[] | undefined, string[]>;
+  created_by: string | null;
+  created_at: ColumnType<Date, string | undefined, never>;
+  updated_at: ColumnType<Date, string | Date | undefined, string | Date>;
+}
+
 // Approved state per network - see baselines/ and migration
 // 1747300000000_network_baselines.js.
 export interface NetworkBaselinesTable {
@@ -906,6 +929,30 @@ export interface AppSettingsTable {
   oidc_user_groups: ColumnType<string[], string[] | undefined, string[]>;
   oidc_default_role: "user" | "operator" | null;
   oidc_button_label: ColumnType<string, string | undefined, string>;
+  // What a non-admin SSO user in no mapped scanner group gets - see
+  // oidc_scanner_groups.
+  oidc_scanner_unmatched: ColumnType<"all" | "deny", "all" | "deny" | undefined, "all" | "deny">;
+  // Scheduled backups (backup/schedule.ts). The S3 secret is withheld from
+  // the settings API like smtp_password.
+  backup_schedule_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  backup_hour_utc: ColumnType<number, number | undefined, number>;
+  backup_keep: ColumnType<number, number | undefined, number>;
+  backup_target: ColumnType<"directory" | "s3", "directory" | "s3" | undefined, "directory" | "s3">;
+  backup_directory: string | null;
+  backup_s3_endpoint: string | null;
+  backup_s3_region: ColumnType<string, string | undefined, string>;
+  backup_s3_bucket: string | null;
+  backup_s3_prefix: ColumnType<string, string | undefined, string>;
+  backup_s3_access_key: string | null;
+  backup_s3_secret_key: string | null;
+  backup_s3_path_style: ColumnType<boolean, boolean | undefined, boolean>;
+  backup_last_run_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
+  backup_last_status: "succeeded" | "failed" | null;
+  backup_last_error: string | null;
+  backup_last_location: string | null;
+  backup_last_bytes: ColumnType<string | null, number | null | undefined, number | null>;
+  backup_last_success_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
+  backup_last_date: ColumnType<Date | string | null, string | null | undefined, string | null>;
   // Was config.ts's HOST_RETENTION_DAYS env var - moved here so it's
   // live-editable from the Settings page (see retention.ts). 0 disables
   // the sweep entirely, same semantics the env var always had.
@@ -983,6 +1030,8 @@ export interface Database {
   users: UsersTable;
   scanner_agents: ScannerAgentsTable;
   network_baselines: NetworkBaselinesTable;
+  port_policies: PortPoliciesTable;
+  oidc_scanner_groups: OidcScannerGroupsTable;
   api_tokens: ApiTokensTable;
   scan_jobs: ScanJobsTable;
   scan_job_progress: ScanJobProgressTable;

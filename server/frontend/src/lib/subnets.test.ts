@@ -17,6 +17,7 @@ function entry(subnet: string, over: Partial<SubnetEntry> = {}): SubnetEntry {
     hosts: 1,
     openPorts: 1,
     hostsWithCves: 0,
+    newHosts: 0,
     criticalHosts: 0,
     kevHosts: 0,
     maxCvss: null,

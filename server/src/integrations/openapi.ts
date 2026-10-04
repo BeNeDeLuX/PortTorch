@@ -1,6 +1,16 @@
 import { z } from "zod";
 import { VERSION } from "../version";
-import { adhocScanSchema, cancelScanSchema, clearTriageSchema, listHostsSchema, lookupSchema, rescanSchema, triageSchema } from "./routes";
+import {
+  adhocScanSchema,
+  approveBaselineApiSchema,
+  cancelScanSchema,
+  clearTriageSchema,
+  listHostsSchema,
+  lookupSchema,
+  networkChangesSchema,
+  rescanSchema,
+  triageSchema,
+} from "./routes";
 
 // OpenAPI document for the External API (/api/v1) only - deliberately not
 // the dashboard's own /api/* routes or the scanner ingest API.
@@ -70,6 +80,8 @@ const ambiguousResponse = {
   },
 };
 
+const ID_PARAM = [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }];
+
 function jsonBody(schema: z.ZodType) {
   return { required: true, content: { "application/json": { schema: jsonSchema(schema) } } };
 }
@@ -118,6 +130,12 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       { name: "Hosts", description: "Look up and act on hosts already known to PortTorch." },
       { name: "Scans", description: "Queue scans against arbitrary targets." },
       { name: "Findings", description: "Record decisions about CVE and web findings." },
+      {
+        name: "Networks",
+        description:
+          "What changed in a network over time, approved baselines and their deviations, and port policies and what " +
+          "violates them - the same data as the dashboard's Changes view, Baselines and Port Policies pages.",
+      },
     ],
     paths: {
       "/hosts": {
@@ -299,6 +317,66 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             400: errorResponse,
             403: errorResponse,
           },
+        },
+      },
+      "/networks/changes": {
+        get: {
+          tags: ["Networks"],
+          summary: "What changed in a network between two moments",
+          description:
+            "New hosts, hosts known before that no scan reported in between, and ports that opened or closed on hosts " +
+            "that already existed. Each moment is the newest observation per port at that time. A port only counts as " +
+            "closed once a scan recorded it closed, and `scansInPeriod` says how far \"not seen\" can be trusted.",
+          parameters: queryParams(networkChangesSchema),
+          responses: {
+            200: { description: "`newHosts`, `unseenHosts`, `openedPorts`, `closedPorts` (each `{items, truncated}`), plus counts." },
+            400: errorResponse,
+          },
+        },
+      },
+      "/baselines": {
+        get: {
+          tags: ["Networks"],
+          summary: "List baselines with how far each has drifted",
+          responses: { 200: { description: "Every baseline visible to the token, with deviation counts since its approval." } },
+        },
+      },
+      "/baselines/{id}": {
+        get: {
+          tags: ["Networks"],
+          summary: "A baseline and its deviations",
+          parameters: ID_PARAM,
+          responses: {
+            200: { description: "`baseline` and `changes` - the same shape as /networks/changes, from the approval to now." },
+            404: errorResponse,
+          },
+        },
+      },
+      "/baselines/{id}/approve": {
+        post: {
+          tags: ["Networks"],
+          summary: "Accept the current state as the baseline",
+          description:
+            "Moves the approval to now, so every current deviation becomes expected and stops being reported. The " +
+            "natural call when a change ticket closes. Needs a read-write token.",
+          parameters: ID_PARAM,
+          requestBody: { ...jsonBody(approveBaselineApiSchema), required: false },
+          responses: { 204: { description: "Approved." }, 403: errorResponse, 404: errorResponse },
+        },
+      },
+      "/port-policies": {
+        get: {
+          tags: ["Networks"],
+          summary: "List port policies with their violation counts",
+          responses: { 200: { description: "Every policy visible to the token, with how many open ports violate it." } },
+        },
+      },
+      "/port-policies/{id}": {
+        get: {
+          tags: ["Networks"],
+          summary: "A port policy and the open ports that violate it",
+          parameters: ID_PARAM,
+          responses: { 200: { description: "`policy` and `violations` (`{items, truncated}`)." }, 404: errorResponse },
         },
       },
     },

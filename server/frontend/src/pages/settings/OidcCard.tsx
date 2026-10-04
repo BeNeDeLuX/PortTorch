@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, OidcSettings } from "../../api";
-import { IconRefresh, IconSave } from "../../components/icons";
+import { api, OidcSettings, ScannerAgent } from "../../api";
+import { IconPlus, IconRefresh, IconSave, IconTrash } from "../../components/icons";
+import ScannerMultiSelect from "../../components/ScannerMultiSelect";
 import SettingsCard from "../../components/SettingsCard";
 
 const splitGroups = (v: string) =>
@@ -29,6 +30,9 @@ export default function OidcCard() {
   const [userGroups, setUserGroups] = useState("");
   const [defaultRole, setDefaultRole] = useState<"" | "user" | "operator">("");
   const [buttonLabel, setButtonLabel] = useState("");
+  const [scannerGroups, setScannerGroups] = useState<{ group: string; scannerAgentIds: string[] }[]>([]);
+  const [scannerUnmatched, setScannerUnmatched] = useState<"all" | "deny">("all");
+  const [agents, setAgents] = useState<ScannerAgent[]>([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +56,12 @@ export default function OidcCard() {
     setUserGroups(s.userGroups.join(", "));
     setDefaultRole(s.defaultRole ?? "");
     setButtonLabel(s.buttonLabel);
+    setScannerGroups(s.scannerGroups);
+    setScannerUnmatched(s.scannerUnmatched);
+  }
+
+  function updateMapping(index: number, change: Partial<{ group: string; scannerAgentIds: string[] }>) {
+    setScannerGroups((list) => list.map((m, i) => (i === index ? { ...m, ...change } : m)));
   }
 
   useEffect(() => {
@@ -59,6 +69,7 @@ export default function OidcCard() {
       .oidcSettings()
       .then(fill)
       .catch((err) => setError(err instanceof Error ? err.message : "Could not load single sign-on settings"));
+    api.agents().then((a) => setAgents(a.filter((x) => !x.revoked_at)));
   }, []);
 
   async function handleSave(e: FormEvent) {
@@ -82,6 +93,12 @@ export default function OidcCard() {
           userGroups: splitGroups(userGroups),
           defaultRole: defaultRole || null,
           buttonLabel: buttonLabel.trim(),
+          // A row without a group or a scanner is an unfinished edit, not
+          // a mapping - dropped rather than refused.
+          scannerGroups: scannerGroups
+            .map((m) => ({ group: m.group.trim(), scannerAgentIds: m.scannerAgentIds }))
+            .filter((m) => m.group && m.scannerAgentIds.length > 0),
+          scannerUnmatched,
         })
       );
       setClientSecret("");
@@ -199,6 +216,55 @@ export default function OidcCard() {
             Button label
             <input value={buttonLabel} onChange={(e) => setButtonLabel(e.target.value)} />
           </label>
+          <fieldset className="settings-form-actions oidc-scanner-groups">
+            <legend>Scanner access by group</legend>
+            <p className="host-meta">
+              Optional. When any row is set, a non-admin SSO user sees exactly the scanners of the groups they are in,
+              re-read at every sign-in - the provider becomes the source of truth for access, as it is for the role.
+              Without rows, access stays what is assigned on the Users page.
+            </p>
+            {scannerGroups.map((m, i) => (
+              <div key={i} className="inline-actions">
+                <input
+                  placeholder="group name"
+                  value={m.group}
+                  onChange={(e) => updateMapping(i, { group: e.target.value })}
+                  aria-label="Group"
+                />
+                <ScannerMultiSelect
+                  agents={agents}
+                  selectedIds={m.scannerAgentIds}
+                  onChange={(ids) => updateMapping(i, { scannerAgentIds: ids })}
+                  emptyLabel="Choose scanners"
+                />
+                <button
+                  type="button"
+                  className="btn-icon-label"
+                  onClick={() => setScannerGroups((list) => list.filter((_, j) => j !== i))}
+                >
+                  <IconTrash /> Remove
+                </button>
+              </div>
+            ))}
+            <div className="inline-actions">
+              <button
+                type="button"
+                className="btn-icon-label"
+                onClick={() => setScannerGroups((list) => [...list, { group: "", scannerAgentIds: [] }])}
+              >
+                <IconPlus /> Add group
+              </button>
+              {scannerGroups.length > 0 && (
+                <label>
+                  In none of these groups:{" "}
+                  <select value={scannerUnmatched} onChange={(e) => setScannerUnmatched(e.target.value as "all" | "deny")}>
+                    <option value="all">sees every scanner</option>
+                    <option value="deny">is refused</option>
+                  </select>
+                </label>
+              )}
+            </div>
+          </fieldset>
           <p className="host-meta settings-form-actions">
             Entra ID sends group object IDs, not names, unless the app registration is set to emit names - enter whatever
             your provider actually puts in the groups claim.

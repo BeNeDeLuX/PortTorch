@@ -8,64 +8,19 @@ import { db } from "../db";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { parseNetwork } from "../subnets/changes";
-import { baselineDeviations, deviationKeys } from "./deviations";
+import { approveBaseline, baselineQuery, baselineWithChanges, listBaselineSummaries } from "./service";
 
 export const baselinesRouter = Router();
 baselinesRouter.use(requireAuth);
 
 const uuidSchema = z.string().uuid();
 
-// A baseline belongs to a session's view when it covers every scanner (the
-// deviations shown are then narrowed to what the session may see) or
-// names a scanner the session may see.
 function visibleQuery(req: Request) {
-  const allowed = getAllowedScannerAgentIds(req);
-  let query = db
-    .selectFrom("network_baselines as b")
-    .leftJoin("scanner_agents as sa", "sa.id", "b.scanner_agent_id")
-    .select([
-      "b.id",
-      sql<string>`b.network::text`.as("network"),
-      "b.scanner_agent_id",
-      "sa.name as scanner_agent_name",
-      "b.note",
-      "b.approved_at",
-      "b.approved_by",
-      "b.created_at",
-    ]);
-  if (allowed) {
-    query = query.where((eb) => eb.or([eb("b.scanner_agent_id", "is", null), eb("b.scanner_agent_id", "in", allowed)]));
-  }
-  return query;
+  return baselineQuery(getAllowedScannerAgentIds(req));
 }
 
-// Every baseline with how far it has drifted. Counts only - the lists are
-// one click away, and a page of baselines should not ship every host of
-// every network.
 baselinesRouter.get("/", asyncHandler(async (req, res) => {
-  const allowed = getAllowedScannerAgentIds(req);
-  const rows = await visibleQuery(req).orderBy("b.network").execute();
-  const out = [];
-  for (const b of rows) {
-    const changes = await baselineDeviations(b, allowed);
-    out.push({
-      ...b,
-      deviations: {
-        newHosts: changes.newHosts.items.length,
-        openedPorts: changes.openedPorts.items.length,
-        closedPorts: changes.closedPorts.items.length,
-        unseenHosts: changes.unseenHosts.items.length,
-        truncated:
-          changes.newHosts.truncated ||
-          changes.openedPorts.truncated ||
-          changes.closedPorts.truncated ||
-          changes.unseenHosts.truncated,
-        alerting: deviationKeys(changes).length,
-      },
-      scansSinceApproval: changes.scansInPeriod,
-    });
-  }
-  res.json(out);
+  res.json(await listBaselineSummaries(getAllowedScannerAgentIds(req)));
 }));
 
 baselinesRouter.get("/:id", asyncHandler(async (req, res) => {
@@ -73,12 +28,12 @@ baselinesRouter.get("/:id", asyncHandler(async (req, res) => {
     res.status(404).json({ error: "baseline not found" });
     return;
   }
-  const baseline = await visibleQuery(req).where("b.id", "=", req.params.id as string).executeTakeFirst();
-  if (!baseline) {
+  const found = await baselineWithChanges(req.params.id as string, getAllowedScannerAgentIds(req));
+  if (!found) {
     res.status(404).json({ error: "baseline not found" });
     return;
   }
-  res.json({ baseline, changes: await baselineDeviations(baseline, getAllowedScannerAgentIds(req)) });
+  res.json(found);
 }));
 
 const createSchema = z.object({
@@ -151,9 +106,6 @@ baselinesRouter.post("/", requireOperator, asyncHandler(async (req, res) => {
 
 const approveSchema = z.object({ note: z.string().trim().max(500).nullable().optional() });
 
-// Accepts every current deviation by moving the approval moment to now.
-// alerted_keys is cleared with it: nothing deviates from the new moment,
-// so there is nothing left that was already reported.
 baselinesRouter.post("/:id/approve", requireOperator, asyncHandler(async (req, res) => {
   if (!uuidSchema.safeParse(req.params.id).success) {
     res.status(404).json({ error: "baseline not found" });
@@ -164,21 +116,11 @@ baselinesRouter.post("/:id/approve", requireOperator, asyncHandler(async (req, r
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  const visible = await visibleQuery(req).where("b.id", "=", req.params.id as string).executeTakeFirst();
+  const visible = await approveBaseline(req.params.id as string, getAllowedScannerAgentIds(req), req.session.username ?? null, parsed.data.note);
   if (!visible) {
     res.status(404).json({ error: "baseline not found" });
     return;
   }
-  await db
-    .updateTable("network_baselines")
-    .set({
-      approved_at: new Date(),
-      approved_by: req.session.username ?? null,
-      alerted_keys: [],
-      ...(parsed.data.note !== undefined ? { note: parsed.data.note } : {}),
-    })
-    .where("id", "=", visible.id)
-    .execute();
   logger.info({ event: "baseline.approved", baseline_id: visible.id, network: visible.network, approved_by: req.session.username, source_ip: req.ip });
   recordAudit("baseline.approved", req.session.username, req.ip, { baseline_id: visible.id, network: visible.network });
   res.status(204).end();

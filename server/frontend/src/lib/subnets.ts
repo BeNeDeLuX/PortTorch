@@ -41,6 +41,7 @@ export interface SixteenGroup {
   subnets: number;
   hosts: number;
   openPorts: number;
+  newHosts: number;
   // Worst-of across its /24s, in the shape subnetRisk reads, so a /16
   // is ranked and coloured by exactly the rule a single /24 is.
   hostsWithCves: number;
@@ -71,6 +72,7 @@ export function groupIntoSixteens(subnets: SubnetEntry[]): { groups: SixteenGrou
         subnets: 0,
         hosts: 0,
         openPorts: 0,
+        newHosts: 0,
         hostsWithCves: 0,
         kevHosts: 0,
         maxCvss: null,
@@ -81,6 +83,7 @@ export function groupIntoSixteens(subnets: SubnetEntry[]): { groups: SixteenGrou
     group.subnets += 1;
     group.hosts += s.hosts;
     group.openPorts += s.openPorts;
+    group.newHosts += s.newHosts;
     group.hostsWithCves += s.hostsWithCves;
     group.kevHosts += s.kevHosts;
     if (s.maxCvss !== null && (group.maxCvss === null || s.maxCvss > group.maxCvss)) group.maxCvss = s.maxCvss;

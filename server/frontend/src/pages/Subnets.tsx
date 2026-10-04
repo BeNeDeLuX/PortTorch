@@ -21,14 +21,25 @@ import {
 } from "../lib/subnets";
 
 type View = "map" | "table" | "changes";
-type MapMetric = "risk" | "hosts" | "openPorts";
-type SortKey = "subnet" | "hosts" | "openPorts" | "hostsWithCves" | "criticalHosts" | "kevHosts" | "risk" | "lastSeenAt";
+type MapMetric = "risk" | "hosts" | "openPorts" | "new";
+type SortKey =
+  | "subnet"
+  | "hosts"
+  | "openPorts"
+  | "hostsWithCves"
+  | "criticalHosts"
+  | "kevHosts"
+  | "newHosts"
+  | "risk"
+  | "lastSeenAt";
 type SortDirection = "asc" | "desc";
 
 const PREFIXES = [16, 20, 22, 24];
 
 const METRIC_KEY = "porttorch.subnets.metric";
-const METRICS: MapMetric[] = ["hosts", "openPorts", "risk"];
+const METRICS: MapMetric[] = ["hosts", "openPorts", "new", "risk"];
+// Windows for "new hosts", matching the server's allowlist.
+const NEW_WINDOWS = [1, 7, 30, 90];
 
 // Hosts by default: "where are my machines" is the question the map is
 // opened with, and a risk colouring is mostly grey on a fleet with little
@@ -59,6 +70,7 @@ export default function Subnets({ me, onLogout }: { me: Me; onLogout: () => void
   const [view, setView] = useState<View>("map");
   const [metric, setMetricState] = useState<MapMetric>(storedMetric);
   const [prefix, setPrefix] = useState(24);
+  const [newDays, setNewDays] = useState(7);
   // The network the Changes view compares, handed over from a map card or
   // a table row.
   const [changesNetwork, setChangesNetwork] = useState("");
@@ -95,11 +107,11 @@ export default function Subnets({ me, onLogout }: { me: Me; onLogout: () => void
     setLoading(true);
     setError(null);
     api
-      .subnets(effectivePrefix, scannerFilterIds, hideRetired)
+      .subnets(effectivePrefix, scannerFilterIds, hideRetired, newDays)
       .then(setResult)
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load subnets"))
       .finally(() => setLoading(false));
-  }, [effectivePrefix, scannerFilterIds, hideRetired, view]);
+  }, [effectivePrefix, scannerFilterIds, hideRetired, view, newDays]);
 
   const subnets = result?.subnets ?? [];
   const totals = useMemo(
@@ -197,6 +209,7 @@ export default function Subnets({ me, onLogout }: { me: Me; onLogout: () => void
                   [
                     ["hosts", "Hosts"],
                     ["openPorts", "Open ports"],
+                    ["new", "New hosts"],
                     ["risk", "Risk"],
                   ] as [MapMetric, string][]
                 ).map(([key, label]) => (
@@ -204,6 +217,16 @@ export default function Subnets({ me, onLogout }: { me: Me; onLogout: () => void
                     {label}
                   </button>
                 ))}
+                {metric === "new" && (
+                  <>
+                    <span className="empty">first seen in the last</span>
+                    {NEW_WINDOWS.map((d) => (
+                      <button key={d} className={`chip ${newDays === d ? "active" : ""}`} onClick={() => setNewDays(d)}>
+                        {d === 1 ? "24 hours" : `${d} days`}
+                      </button>
+                    ))}
+                  </>
+                )}
               </div>
             ) : (
               <div className="filter-chips">
@@ -226,6 +249,7 @@ export default function Subnets({ me, onLogout }: { me: Me; onLogout: () => void
                   { header: "hosts_with_cves", value: (s) => s.hostsWithCves },
                   { header: "critical_hosts", value: (s) => s.criticalHosts },
                   { header: "kev_hosts", value: (s) => s.kevHosts },
+                  { header: `new_hosts_${newDays}d`, value: (s) => s.newHosts },
                   { header: "max_cvss", value: (s) => s.maxCvss },
                   { header: "last_seen_at", value: (s) => s.lastSeenAt },
                 ]}
@@ -248,7 +272,7 @@ export default function Subnets({ me, onLogout }: { me: Me; onLogout: () => void
                 <Tile label="Subnets with a critical CVE" value={totals.withCritical} />
               </div>
               {view === "map" ? (
-                <SubnetMap subnets={subnets} metric={metric} onCompare={openChanges} />
+                <SubnetMap subnets={subnets} metric={metric} newDays={result?.newDays ?? newDays} onCompare={openChanges} />
               ) : (
                 <div className="table-scroll">
                   <table className="sortable">
@@ -260,6 +284,9 @@ export default function Subnets({ me, onLogout }: { me: Me; onLogout: () => void
                         <th onClick={() => setSort("hostsWithCves")}>Hosts with CVEs{sortIndicator("hostsWithCves")}</th>
                         <th onClick={() => setSort("criticalHosts")}>Critical hosts{sortIndicator("criticalHosts")}</th>
                         <th onClick={() => setSort("kevHosts")}>KEV hosts{sortIndicator("kevHosts")}</th>
+                        <th onClick={() => setSort("newHosts")} title={`First seen in the last ${newDays === 1 ? "24 hours" : `${newDays} days`}`}>
+                          New{sortIndicator("newHosts")}
+                        </th>
                         <th onClick={() => setSort("risk")}>Risk{sortIndicator("risk")}</th>
                         <th onClick={() => setSort("lastSeenAt")}>Last seen{sortIndicator("lastSeenAt")}</th>
                       </tr>
@@ -287,6 +314,7 @@ export default function Subnets({ me, onLogout }: { me: Me; onLogout: () => void
                           <td>{s.hostsWithCves.toLocaleString()}</td>
                           <td>{s.criticalHosts.toLocaleString()}</td>
                           <td>{s.kevHosts.toLocaleString()}</td>
+                          <td>{s.newHosts > 0 ? s.newHosts.toLocaleString() : <span className="host-meta">-</span>}</td>
                           <td>
                             <RiskBadge subnet={s} />
                           </td>
@@ -333,15 +361,22 @@ function describe(s: SubnetEntry): string {
   ];
   if (s.hostsWithCves > 0) parts.push(`${s.hostsWithCves} with CVEs`);
   if (s.kevHosts > 0) parts.push(`${s.kevHosts} with a KEV finding`);
+  if (s.newHosts > 0) parts.push(`${s.newHosts} new`);
   if (s.maxCvss !== null) parts.push(`max CVSS ${s.maxCvss}`);
   return parts.join(" · ");
 }
 
 type NetworkSort = "address" | "hosts" | "risk";
 
-function metricValue(x: { hosts: number; openPorts: number }, metric: MapMetric): number {
-  return metric === "openPorts" ? x.openPorts : x.hosts;
+function metricValue(x: { hosts: number; openPorts: number; newHosts: number }, metric: MapMetric): number {
+  return metric === "openPorts" ? x.openPorts : metric === "new" ? x.newHosts : x.hosts;
 }
+
+const METRIC_UNIT: Record<Exclude<MapMetric, "risk">, string> = {
+  hosts: "hosts",
+  openPorts: "open ports",
+  new: "new hosts",
+};
 
 function describeNetwork(g: SixteenGroup): string {
   const parts = [
@@ -368,10 +403,12 @@ function describeNetwork(g: SixteenGroup): string {
 function SubnetMap({
   subnets,
   metric,
+  newDays,
   onCompare,
 }: {
   subnets: SubnetEntry[];
   metric: MapMetric;
+  newDays: number;
   onCompare: (network: string) => void;
 }) {
   const { groups, other } = useMemo(() => groupIntoSixteens(subnets), [subnets]);
@@ -423,7 +460,7 @@ function SubnetMap({
 
   return (
     <>
-      <MapLegend metric={metric} max={max} />
+      <MapLegend metric={metric} max={max} newDays={newDays} />
 
       {withOverview && (
         <>
@@ -431,7 +468,7 @@ function SubnetMap({
           <p className="host-meta">
             One square per /16
             {metric !== "risk"
-              ? `, shaded by its total from 1 to ${maxNetwork.toLocaleString()} ${metric === "hosts" ? "hosts" : "open ports"} (log scale)`
+              ? `, shaded by its total from 1 to ${maxNetwork.toLocaleString()} ${METRIC_UNIT[metric]} (log scale)`
               : ", coloured by the worst finding in it"}
             . Click one to show only that network below.
           </p>
@@ -587,7 +624,7 @@ function SubnetMap({
   );
 }
 
-function MapLegend({ metric, max }: { metric: MapMetric; max: number }) {
+function MapLegend({ metric, max, newDays }: { metric: MapMetric; max: number; newDays: number }) {
   if (metric === "risk") {
     return (
       <div className="subnet-legend">
@@ -607,7 +644,7 @@ function MapLegend({ metric, max }: { metric: MapMetric; max: number }) {
   return (
     <div className="subnet-legend">
       <span className="subnet-legend-item">
-        {metric === "hosts" ? "Hosts per /24" : "Open ports per /24"}: 1
+        {metric === "hosts" ? "Hosts per /24" : metric === "openPorts" ? "Open ports per /24" : `Hosts first seen in the last ${newDays === 1 ? "24 hours" : `${newDays} days`}, per /24`}: 1
         <span className="subnet-legend-ramp" aria-hidden="true" />
         {max.toLocaleString()}
         <span title="A few very full networks would otherwise wash every small one out to the same pale shade.">

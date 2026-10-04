@@ -14,6 +14,9 @@ import { getTokenScannerAgentIds, requireTokenWrite, tokenAuth } from "../apiTok
 import { queueScan } from "../scanGroups/queue";
 import { MAX_SPLIT_SCANNERS } from "../lib/scanSplit";
 import { zIp } from "../lib/zodIp";
+import { approveBaseline, baselineWithChanges, listBaselineSummaries } from "../baselines/service";
+import { listPolicySummaries, policyWithViolations } from "../portPolicies/service";
+import { computeNetworkChanges, DAY_MS, parseNetwork } from "../subnets/changes";
 import { applyHostFilters, parseHostFilterParams } from "../search/routes";
 import { ScanProfileNotFoundError, resolveNSEProfile, type NSEProfileSelection } from "../scanProfiles/resolve";
 import { NucleiProfileNotFoundError, resolveNucleiProfile, type NucleiProfileSelection } from "../nucleiProfiles/resolve";
@@ -911,3 +914,103 @@ async function buildEnrichment(hostId: string) {
     lastScanRequest: lastScanRequest ?? null,
   };
 }
+
+// --- Network changes, baselines and port policies --------------------------
+//
+// The read side of what the dashboard's Changes view, Baselines page and
+// Port Policies page show, through the same service functions, so a SOAR
+// or ticketing integration sees exactly what an analyst would - scoped by
+// the token's scanner restriction the way a session is scoped by its own.
+// The one write is approving a baseline: closing a change ticket is the
+// moment a deviation becomes expected, and the natural place to say so.
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const networkChangesSchema = z.object({
+  network: z.string().trim().min(1).max(100).describe("CIDR, address, or a partial IPv4 address such as 10.46"),
+  from: z.string().datetime({ offset: true }).optional().describe("Start of the comparison; default 7 days before `to`"),
+  to: z.string().datetime({ offset: true }).optional().describe("End of the comparison; default now"),
+  scannerAgent: z.string().min(1).optional().describe("Narrow to one scanner agent, by name"),
+});
+
+integrationsRouter.get("/networks/changes", asyncHandler(async (req, res) => {
+  const parsed = networkChangesSchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const network = parseNetwork(parsed.data.network);
+  if (!network) {
+    res.status(400).json({ error: "network must be a CIDR, an address, or a partial IPv4 address such as 10.46" });
+    return;
+  }
+  const to = parsed.data.to ? new Date(parsed.data.to) : new Date();
+  const from = parsed.data.from ? new Date(parsed.data.from) : new Date(to.getTime() - 7 * DAY_MS);
+  if (from >= to) {
+    res.status(400).json({ error: "from must be before to" });
+    return;
+  }
+  let filterIds: string[] = [];
+  if (parsed.data.scannerAgent) {
+    const agent = await db.selectFrom("scanner_agents").select("id").where("name", "=", parsed.data.scannerAgent).executeTakeFirst();
+    if (!agent) {
+      res.status(400).json({ error: `unknown scanner agent "${parsed.data.scannerAgent}"` });
+      return;
+    }
+    filterIds = [agent.id];
+  }
+  res.json(await computeNetworkChanges({ network, from, to, allowed: getTokenScannerAgentIds(req), filterIds, hideRetired: false }));
+}));
+
+integrationsRouter.get("/baselines", asyncHandler(async (req, res) => {
+  res.json(await listBaselineSummaries(getTokenScannerAgentIds(req)));
+}));
+
+integrationsRouter.get("/baselines/:id", asyncHandler(async (req, res) => {
+  const found = UUID_RE.test(String(req.params.id))
+    ? await baselineWithChanges(String(req.params.id), getTokenScannerAgentIds(req))
+    : null;
+  if (!found) {
+    res.status(404).json({ error: "baseline not found" });
+    return;
+  }
+  res.json(found);
+}));
+
+export const approveBaselineApiSchema = z.object({
+  note: z.string().trim().max(500).nullable().optional().describe("Replaces the baseline's note when given, e.g. the change ticket"),
+});
+
+integrationsRouter.post("/baselines/:id/approve", requireTokenWrite, asyncHandler(async (req, res) => {
+  const parsed = approveBaselineApiSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const actor = `api-token:${req.apiTokenName}`;
+  const visible = UUID_RE.test(String(req.params.id))
+    ? await approveBaseline(String(req.params.id), getTokenScannerAgentIds(req), actor, parsed.data.note)
+    : null;
+  if (!visible) {
+    res.status(404).json({ error: "baseline not found" });
+    return;
+  }
+  logger.info({ event: "baseline.approved", baseline_id: visible.id, network: visible.network, approved_by: actor, source_ip: req.ip });
+  recordAudit("baseline.approved", actor, req.ip, { baseline_id: visible.id, network: visible.network, api_token_id: req.apiTokenId });
+  res.status(204).end();
+}));
+
+integrationsRouter.get("/port-policies", asyncHandler(async (req, res) => {
+  res.json(await listPolicySummaries(getTokenScannerAgentIds(req)));
+}));
+
+integrationsRouter.get("/port-policies/:id", asyncHandler(async (req, res) => {
+  const found = UUID_RE.test(String(req.params.id))
+    ? await policyWithViolations(String(req.params.id), getTokenScannerAgentIds(req))
+    : null;
+  if (!found) {
+    res.status(404).json({ error: "policy not found" });
+    return;
+  }
+  res.json(found);
+}));

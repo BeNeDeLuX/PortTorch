@@ -71,7 +71,9 @@ export type WebhookEvent =
   | "network.coverage_stale"
   | "ssh_key.shared"
   | "ca_certificate.expiring_soon"
-  | "baseline.deviation";
+  | "baseline.deviation"
+  | "port_policy.violation"
+  | "backup.failed";
 
 // Plain-English subject line for an email channel - a webhook channel has
 // no equivalent need, since "event"/"data" already ride along in the JSON
@@ -98,6 +100,8 @@ const EVENT_SUBJECTS: Record<WebhookEvent, string> = {
   "ssh_key.shared": "SSH host key shared by several addresses",
   "ca_certificate.expiring_soon": "Trusted CA certificate expiring soon",
   "baseline.deviation": "Network deviates from its approved baseline",
+  "port_policy.violation": "Open port violates a port policy",
+  "backup.failed": "Scheduled backup failed",
 };
 
 // A Teams "Workflows" webhook (the current replacement for the classic,
