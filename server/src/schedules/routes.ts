@@ -14,6 +14,7 @@ import { DEFAULT_SCAN_PRIORITY, scanPrioritySchema } from "../scanPriority";
 import { isWithinScanWindow } from "../lib/scanWindow";
 import { normalizeScanTags, scanTagsSchema } from "../lib/scanTags";
 import { MAX_SPLIT_SCANNERS, splitTargetSpec } from "../lib/scanSplit";
+import { expandTargetPattern } from "../lib/targetPattern";
 
 export const schedulesRouter = Router();
 schedulesRouter.use(requireAuth);
@@ -285,11 +286,16 @@ schedulesRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
 // a divided rate has a rate to divide. Returns the problem, or null.
 async function checkScheduleScanners(ids: string[], targetSpec: string, rate: number | null, rateSplit: boolean): Promise<string | null> {
   if (ids.length === 0) return "pick at least one scanner";
+  // A pattern target is stored as the pattern and expanded on every run;
+  // checking it here means a typo fails the save, not every run after it.
+  const expansion = expandTargetPattern(targetSpec);
+  if (!expansion.ok) return expansion.error;
+  const plainSpec = expansion.expanded ? expansion.spec : targetSpec;
   const agents = await db.selectFrom("scanner_agents").select(["id", "revoked_at"]).where("id", "in", ids).execute();
   if (agents.length !== ids.length) return "unknown scanner agent";
   if (ids.length > 1) {
     if (agents.some((a) => a.revoked_at)) return "a revoked scanner cannot take part in a split scan";
-    const split = splitTargetSpec(targetSpec, ids);
+    const split = splitTargetSpec(plainSpec, ids);
     if (!split.ok) return split.error;
     if (rateSplit && rate === null) return "dividing the rate between scanners needs a rate to divide";
   }
@@ -461,6 +467,7 @@ schedulesRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
   ];
   const nextRateSplit = nextIds.length > 1 && (parsed.data.masscanRateSplit ?? existing.masscan_rate_split);
   const touchesScanners =
+    parsed.data.targetSpec !== undefined ||
     parsed.data.scannerAgentIds !== undefined ||
     parsed.data.scannerAgentId !== undefined ||
     parsed.data.masscanRateSplit !== undefined ||

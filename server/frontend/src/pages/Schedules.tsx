@@ -9,6 +9,7 @@ import ScanPriorityPicker from "../components/ScanPriorityPicker";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanRateSupportNote from "../components/ScanRateSupportNote";
 import ScannerSplitFields from "../components/ScannerSplitFields";
+import TargetPatternHint from "../components/TargetPatternHint";
 import PortSpecHint from "../components/PortSpecHint";
 import { formatDateTime } from "../lib/formatDate";
 import { parseTagList } from "../lib/scanTags";
@@ -667,6 +668,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
             Target
             <input placeholder="192.168.1.0/24 or 2001:db8::1" value={targetSpec} onChange={(e) => setTargetSpec(e.target.value)} />
           </label>
+          <TargetPatternHint />
           <label>
             Ports
             <input placeholder="1-1000" value={portSpec} onChange={(e) => setPortSpec(e.target.value)} />

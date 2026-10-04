@@ -500,6 +500,10 @@ export interface ScanRequestsTable {
   scan_group_id: ColumnType<string | null, string | null | undefined, string | null>;
   group_part: ColumnType<number | null, number | null | undefined, number | null>;
   group_parts: ColumnType<number | null, number | null | undefined, number | null>;
+  // The pattern target_spec was expanded from (lib/targetPattern.ts), or
+  // NULL for a target typed without one. target_spec is what the scanner
+  // runs; this is what was asked for.
+  target_pattern: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export interface ScanProfilesTable {

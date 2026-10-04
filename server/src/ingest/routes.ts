@@ -19,6 +19,7 @@ import { scanPriorityOrder } from "../scanPriority";
 import { parsePortSpec, portSpecCovers } from "../lib/portSpec";
 import { detectScanAnomalies, describeAnomaly, type ScanAnomaly } from "../scanJobs/anomalies";
 import { SCANNER_TUNABLES } from "../scannerConfig/tunables";
+import { expandExcludePattern } from "../lib/targetPattern";
 
 export const ingestRouter = Router();
 ingestRouter.use(asyncHandler(apiKeyAuth));
@@ -1603,7 +1604,15 @@ ingestRouter.get("/excludes", asyncHandler(async (req, res) => {
     .where((eb) => eb.or([eb("scanner_agent_id", "is", null), eb("scanner_agent_id", "=", req.scannerAgentId!)]))
     .execute();
   res.json({
-    ips: excludes.filter((e) => e.kind === "ip").map((e) => e.value),
+    // Pattern excludes ("10.46.0.0/16 *.2") arrive as the concrete
+    // addresses and ranges they cover, so a scanner honours them through
+    // the same masscan --excludefile as any other IP exclude, with no
+    // change of its own. Expanded on every fetch, like everything else
+    // here, so a rule takes effect on the very next scan.
+    ips: [
+      ...excludes.filter((e) => e.kind === "ip").map((e) => e.value),
+      ...excludes.filter((e) => e.kind === "ip_pattern").flatMap((e) => expandExcludePattern(e.value)),
+    ],
     ports: excludes.filter((e) => e.kind === "port").map((e) => e.value),
     // "ip_port" values are stored as "ip:portSpec" for IPv4, or
     // "[ipv6]:portSpec" for IPv6 (validated at creation time in

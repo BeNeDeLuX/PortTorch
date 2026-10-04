@@ -1,6 +1,7 @@
 import type { Kysely, Transaction } from "kysely";
 import type { Database } from "../db/types";
 import { partRate, splitTargetSpec } from "../lib/scanSplit";
+import { expandTargetPattern } from "../lib/targetPattern";
 
 // Everything a queued scan carries apart from its target and scanner -
 // identical for every part of a split scan.
@@ -48,7 +49,17 @@ export async function queueScan(
   template: ScanRequestTemplate,
   rateSplit: boolean
 ): Promise<QueueResult> {
-  const split = splitTargetSpec(targetSpec, scannerAgentIds);
+  // A pattern ("10.46.*.125", "10.46.0.0/16 !*.2") becomes the plain
+  // list the scanner runs before anything else happens, so the split,
+  // the length limit and the scanner all only ever see ordinary targets.
+  // The pattern itself is kept on the request (target_pattern) and on a
+  // group, as what was actually asked for.
+  const expansion = expandTargetPattern(targetSpec);
+  if (!expansion.ok) return expansion;
+  const plainSpec = expansion.expanded ? expansion.spec : targetSpec;
+  const targetPattern = expansion.expanded ? targetSpec.trim() : null;
+
+  const split = splitTargetSpec(plainSpec, scannerAgentIds);
   if (!split.ok) return split;
 
   if (split.parts.length === 1) {
@@ -62,7 +73,8 @@ export async function queueScan(
         ...template,
         scanner_agent_id: only.scannerAgentId,
         host_id: null,
-        target_spec: scannerAgentIds.length === 1 ? targetSpec : only.targetSpec,
+        target_spec: scannerAgentIds.length === 1 ? plainSpec : only.targetSpec,
+        target_pattern: targetPattern,
       })
       .returning(["id"])
       .executeTakeFirstOrThrow();
@@ -102,6 +114,7 @@ export async function queueScan(
         scan_group_id: group.id,
         group_part: i + 1,
         group_parts: n,
+        target_pattern: targetPattern,
       })
       .returning(["id"])
       .executeTakeFirstOrThrow();

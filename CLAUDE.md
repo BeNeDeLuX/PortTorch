@@ -43,6 +43,30 @@ The dashboard's admin-only Excludes page (`scan_excludes` table, `kind` = `ip`, 
 
 `kind = 'ip_port'` (value `"ip:portSpec"` for IPv4, e.g. `10.0.0.5:3389` or `10.0.0.5:8000-8010`; `"[ipv6]:portSpec"` for IPv6, e.g. `[2001:db8::1]:3389` — bracket notation is required there specifically because an IPv6 address itself contains colons, so a plain first-colon split can't unambiguously tell address from port; single address only, no CIDR/range for either family) is the odd one out: neither masscan's `--excludefile` (whole IPs/CIDRs/ranges only) nor its port spec (applies uniformly to every target) can express "skip this port on this one host but scan it elsewhere". So unlike the other two kinds, this is enforced *after* discovery — `pipeline.RunScan` calls `filterIPPortExcludes` (`excludes.go`) on the discovered results (from masscan for IPv4, or `RunNmapDiscovery` for IPv6) before the nmap enrichment stage, dropping any matching (ip, port) pair (and the whole host entry if that leaves it with zero ports); masscan/nmap discovery still probes that exact host:port, the exclude only means nothing downstream ever sees a match. `ingest/routes.ts`'s `GET /excludes` (which reconstructs `{ip, portSpec}` for the scanner) needs the same bracket-aware split — the scanner itself needs no changes here, since `client.go`'s `Excludes.IPPorts` already receives clean, pre-split fields regardless of family.
 
+### Address patterns: in a scan's target, and as a permanent exclude
+
+"Scan 10.46.0.0/16 but never .2 and .4 in any /24", or "scan only the .125 in each /24", used to mean typing out hundreds of addresses. A schedule then kept the list and forgot the rule behind it. `server/src/lib/targetPattern.ts` is a small grammar for it, shared by both places a pattern can appear so a pattern means the same thing in each:
+
+- each octet is a number, `*` or a range `a-b` (`10.46.*.125`, `10.46.1-20.*`);
+- a token starting with `!` excludes, either a plain address, CIDR or range, or a pattern that may give only the trailing octets (`!*.2`, `!*.0-9`);
+- tokens are separated by commas or whitespace, so `10.46.0.0/16 !*.2 !*.4` works as typed.
+
+**The scanner never sees a pattern, so no scanner needs updating for either use.** Both are expanded on the webserver into the plain grammar masscan and the scanner already take.
+
+**In a target**, `scanGroups/queue.ts`'s `queueScan` expands the pattern before anything else: before the split across scanners, before the length limit, before the row is written. `scan_requests.target_spec` holds the expansion, which is what the scanner runs. `scan_requests.target_pattern` (migration `1747000000000`) keeps what was asked for, so Scan History and the queue show the pattern and Rescan reuses it. A schedule and a scan group store the pattern itself, so a schedule re-expands it on every run. Schedule save, the estimate and the External API all reject a pattern that does not expand, with the reason, so a typo fails the save rather than every run after it. A spec with no pattern syntax is returned byte-identical, so nothing that worked before changes shape.
+
+The bounds are honest rather than silent:
+
+- An exclusion pattern is tested address by address, so it is limited to a /12 worth of addresses.
+- The expansion must fit the 64 KB one masscan argument can carry.
+- An expansion that leaves nothing to scan is an error, not an empty scan.
+
+**As an exclude**, `scan_excludes.kind = 'ip_pattern'` stores a range plus a pattern as one value (`10.46.0.0/16 *.2`). One value means the existing `(kind, value)` uniqueness covers it, so the same pattern in two ranges is two rules; whitespace is canonicalised so the same rule typed twice is a 409. `GET /api/ingest/excludes` expands it on every fetch into the addresses and ranges it covers, appended to `ips`. The scanner then enforces it through the same masscan `--excludefile` as any other IP exclude: fetched fresh before every scan, fail-closed, manual CLI scans included. The range is required and limited to a /12, so the list a scanner receives stays bounded. masscan was confirmed to honour `start-end` lines in an exclude file: a /24 minus a ten-address range and one address scanned 245 hosts.
+
+Found while building it: the exclude route's validity check was written `kind === "ip_pattern" || kind === "ip" ? ... : ...`, which JavaScript reads as `(... || ...) ? ...`. That ran every pattern through the IP check and rejected all of them. The integration test caught it before anything shipped.
+
+Verified by unit tests on the grammar (both examples above, octet ranges, suffix exclusions, passthrough of hostnames and IPv6, every refusal), by `targetPatterns.integration.test.ts` (ad-hoc, split, schedule re-expansion, estimate, history, External API, pattern excludes served to a scanner), and in a real browser: an estimate reading "expands to 65,024 addresses", a typo refused before queueing, the queue showing the pattern, and a pattern exclude listed as 256 addresses.
+
 ### Ad-hoc Scans: a DNS hostname target, resolved on the scanner
 
 The dashboard's **Ad-hoc Scans** page (and its External API counterpart, `POST /api/v1/scans/adhoc`) fires a single one-shot scan against an arbitrary target - no schedule, and no requirement that the target already be a known host, unlike the Rescan button. Mechanically it's just another `scan_requests` row (`host_id: null`), so it shares the entire existing queue path with Rescan/Schedule Scans; see `server/CLAUDE.md` for the webserver half and the frontend.

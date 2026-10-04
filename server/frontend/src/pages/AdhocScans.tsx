@@ -9,6 +9,7 @@ import NucleiProfilePicker from "../components/NucleiProfilePicker";
 import ScanPriorityPicker from "../components/ScanPriorityPicker";
 import ScanRateSupportNote from "../components/ScanRateSupportNote";
 import ScannerSplitFields from "../components/ScannerSplitFields";
+import TargetPatternHint from "../components/TargetPatternHint";
 import PortSpecHint from "../components/PortSpecHint";
 import { MAX_TARGET_SPEC_LENGTH, parseTargetList } from "../lib/targetList";
 import { parseTagList } from "../lib/scanTags";
@@ -216,6 +217,7 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
           {/* Same plain labelled file input as Import Scan and the
               settings cards, rather than a styled button - nothing here
               needs a new control. */}
+          <TargetPatternHint />
           <label>
             Or load a list from a file
             <input

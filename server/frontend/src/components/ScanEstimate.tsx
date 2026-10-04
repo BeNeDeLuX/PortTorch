@@ -110,6 +110,12 @@ function EstimateResult({ estimate, agents }: { estimate: Estimate; agents: Scan
           <strong>{formatDuration(estimate.masscanSeconds ?? 0)}</strong>
         </dd>
       </dl>
+      {estimate.expandedFrom && (
+        <p>
+          The pattern <code>{estimate.expandedFrom}</code> expands to <strong>{estimate.addresses?.toLocaleString() ?? "?"}</strong>{" "}
+          address{estimate.addresses === 1 ? "" : "es"}.
+        </p>
+      )}
       {estimate.splitError && <p className="callout-warning">{estimate.splitError}</p>}
       {estimate.parts && estimate.parts.length > 1 && <SplitEstimate estimate={estimate} agents={agents} />}
       <p className="empty">

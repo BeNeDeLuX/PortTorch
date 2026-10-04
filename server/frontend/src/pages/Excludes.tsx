@@ -10,7 +10,7 @@ const SCANNER_FILTER_GLOBAL = "__global__";
 export default function Excludes({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [excludes, setExcludes] = useState<ScanExclude[]>([]);
   const [agents, setAgents] = useState<ScannerAgent[]>([]);
-  const [kind, setKind] = useState<"ip" | "port" | "ip_port">("ip");
+  const [kind, setKind] = useState<ScanExclude["kind"]>("ip");
   const [value, setValue] = useState("");
   const [scannerAgentId, setScannerAgentId] = useState(ALL_SCANNERS);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +73,7 @@ export default function Excludes({ me, onLogout }: { me: Me; onLogout: () => voi
   const ipExcludes = filtered.filter((x) => x.kind === "ip");
   const portExcludes = filtered.filter((x) => x.kind === "port");
   const ipPortExcludes = filtered.filter((x) => x.kind === "ip_port");
+  const patternExcludes = filtered.filter((x) => x.kind === "ip_pattern");
 
   return (
     <div className="dashboard">
@@ -94,8 +95,9 @@ export default function Excludes({ me, onLogout }: { me: Me; onLogout: () => voi
       <form className="schedule-form" onSubmit={handleCreate}>
         <label>
           Kind
-          <select value={kind} onChange={(e) => setKind(e.target.value as "ip" | "port" | "ip_port")}>
+          <select value={kind} onChange={(e) => setKind(e.target.value as ScanExclude["kind"])}>
             <option value="ip">IP / CIDR</option>
+            <option value="ip_pattern">IP pattern in a range</option>
             <option value="port">Port / range</option>
             <option value="ip_port">IP + port combination</option>
           </select>
@@ -106,7 +108,9 @@ export default function Excludes({ me, onLogout }: { me: Me; onLogout: () => voi
             placeholder={
               kind === "ip"
                 ? "10.0.0.5, 10.0.0.0/24, 10.0.0.1-10.0.0.10, 2001:db8::1, or 2001:db8::/32"
-                : kind === "port"
+                : kind === "ip_pattern"
+                  ? "10.46.0.0/16 *.2  -  every .2 in that /16"
+                  : kind === "port"
                   ? "3389 or 8000-8010"
                   : "10.0.0.5:3389, 10.0.0.5:8000-8010, or [2001:db8::1]:3389"
             }
@@ -161,6 +165,33 @@ export default function Excludes({ me, onLogout }: { me: Me; onLogout: () => voi
                   <button className="facet-item" onClick={() => handleDelete(x)}>
                     <span>
                       {x.value} <span className="chip-inline">{scopeLabel(x)}</span>
+                    </span>
+                    <span className="facet-count btn-icon-label"><IconTrash size={12} /> remove</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <h3>IP patterns ({patternExcludes.length})</h3>
+          <p className="empty">
+            Every address in a range matching a pattern - <code>10.46.0.0/16 *.2</code> is the .2 in each /24 of that /16,{" "}
+            <code>10.46.0.0/16 *.0-9</code> the first ten. Scanners receive them as the plain addresses they cover, so they
+            need no update to honour them.
+          </p>
+          {patternExcludes.length === 0 ? (
+            <p className="empty">No pattern excludes match.</p>
+          ) : (
+            <ul className="facet-list exclude-list">
+              {patternExcludes.map((x) => (
+                <li key={x.id}>
+                  <button className="facet-item" onClick={() => handleDelete(x)}>
+                    <span>
+                      {x.value}{" "}
+                      <span className="host-meta">
+                        ({x.address_count?.toLocaleString() ?? "?"} address{x.address_count === 1 ? "" : "es"})
+                      </span>{" "}
+                      <span className="chip-inline">{scopeLabel(x)}</span>
                     </span>
                     <span className="facet-count btn-icon-label"><IconTrash size={12} /> remove</span>
                   </button>

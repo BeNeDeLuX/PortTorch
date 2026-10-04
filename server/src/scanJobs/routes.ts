@@ -132,6 +132,9 @@ scanJobsRouter.get("/history", asyncHandler(async (req, res) => {
       // has at most one request (scan_requests.scan_job_id is set once,
       // when it finishes), so these cannot fan out.
       sql<string | null>`(select sr.scan_group_id from scan_requests sr where sr.scan_job_id = scan_jobs.id limit 1)`.as("scan_group_id"),
+      // The pattern this job's target was expanded from, when it was one -
+      // what was asked for, rather than the list of addresses it became.
+      sql<string | null>`(select sr.target_pattern from scan_requests sr where sr.scan_job_id = scan_jobs.id limit 1)`.as("target_pattern"),
       sql<number | null>`(select sr.group_part from scan_requests sr where sr.scan_job_id = scan_jobs.id limit 1)`.as("group_part"),
       sql<number | null>`(select sr.group_parts from scan_requests sr where sr.scan_job_id = scan_jobs.id limit 1)`.as("group_parts"),
       sql<string | null>`(
@@ -377,6 +380,7 @@ scanJobsRouter.get("/queue", asyncHandler(async (req, res) => {
       "scan_requests.priority as priority",
       "scan_requests.group_part as group_part",
       "scan_requests.group_parts as group_parts",
+      "scan_requests.target_pattern as target_pattern",
       "scanner_agents.name as scanner_agent_name",
       "hosts.ip as host_ip",
       "hosts.hostname as host_hostname",

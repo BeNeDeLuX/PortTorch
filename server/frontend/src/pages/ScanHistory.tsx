@@ -171,7 +171,18 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
               {items.map((s) => (
                 <tr key={s.id}>
                   <td className="spec-cell">
-                    {s.target_spec}
+                    {/* A pattern scan shows the pattern; the list of addresses it
+                        became is one hover away rather than filling the row. */}
+                    {s.target_pattern ? (
+                      <>
+                        {s.target_pattern}
+                        <span className="scan-part-badge" title={`Expanded to: ${s.target_spec.length > 400 ? `${s.target_spec.slice(0, 400)}...` : s.target_spec}`}>
+                          pattern
+                        </span>
+                      </>
+                    ) : (
+                      s.target_spec
+                    )}
                     {s.group_parts !== null && s.group_parts > 1 && (
                       <button
                         type="button"
@@ -236,7 +247,7 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
                               state: s.group_target_spec
                                 ? { targetSpec: s.group_target_spec, portSpec: s.port_spec, scannerAgentIds: s.group_scanner_agent_ids ?? undefined }
                                 : {
-                                    targetSpec: s.target_spec,
+                                    targetSpec: s.target_pattern ?? s.target_spec,
                                     portSpec: s.port_spec,
                                     ...(s.scanner_agent_id ? { scannerAgentId: s.scanner_agent_id } : {}),
                                   },

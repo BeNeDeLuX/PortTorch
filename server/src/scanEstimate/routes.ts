@@ -7,6 +7,7 @@ import { getAllowedScannerAgentIds } from "../auth/scannerScope";
 import { asyncHandler } from "../lib/asyncHandler";
 import { MAX_SPLIT_SCANNERS, partRate, splitTargetSpec } from "../lib/scanSplit";
 import { DEFAULT_MASSCAN_RATE, estimateScan, type ScanEstimate } from "./estimate";
+import { expandTargetPattern } from "../lib/targetPattern";
 
 export const scanEstimateRouter = Router();
 scanEstimateRouter.use(requireAuth);
@@ -60,16 +61,27 @@ scanEstimateRouter.post("/", asyncHandler(async (req, res) => {
     return;
   }
 
+  // A pattern is estimated as what it expands to - the list the scanner
+  // will actually run - and a pattern that does not expand is refused
+  // with the same reason queueing it would give.
+  const expansion = expandTargetPattern(parsed.data.targetSpec);
+  if (!expansion.ok) {
+    res.status(400).json({ error: expansion.error });
+    return;
+  }
+  const targetSpec = expansion.expanded ? expansion.spec : parsed.data.targetSpec;
+
   const ids = [...new Set(parsed.data.scannerAgentIds ?? (parsed.data.scannerAgentId ? [parsed.data.scannerAgentId] : []))];
   const configured = await configuredRates(req, ids);
   const whole = rateFor(ids[0], parsed.data.masscanRate, configured);
   const estimate: ScanEstimate & {
     parts?: Array<ScanEstimate & { scannerAgentId: string; targetSpec: string }>;
     splitError?: string;
-  } = estimateScan(parsed.data.targetSpec, parsed.data.portSpec, whole.rate, whole.rateSource);
+    expandedFrom?: string;
+  } = estimateScan(targetSpec, parsed.data.portSpec, whole.rate, whole.rateSource);
 
   if (ids.length > 1) {
-    const split = splitTargetSpec(parsed.data.targetSpec, ids);
+    const split = splitTargetSpec(targetSpec, ids);
     if (!split.ok) {
       estimate.splitError = split.error;
     } else {
@@ -81,5 +93,6 @@ scanEstimateRouter.post("/", asyncHandler(async (req, res) => {
     }
   }
 
+  if (expansion.expanded) estimate.expandedFrom = parsed.data.targetSpec;
   res.json(estimate);
 }));

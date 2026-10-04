@@ -7,6 +7,7 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { isIPv4, isIPv4Cidr, isIPv4Range, isIPv6, isIPv6Cidr } from "../lib/net";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
+import { countExcludePattern, parseExcludePatternValue } from "../lib/targetPattern";
 
 // Admin-only, like scanner agents/schedules/webhooks - this controls what
 // every scanner instance is allowed to scan at all, not a day-to-day host
@@ -62,11 +63,15 @@ excludesRouter.get("/", asyncHandler(async (_req, res) => {
     .orderBy("scan_excludes.kind")
     .orderBy("scan_excludes.created_at")
     .execute();
-  res.json(excludes);
+  // How many addresses a pattern exclude actually covers, so "*.2 in
+  // 10.46.0.0/16" reads as the 256 addresses it is rather than as one rule.
+  res.json(excludes.map((e) => (e.kind === "ip_pattern" ? { ...e, address_count: countExcludePattern(e.value) } : e)));
 }));
 
 const createExcludeSchema = z.object({
-  kind: z.enum(["ip", "port", "ip_port"]),
+  // ip_pattern: "<range> <pattern>", e.g. "10.46.0.0/16 *.2" - every
+  // address in the range matching the pattern (lib/targetPattern.ts).
+  kind: z.enum(["ip", "port", "ip_port", "ip_pattern"]),
   value: z.string().trim().min(1).max(64),
   // Omitted/null = applies to every scanner (the inherited default).
   scannerAgentId: z.string().uuid().nullish(),
@@ -78,15 +83,32 @@ excludesRouter.post("/", asyncHandler(async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  const { kind, value } = parsed.data;
+  const { kind } = parsed.data;
+  let { value } = parsed.data;
   const scannerAgentId = parsed.data.scannerAgentId ?? null;
 
+  if (kind === "ip_pattern") {
+    const pattern = parseExcludePatternValue(value);
+    if ("error" in pattern) {
+      res.status(400).json({ error: pattern.error });
+      return;
+    }
+    // One canonical spacing, so the duplicate check below catches the same
+    // rule typed with two spaces instead of one.
+    value = `${pattern.scopeText} ${pattern.patternText}`;
+  }
+
+  // A pattern was already validated above. Parenthesised deliberately: a
+  // bare `kind === "ip_pattern" || kind === "ip" ? ... : ...` reads as
+  // `(... || ...) ? ...`, which ran a pattern through the IP check and
+  // rejected every one - caught by the integration test.
   const isValid =
-    kind === "ip"
+    kind === "ip_pattern" ||
+    (kind === "ip"
       ? net.isIP(value) === 4 || isIPv4Cidr(value) || isIPv4Range(value) || isIPv6(value) || isIPv6Cidr(value)
       : kind === "port"
         ? isValidPortSpec(value)
-        : isValidIPPortValue(value);
+        : isValidIPPortValue(value));
   if (!isValid) {
     res.status(400).json({
       error:

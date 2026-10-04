@@ -457,8 +457,10 @@ export interface HostComment {
 
 export interface ScanExclude {
   id: string;
-  kind: "ip" | "port" | "ip_port";
+  kind: "ip" | "port" | "ip_port" | "ip_pattern";
   value: string;
+  // ip_pattern only: how many addresses the pattern covers in its range.
+  address_count?: number;
   // null = applies to every scanner (the inherited default)
   scanner_agent_id: string | null;
   scanner_agent_name: string | null;
@@ -976,8 +978,10 @@ export interface ScanEstimate {
   masscanSeconds: number | null;
   // Per scanner, when the scan is split - it takes as long as its
   // slowest part. splitError says why a split is not possible.
-  parts?: Array<Omit<ScanEstimate, "parts" | "splitError"> & { scannerAgentId: string; targetSpec: string }>;
+  parts?: Array<Omit<ScanEstimate, "parts" | "splitError" | "expandedFrom"> & { scannerAgentId: string; targetSpec: string }>;
   splitError?: string;
+  // Set when the target was a pattern: the estimate is for its expansion.
+  expandedFrom?: string;
 }
 
 export interface WebserverReleaseStatus {
@@ -1072,6 +1076,7 @@ export interface QueuedScanRequest {
   // Set when this request is one scanner's share of a split scan.
   group_part: number | null;
   group_parts: number | null;
+  target_pattern: string | null;
 }
 
 export interface ScannerAgentWithKey extends ScannerAgent {
@@ -1266,6 +1271,8 @@ export interface ScanHistoryEntry {
   // covering anything.
   remaining_target_spec: string | null;
   resumed_at: string | null;
+  // The pattern the target was expanded from ("10.46.*.125"), or null.
+  target_pattern: string | null;
   // One scanner's share of a split scan: which part of how many, and
   // the target of the scan as a whole.
   scan_group_id: string | null;
@@ -1906,7 +1913,7 @@ export const api = {
   webhookDeliveries: (id: string) => request<WebhookDelivery[]>(`/api/webhooks/${id}/deliveries`),
 
   excludes: () => request<ScanExclude[]>("/api/excludes"),
-  createExclude: (kind: "ip" | "port" | "ip_port", value: string, scannerAgentId: string | null) =>
+  createExclude: (kind: ScanExclude["kind"], value: string, scannerAgentId: string | null) =>
     request<ScanExclude>("/api/excludes", { method: "POST", body: JSON.stringify({ kind, value, scannerAgentId }) }),
   deleteExclude: (id: string) => request<void>(`/api/excludes/${id}`, { method: "DELETE" }),
 
