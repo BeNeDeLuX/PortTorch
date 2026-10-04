@@ -1093,6 +1093,19 @@ same webserver.
 ### Webserver
 
 ```bash
+sudo scripts/update-webserver.sh            # newest version
+sudo scripts/update-webserver.sh 0.57.0     # or a specific published one
+```
+
+Pulls the new image with retries, falling back to the copy published on
+GitHub's registry (`ghcr.io/benedelux/porttorch-server`) if Docker Hub
+keeps timing out, and only recreates the container once the pull has
+actually succeeded - a failed pull leaves the running webserver untouched
+instead of quietly restarting the old image. It then waits for `/healthz`
+and prints the version the webserver reports. The plain equivalent, without
+the retries and the fallback, is still:
+
+```bash
 sudo docker compose pull && sudo docker compose up -d
 ```
 

@@ -199,7 +199,24 @@ type scanJobResponse struct {
 // in progress. A one-shot "scan"/"menu" process has nothing polling
 // during its single blocking scan and would never see it.
 func (c *Client) CreateScanJob(ctx context.Context, targetSpec, portSpec string, cancellable bool) (string, error) {
+	return c.createScanJob(ctx, targetSpec, portSpec, cancellable, "")
+}
+
+// CreateScanJobForRequest is CreateScanJob for a scan the queue handed
+// out: it names the request, so the webserver links the two the moment
+// the scan starts rather than only when it finishes. That link is what
+// lets the dashboard show a running scan as "part 2 of 3" of a split scan,
+// or as the pattern it was expanded from, instead of a bare list of
+// addresses. A webserver too old to know the field ignores it.
+func (c *Client) CreateScanJobForRequest(ctx context.Context, targetSpec, portSpec string, cancellable bool, scanRequestID string) (string, error) {
+	return c.createScanJob(ctx, targetSpec, portSpec, cancellable, scanRequestID)
+}
+
+func (c *Client) createScanJob(ctx context.Context, targetSpec, portSpec string, cancellable bool, scanRequestID string) (string, error) {
 	body := map[string]any{"targetSpec": targetSpec, "portSpec": portSpec, "cancellable": cancellable}
+	if scanRequestID != "" {
+		body["scanRequestId"] = scanRequestID
+	}
 	var resp scanJobResponse
 	if err := c.doJSON(ctx, http.MethodPost, "/api/ingest/scan-jobs", body, &resp); err != nil {
 		return "", err

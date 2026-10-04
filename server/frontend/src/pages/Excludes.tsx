@@ -11,6 +11,11 @@ export default function Excludes({ me, onLogout }: { me: Me; onLogout: () => voi
   const [excludes, setExcludes] = useState<ScanExclude[]>([]);
   const [agents, setAgents] = useState<ScannerAgent[]>([]);
   const [kind, setKind] = useState<ScanExclude["kind"]>("ip");
+  // What a pattern exclude would cover, fetched as it is typed - see the
+  // webserver's GET /api/excludes/pattern-preview.
+  const [patternPreview, setPatternPreview] = useState<
+    { ok: true; addressCount: number; sample: string[]; entries: number } | { ok: false; error: string } | null
+  >(null);
   const [value, setValue] = useState("");
   const [scannerAgentId, setScannerAgentId] = useState(ALL_SCANNERS);
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +37,28 @@ export default function Excludes({ me, onLogout }: { me: Me; onLogout: () => voi
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (kind !== "ip_pattern" || !value.trim()) {
+      setPatternPreview(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      api
+        .previewExcludePattern(value.trim())
+        .then((p) => {
+          if (!cancelled) setPatternPreview(p);
+        })
+        .catch(() => {
+          if (!cancelled) setPatternPreview(null);
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [kind, value]);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -133,6 +160,16 @@ export default function Excludes({ me, onLogout }: { me: Me; onLogout: () => voi
           <IconPlus /> Add
         </button>
       </form>
+      {patternPreview &&
+        (patternPreview.ok ? (
+          <p className="callout-success">
+            Covers <strong>{patternPreview.addressCount.toLocaleString()}</strong> address
+            {patternPreview.addressCount === 1 ? "" : "es"}: {patternPreview.sample.join(", ")}
+            {patternPreview.entries > patternPreview.sample.length ? ", ..." : ""}
+          </p>
+        ) : (
+          <p className="callout-warning">{patternPreview.error}</p>
+        ))}
 
       {loading ? (
         <p>Loading...</p>

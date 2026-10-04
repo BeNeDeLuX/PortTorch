@@ -315,8 +315,9 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
             ) : health.webserverRelease.updateAvailable ? (
               <>
                 Running {health.webserverRelease.runningVersion} — {health.webserverRelease.latestVersion} is published.
-                Update with <code>docker compose pull webserver &amp;&amp; docker compose up -d webserver</code> on the
-                host; the webserver cannot replace its own container.
+                Update with <code>sudo scripts/update-webserver.sh</code> in the PortTorch checkout on the host - it retries
+                the download, falls back to ghcr.io if Docker Hub is unreachable, and leaves the running webserver alone if
+                both fail. The webserver cannot replace its own container.
               </>
             ) : (
               <>Running {health.webserverRelease.runningVersion}, the newest published version.</>

@@ -153,6 +153,19 @@ describe("address patterns", () => {
     expect(mine).not.toContain("10.94.0.3");
   });
 
+  it("previews what a pattern exclude would cover before it is saved", async () => {
+    const ok = await adminClient.get(`/api/excludes/pattern-preview?value=${encodeURIComponent("10.94.0.0/16 *.4")}`);
+    expect(ok.body).toEqual({ ok: true, addressCount: 256, sample: ["10.94.0.4", "10.94.1.4", "10.94.2.4", "10.94.3.4", "10.94.4.4"], entries: 256 });
+    const bad = await adminClient.get(`/api/excludes/pattern-preview?value=${encodeURIComponent("10.94.0.0/16 10.94.0.4")}`);
+    expect(bad.body.ok).toBe(false);
+    expect(bad.body.error).toContain("not a pattern");
+    // Nothing was saved by previewing.
+    const saved = await db.selectFrom("scan_excludes").select("id").where("value", "=", "10.94.0.0/16 *.4").execute();
+    expect(saved).toHaveLength(0);
+    // Exclude management is admin-only, and so is its preview.
+    expect((await op.get(`/api/excludes/pattern-preview?value=${encodeURIComponent("10.94.0.0/16 *.4")}`)).status).toBe(403);
+  });
+
   it("splits a pattern through the External API too", async () => {
     const token = await import("./helpers").then((h) => h.createTestApiToken("it-pattern-token"));
     try {

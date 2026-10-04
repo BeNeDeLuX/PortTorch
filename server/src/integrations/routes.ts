@@ -293,10 +293,9 @@ export const cancelScanSchema = z.object({
 // ever one triggered through the scan_requests queue (rescan button/
 // schedules), the same mechanism requestRescan above uses, not an
 // arbitrary ad-hoc scan a scanner's own local "serve" REST API happens to
-// be running that includes this host's IP in a wider range. host_id ->
-// scan_job isn't a direct link while a scan is still in progress (only
-// scan_requests.scan_job_id gets set, and only once the scan finishes),
-// so this resolves it via the currently "claimed" scan_requests row's
+// be running that includes this host's IP in a wider range. Resolved via
+// the currently "claimed" scan_requests row: its scan_job_id when the
+// scanner named the request on starting the job, otherwise its
 // scanner_agent_id/target_spec/port_spec, which pollOnce used verbatim to
 // create the matching scan_jobs row.
 integrationsRouter.post("/hosts/cancel-scan", requireTokenWrite, asyncHandler(async (req, res) => {
@@ -322,7 +321,7 @@ integrationsRouter.post("/hosts/cancel-scan", requireTokenWrite, asyncHandler(as
 
   const claimedRequest = await db
     .selectFrom("scan_requests")
-    .select(["scanner_agent_id", "target_spec", "port_spec"])
+    .select(["scanner_agent_id", "target_spec", "port_spec", "scan_job_id"])
     .where("host_id", "=", host.id)
     .where("status", "=", "claimed")
     .orderBy("created_at", "desc")
@@ -332,7 +331,13 @@ integrationsRouter.post("/hosts/cancel-scan", requireTokenWrite, asyncHandler(as
     return;
   }
 
-  const job = await db
+  // A scanner from 0.28.0 names the request when it starts the job, so
+  // the link is exact. An older one does not, and the job is found the
+  // way it always was: the running job created from this request's own
+  // scanner, target and ports.
+  const job = claimedRequest.scan_job_id
+    ? { id: claimedRequest.scan_job_id }
+    : await db
     .selectFrom("scan_jobs")
     .select(["id"])
     .where("scanner_agent_id", "=", claimedRequest.scanner_agent_id)

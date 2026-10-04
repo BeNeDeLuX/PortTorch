@@ -31,6 +31,12 @@ const createScanJobSchema = z.object({
   // triggered ad-hoc scans and queue-triggered ones) - see
   // ScanJobsTable.cancellable for why only those can be stopped.
   cancellable: z.boolean().optional().default(false),
+  // The queued request this job runs, sent by a scanner from 0.28.0. Links
+  // the two the moment the scan starts instead of only when it finishes,
+  // which is what lets a running scan show as "part 2/3" or as its
+  // pattern on the dashboard. Optional: a scanner's local scan has no
+  // request, and an older scanner does not send it.
+  scanRequestId: z.string().uuid().optional(),
 });
 
 ingestRouter.post("/scan-jobs", asyncHandler(async (req, res) => {
@@ -51,9 +57,26 @@ ingestRouter.post("/scan-jobs", asyncHandler(async (req, res) => {
     .returning(["id", "status", "started_at"])
     .executeTakeFirstOrThrow();
 
+  // Only a request this scanner has actually claimed, and only once: a
+  // scanner cannot attach its job to another scanner's request, or to one
+  // it is not running. A request that does not qualify is simply not
+  // linked here - the completion report links it as it always did - rather
+  // than failing a scan that has already started.
+  if (parsed.data.scanRequestId) {
+    await db
+      .updateTable("scan_requests")
+      .set({ scan_job_id: job.id })
+      .where("id", "=", parsed.data.scanRequestId)
+      .where("scanner_agent_id", "=", req.scannerAgentId!)
+      .where("status", "=", "claimed")
+      .where("scan_job_id", "is", null)
+      .execute();
+  }
+
   logger.info({
     event: "scan.started",
     scan_job_id: job.id,
+    scan_request_id: parsed.data.scanRequestId ?? null,
     scanner_agent_id: req.scannerAgentId,
     scanner_agent_name: req.scannerAgentName,
     target_spec: parsed.data.targetSpec,

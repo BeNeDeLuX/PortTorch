@@ -210,3 +210,30 @@ func TestCompleteScanJobWithDiscoverySendsZero(t *testing.T) {
 		t.Errorf("discoveredHosts = %v, want 0", body["discoveredHosts"])
 	}
 }
+
+// A queue-triggered job names its request so the webserver can link the
+// two while the scan runs; every other job leaves the field out entirely,
+// so the webserver never mistakes a local scan for a queued one.
+func TestCreateScanJobNamesItsRequestOnlyWhenThereIsOne(t *testing.T) {
+	var bodies []map[string]any
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		bodies = append(bodies, body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"job-1"}`))
+	})
+
+	if _, err := c.CreateScanJob(context.Background(), "10.0.0.0/24", "22", false); err != nil {
+		t.Fatalf("CreateScanJob: %v", err)
+	}
+	if _, err := c.CreateScanJobForRequest(context.Background(), "10.0.0.0/24", "22", true, "req-7"); err != nil {
+		t.Fatalf("CreateScanJobForRequest: %v", err)
+	}
+	if _, present := bodies[0]["scanRequestId"]; present {
+		t.Errorf("a local scan sent scanRequestId = %v, want the field absent", bodies[0]["scanRequestId"])
+	}
+	if bodies[1]["scanRequestId"] != "req-7" {
+		t.Errorf("scanRequestId = %v, want req-7", bodies[1]["scanRequestId"])
+	}
+}

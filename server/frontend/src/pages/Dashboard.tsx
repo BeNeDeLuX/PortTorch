@@ -35,6 +35,8 @@ import WindowsBuildBadge from "../components/WindowsBuildBadge";
 import { displayHostname, identitySourceLabel } from "../lib/derivedIdentity";
 import ScanProgressModal from "../components/ScanProgressModal";
 import ScanProgressInline from "../components/ScanProgressInline";
+import ActiveScanTarget from "../components/ActiveScanTarget";
+import ScanGroupModal from "../components/ScanGroupModal";
 import { elapsedLabel } from "../lib/elapsed";
 import { formatDateTime } from "../lib/formatDate";
 import { cveSeverityClass } from "../lib/cveSeverity";
@@ -302,6 +304,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
   const [saveSearchName, setSaveSearchName] = useState("");
   const [activeScanJobs, setActiveScanJobs] = useState<ActiveScanJob[]>([]);
   const [detailsJobId, setDetailsJobId] = useState<string | null>(null);
+  const [groupId, setGroupId] = useState<string | null>(null);
   // Forces a re-render every few seconds so elapsedLabel's "running for
   // Xm Ys" stays live between polls, not just when the job list changes.
   const [, setClockTick] = useState(0);
@@ -865,7 +868,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
             {activeScanJobs.map((j) => (
               <li key={j.id}>
                 <span className="active-scan-target">
-                  {j.target_spec} <span className="host-meta">(ports {j.port_spec})</span>
+                  <ActiveScanTarget job={j} onOpenGroup={setGroupId} /> <span className="host-meta">(ports {j.port_spec})</span>
                 </span>
                 <span className="host-meta">
                   {j.scanner_agent_name ?? "unknown scanner"} · running {elapsedLabel(j.started_at)}
@@ -1535,6 +1538,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
         </main>
       </div>
 
+      {groupId && <ScanGroupModal groupId={groupId} me={me} onClose={() => setGroupId(null)} />}
       {detailsJobId && (
         <ScanProgressModal
           jobId={detailsJobId}

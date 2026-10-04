@@ -1019,6 +1019,13 @@ export interface ActiveScanJob {
   applicable_excludes?: Array<{ kind: "ip" | "port" | "ip_port"; value: string }>;
   // Host counts for an inline progress bar - see ScanJobProgress.counts.
   counts: ScanProgressCounts | null;
+  // Set once the scanner has linked this job to its queued request
+  // (scanner 0.28.0+): which share of a split scan it is, and the pattern
+  // its target was expanded from.
+  scan_group_id: string | null;
+  group_part: number | null;
+  group_parts: number | null;
+  target_pattern: string | null;
   // True only for jobs from a long-running "serve" process - see
   // ScanJobsTable.cancellable (server/src/db/types.ts) for why only those
   // can actually be stopped.
@@ -1916,6 +1923,10 @@ export const api = {
   createExclude: (kind: ScanExclude["kind"], value: string, scannerAgentId: string | null) =>
     request<ScanExclude>("/api/excludes", { method: "POST", body: JSON.stringify({ kind, value, scannerAgentId }) }),
   deleteExclude: (id: string) => request<void>(`/api/excludes/${id}`, { method: "DELETE" }),
+  previewExcludePattern: (value: string) =>
+    request<{ ok: true; addressCount: number; sample: string[]; entries: number } | { ok: false; error: string }>(
+      `/api/excludes/pattern-preview?${new URLSearchParams({ value }).toString()}`
+    ),
 
   savedSearchMatches: () => request<SavedSearchMatches[]>("/api/saved-searches/matches"),
 

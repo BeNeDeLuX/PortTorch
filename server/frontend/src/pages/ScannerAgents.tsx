@@ -6,6 +6,8 @@ import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
 import ScanProgressModal from "../components/ScanProgressModal";
 import ScanProgressInline from "../components/ScanProgressInline";
+import ActiveScanTarget from "../components/ActiveScanTarget";
+import ScanGroupModal from "../components/ScanGroupModal";
 import { formatDateTime } from "../lib/formatDate";
 import { elapsedLabel } from "../lib/elapsed";
 import { isVersionBehind } from "../lib/semver";
@@ -124,6 +126,7 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
   const [queueSortDirection, setQueueSortDirection] = useState<SortDirection>("asc");
   const [activeScanJobs, setActiveScanJobs] = useState<ActiveScanJob[]>([]);
   const [detailsJobId, setDetailsJobId] = useState<string | null>(null);
+  const [groupId, setGroupId] = useState<string | null>(null);
   const [scanQueue, setScanQueue] = useState<QueuedScanRequest[]>([]);
   const [queueScannerFilterIds, setQueueScannerFilterIds] = useState<string[]>([]);
   const [latestRelease, setLatestRelease] = useState<ScannerReleaseInfo | null>(null);
@@ -558,7 +561,8 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
                         <td className="spec-cell">
                           {activeJob && (
                             <>
-                              {activeJob.target_spec} <span className="host-meta">(ports {activeJob.port_spec})</span>
+                              <ActiveScanTarget job={activeJob} onOpenGroup={setGroupId} />{" "}
+                              <span className="host-meta">(ports {activeJob.port_spec})</span>
                               <div className="host-meta">
                                 running {elapsedLabel(activeJob.started_at)}
                                 {" "}
@@ -765,6 +769,7 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
         </>
       )}
 
+      {groupId && <ScanGroupModal groupId={groupId} me={me} onClose={() => setGroupId(null)} />}
       {detailsJobId && (
         <ScanProgressModal
           jobId={detailsJobId}

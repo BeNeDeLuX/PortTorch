@@ -333,4 +333,49 @@ describe("scans split across several scanners", () => {
       await deleteTestApiToken(token.id);
     }
   });
+
+  // A share of a split scan is recognisable while it runs, not only once
+  // it has finished - the scanner names the request when it starts the job.
+  it("links a running job to its request the moment it starts", async () => {
+    const d = await createTestAgent("it-split-d");
+    const e = await createTestAgent("it-split-e");
+    try {
+      const res = await op.post("/api/adhoc-scans").send({ scannerAgentIds: [d.id, e.id], targetSpec: "240.91.20.0/24", portSpec: "22" });
+      const claim = await request(getApp()).get("/api/ingest/scan-requests/next").set("Authorization", `Bearer ${d.apiKey}`);
+      expect(claim.status).toBe(200);
+      const requestId = claim.body.id;
+
+      // Another scanner cannot attach its job to d's request.
+      const foreign = await request(getApp())
+        .post("/api/ingest/scan-jobs")
+        .set("Authorization", `Bearer ${e.apiKey}`)
+        .send({ targetSpec: claim.body.targetSpec, portSpec: "22", cancellable: true, scanRequestId: requestId });
+      expect(foreign.status).toBe(201);
+      let row = await db.selectFrom("scan_requests").select(["scan_job_id"]).where("id", "=", requestId).executeTakeFirstOrThrow();
+      expect(row.scan_job_id).toBeNull();
+
+      const job = await request(getApp())
+        .post("/api/ingest/scan-jobs")
+        .set("Authorization", `Bearer ${d.apiKey}`)
+        .send({ targetSpec: claim.body.targetSpec, portSpec: "22", cancellable: true, scanRequestId: requestId });
+      row = await db.selectFrom("scan_requests").select(["scan_job_id"]).where("id", "=", requestId).executeTakeFirstOrThrow();
+      expect(row.scan_job_id).toBe(job.body.id);
+
+      const active = await op.get("/api/scan-jobs/active");
+      const entry = active.body.find((j: { id: string }) => j.id === job.body.id);
+      expect(entry).toMatchObject({ scan_group_id: res.body.scanGroupId, group_parts: 2 });
+      expect([1, 2]).toContain(entry.group_part);
+
+      // And the group view counts it as running, with its job attached.
+      const view = await op.get(`/api/scan-groups/${res.body.scanGroupId}`);
+      expect(view.body.counts.running).toBe(1);
+      const part = view.body.partViews.find((p: { scannerAgentId: string }) => p.scannerAgentId === d.id);
+      expect(part.attempts[0].scanJobId).toBe(job.body.id);
+    } finally {
+      await db.deleteFrom("scan_requests").where("scanner_agent_id", "in", [d.id, e.id]).execute();
+      await db.deleteFrom("scan_jobs").where("scanner_agent_id", "in", [d.id, e.id]).execute();
+      await deleteTestAgent(d.id);
+      await deleteTestAgent(e.id);
+    }
+  });
 });

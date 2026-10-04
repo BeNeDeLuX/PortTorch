@@ -7,7 +7,7 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { isIPv4, isIPv4Cidr, isIPv4Range, isIPv6, isIPv6Cidr } from "../lib/net";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
-import { countExcludePattern, parseExcludePatternValue } from "../lib/targetPattern";
+import { countExcludePattern, expandExcludePattern, parseExcludePatternValue } from "../lib/targetPattern";
 
 // Admin-only, like scanner agents/schedules/webhooks - this controls what
 // every scanner instance is allowed to scan at all, not a day-to-day host
@@ -66,6 +66,23 @@ excludesRouter.get("/", asyncHandler(async (_req, res) => {
   // How many addresses a pattern exclude actually covers, so "*.2 in
   // 10.46.0.0/16" reads as the 256 addresses it is rather than as one rule.
   res.json(excludes.map((e) => (e.kind === "ip_pattern" ? { ...e, address_count: countExcludePattern(e.value) } : e)));
+}));
+
+// What a pattern exclude would cover, before it is saved - so a typo in
+// the range or the pattern shows up while typing, as a count and the first
+// few addresses, rather than as a rule that quietly excludes the wrong
+// thing (or nothing) from every scan. Same parser and expansion the saved
+// rule and the scanner-facing exclude list use, so the preview cannot
+// disagree with what will actually be excluded.
+excludesRouter.get("/pattern-preview", asyncHandler(async (req, res) => {
+  const value = typeof req.query.value === "string" ? req.query.value : "";
+  const parsed = parseExcludePatternValue(value);
+  if ("error" in parsed) {
+    res.json({ ok: false, error: parsed.error });
+    return;
+  }
+  const entries = expandExcludePattern(value);
+  res.json({ ok: true, addressCount: countExcludePattern(value), sample: entries.slice(0, 5), entries: entries.length });
 }));
 
 const createExcludeSchema = z.object({

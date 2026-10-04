@@ -211,6 +211,14 @@ scanJobsRouter.get("/active", asyncHandler(async (req, res) => {
       "scan_job_progress.discovery_blocks_done as discovery_blocks_done",
       "scan_job_progress.hosts_discovered as hosts_discovered",
       "scan_job_progress.hosts_processed as hosts_processed",
+      // The request this running job serves - linked as the scan starts by a
+      // scanner from 0.28.0 - so the list can show a share of a split scan
+      // as "part 2/3", and a pattern scan as its pattern. Null for a local
+      // scan, or an older scanner's, until it finishes.
+      sql<string | null>`(select sr.scan_group_id from scan_requests sr where sr.scan_job_id = scan_jobs.id limit 1)`.as("scan_group_id"),
+      sql<number | null>`(select sr.group_part from scan_requests sr where sr.scan_job_id = scan_jobs.id limit 1)`.as("group_part"),
+      sql<number | null>`(select sr.group_parts from scan_requests sr where sr.scan_job_id = scan_jobs.id limit 1)`.as("group_parts"),
+      sql<string | null>`(select sr.target_pattern from scan_requests sr where sr.scan_job_id = scan_jobs.id limit 1)`.as("target_pattern"),
     ])
     .where("scan_jobs.status", "=", "running");
   if (allowed) {

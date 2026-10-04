@@ -4,7 +4,10 @@ name: Webserver Docker image
 # that touches server/** - unlike the scanner's release workflow, this is
 # NOT tag-triggered, so a webserver-vX.Y.Z git tag (if one exists) is
 # purely a historical marker and has no effect here. Publishes three tags:
-# :latest, the commit SHA, and the version read from package.json (below).
+# :latest, the commit SHA, and the version read from package.json (below) -
+# to Docker Hub, and the same three to GitHub's registry (ghcr.io) as a
+# second source: scripts/update-webserver.sh falls back to it when Docker
+# Hub keeps timing out, which it did on two deploys running.
 
 on:
   push:
@@ -16,6 +19,8 @@ on:
 
 permissions:
   contents: read
+  # Publishing the ghcr.io copy, with the workflow's own token.
+  packages: write
 
 jobs:
   build-and-push:
@@ -32,6 +37,18 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ghcr.io requires a lowercase image path, and the account name is not.
+      - name: GHCR image name
+        id: ghcr
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/porttorch-server" >> "$GITHUB_OUTPUT"
 
       # Read straight from package.json rather than a git tag - this way
       # the version tag on Docker Hub stays in sync automatically on every
@@ -51,5 +68,12 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/porttorch-server:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/porttorch-server:${{ github.sha }}
             ${{ secrets.DOCKERHUB_USERNAME }}/porttorch-server:${{ steps.version.outputs.version }}
+            ${{ steps.ghcr.outputs.image }}:latest
+            ${{ steps.ghcr.outputs.image }}:${{ github.sha }}
+            ${{ steps.ghcr.outputs.image }}:${{ steps.version.outputs.version }}
+          # Links the ghcr.io package to this repository, so it is listed
+          # and versioned alongside the code it was built from.
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

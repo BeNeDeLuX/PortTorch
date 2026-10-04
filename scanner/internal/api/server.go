@@ -679,7 +679,7 @@ func (s *Server) pollOnce(ctx context.Context) bool {
 
 	jobCtx, jobCancel := context.WithTimeout(ctx, timeoutCreateJob)
 	// Cancellable for the same reason as handleCreateScan above.
-	jobID, err := s.client.CreateScanJob(jobCtx, scanReq.TargetSpec, scanReq.PortSpec, true)
+	jobID, err := s.client.CreateScanJobForRequest(jobCtx, scanReq.TargetSpec, scanReq.PortSpec, true, scanReq.ID)
 	jobCancel()
 	if err != nil {
 		s.logger.Error("creating scan job for scan request failed", "event", "poll.create_job_failed", "scan_request_id", scanReq.ID, "error", err.Error())
