@@ -242,7 +242,7 @@ function StalePortBadge({ count }: { count: number }) {
   return (
     <span
       className="stale-badge"
-      title={`${count} open port(s) were not re-confirmed by this host's most recent scan - masscan only reports ports it currently sees open, so these may already be closed`}
+      title={`${count} open port(s) have not been confirmed by any scan for longer than the limit set under Settings - they may already be closed. A scan of other ports does not count against them.`}
     >
       {count} unconfirmed
     </span>

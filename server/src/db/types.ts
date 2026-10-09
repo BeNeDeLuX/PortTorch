@@ -914,6 +914,9 @@ export interface AppSettingsTable {
   // Fleet-wide default for scanner auto-update, off unless an admin turns
   // it on - see scannerUpdate/autoUpdate.ts.
   scanner_auto_update: ColumnType<boolean, boolean | undefined, boolean>;
+  // Days an open port may go without re-confirmation before it is flagged
+  // "unconfirmed" - see migration 1747800000000.
+  unconfirmed_port_days: ColumnType<number, number | undefined, number>;
   // Single sign-on (auth/oidc.ts). The client secret is withheld from the
   // settings API like smtp_password.
   oidc_enabled: ColumnType<boolean, boolean | undefined, boolean>;

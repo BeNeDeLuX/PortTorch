@@ -46,7 +46,7 @@ export default function ScanCompare({
   const label = (id: string) => {
     const run = runs.find((r) => r.scanJobId === id);
     if (!run) return id.slice(0, 8);
-    return `${formatDateTime(run.observedAt, preferences)} · ${run.portCount} port(s)${
+    return `${formatDateTime(run.observedAt, preferences)}${run.portSpec ? ` · scan of ${run.portSpec}` : ` · ${run.portCount} port(s)`}${
       run.scannerAgentName ? ` · ${run.scannerAgentName}` : ""
     }`;
   };
@@ -117,9 +117,9 @@ export default function ScanCompare({
             </table>
           </div>
           <p className="empty">
-            "Closed" means the later scan did not report the port as open - which is a genuine close, or a port that
-            scan's own port spec never covered. masscan only ever reports what it finds open, so the two cannot be told
-            apart from here; check the two scans' port specs on Scan History if it matters.
+            Each side is the host's state as of that scan, every port at its last known state - so scans of different
+            ports add up instead of contradicting each other. "Closed" means a later scan that covered the port recorded
+            it closed; a port a scan simply did not ask about is never reported as closed.
           </p>
         </>
       )}

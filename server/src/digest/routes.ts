@@ -131,32 +131,38 @@ export async function computeDigest(from: Date, to: Date, allowedScannerAgentIds
       continue;
     }
 
-    const rows = await db
+    // The latest run against the host's *cumulative* state before it -
+    // each port's newest observation from any earlier scan - rather than
+    // against the previous run alone. A run only speaks for the ports it
+    // asked about: after a scan of port 22 and then one of port 80, port
+    // 22 is still open and port 80 is not new just because the scan
+    // before it never looked. A port the latest run did cover and no
+    // longer found carries an explicit 'closed' row from ingest, which is
+    // the only thing that counts as closed here.
+    const latestRows = await db
       .selectFrom("host_port_observations")
-      .select(["scan_job_id", "port", "state", "service_name"])
+      .select(["port", "protocol", "state", "service_name", "observed_at"])
       .where("host_id", "=", pair.host_id)
-      .where("scan_job_id", "in", [pair.latest_scan_job_id, pair.previous_scan_job_id])
+      .where("scan_job_id", "=", pair.latest_scan_job_id)
       .execute();
-
-    const latestPorts = new Map(rows.filter((r) => r.scan_job_id === pair.latest_scan_job_id).map((r) => [r.port, r]));
-    const previousPorts = new Map(
-      rows.filter((r) => r.scan_job_id === pair.previous_scan_job_id).map((r) => [r.port, r])
-    );
+    const latestStart = latestRows.reduce((min, r) => (r.observed_at < min ? r.observed_at : min), pair.latest_observed_at);
+    const { rows: beforeRows } = await sql<{ port: number; protocol: string; state: string; service_name: string | null }>`
+      SELECT DISTINCT ON (port, protocol) port, protocol, state, service_name
+      FROM host_port_observations
+      WHERE host_id = ${pair.host_id}
+        AND scan_job_id <> ${pair.latest_scan_job_id}
+        AND observed_at < ${latestStart}
+      ORDER BY port, protocol, observed_at DESC
+    `.execute(db);
+    const key = (r: { port: number; protocol: string }) => `${r.port}/${r.protocol}`;
+    const before = new Map(beforeRows.map((r) => [key(r), r]));
 
     const newlyOpen: Array<{ port: number; service_name: string | null }> = [];
     const newlyClosed: Array<{ port: number; service_name: string | null }> = [];
-
-    for (const [port, p] of latestPorts) {
-      const prev = previousPorts.get(port);
-      if (p.state === "open" && prev?.state !== "open") {
-        newlyOpen.push({ port, service_name: p.service_name });
-      }
-    }
-    for (const [port, p] of previousPorts) {
-      const cur = latestPorts.get(port);
-      if (p.state === "open" && cur?.state !== "open") {
-        newlyClosed.push({ port, service_name: p.service_name });
-      }
+    for (const r of latestRows) {
+      const prev = before.get(key(r));
+      if (r.state === "open" && prev?.state !== "open") newlyOpen.push({ port: r.port, service_name: r.service_name });
+      if (r.state !== "open" && prev?.state === "open") newlyClosed.push({ port: r.port, service_name: prev.service_name });
     }
 
     if (newlyOpen.length > 0 || newlyClosed.length > 0) {

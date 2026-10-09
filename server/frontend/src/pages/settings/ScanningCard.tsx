@@ -17,6 +17,7 @@ export default function ScanningCard({
 }) {
   const [stale, setStale] = useState(String(settings.staleScanThresholdMinutes));
   const [queue, setQueue] = useState(String(settings.scanQueueWarningThreshold));
+  const [unconfirmed, setUnconfirmed] = useState(String(settings.unconfirmedPortDays));
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,15 +28,19 @@ export default function ScanningCard({
   useEffect(() => {
     setStale(String(settings.staleScanThresholdMinutes));
     setQueue(String(settings.scanQueueWarningThreshold));
-  }, [settings.staleScanThresholdMinutes, settings.scanQueueWarningThreshold]);
+    setUnconfirmed(String(settings.unconfirmedPortDays));
+  }, [settings.staleScanThresholdMinutes, settings.scanQueueWarningThreshold, settings.unconfirmedPortDays]);
 
   const dirty =
-    stale !== String(settings.staleScanThresholdMinutes) || queue !== String(settings.scanQueueWarningThreshold);
+    stale !== String(settings.staleScanThresholdMinutes) ||
+    queue !== String(settings.scanQueueWarningThreshold) ||
+    unconfirmed !== String(settings.unconfirmedPortDays);
 
   async function handleSave(e: FormEvent) {
     e.preventDefault();
     const minutes = parseInt(stale, 10);
     const count = parseInt(queue, 10);
+    const days = parseInt(unconfirmed, 10);
     if (Number.isNaN(minutes) || minutes < 1) {
       setError("Stale scan threshold must be a whole number of minutes, 1 or greater.");
       return;
@@ -44,11 +49,19 @@ export default function ScanningCard({
       setError("Queue warning must be a whole number of pending requests, 1 or greater.");
       return;
     }
+    if (Number.isNaN(days) || days < 1) {
+      setError("Unconfirmed ports must be a whole number of days, 1 or greater.");
+      return;
+    }
     setError(null);
     setSaving(true);
     try {
       onUpdated(
-        await api.updateAppSettings({ staleScanThresholdMinutes: minutes, scanQueueWarningThreshold: count })
+        await api.updateAppSettings({
+          staleScanThresholdMinutes: minutes,
+          scanQueueWarningThreshold: count,
+          unconfirmedPortDays: days,
+        })
       );
       setSaved(true);
       window.setTimeout(() => setSaved(false), 4000);
@@ -67,7 +80,9 @@ export default function ScanningCard({
           A running scan is flagged stale once its scanner stops sending progress for this long - a slow scan won't
           trip it as long as the heartbeat keeps arriving. Fleet Health's Scan Queue card warns once this many requests
           are waiting; a single request stuck 30+ minutes still escalates to critical regardless, since that suggests a
-          scanner stopped polling. Both are display and alert hints - nothing is deleted or reassigned.
+          scanner stopped polling. An open port no scan has confirmed for the given number of days is marked
+          unconfirmed - a scan of other ports does not count against it, so targeted single-port scans never flag the
+          rest of a host. All three are display and alert hints - nothing is deleted or reassigned.
         </>
       }
       error={error}
@@ -101,6 +116,22 @@ export default function ScanningCard({
               aria-label="Scan queue warning threshold"
             />
             <span className="empty">pending requests</span>
+          </span>
+        </label>
+        <label>
+          Unconfirmed port after
+          <span className="settings-num-row">
+            <input
+              className="input-number"
+              type="number"
+              min={1}
+              max={3650}
+              step={1}
+              value={unconfirmed}
+              onChange={(e) => setUnconfirmed(e.target.value)}
+              aria-label="Unconfirmed port days"
+            />
+            <span className="empty">days without confirmation</span>
           </span>
         </label>
         <div className="inline-actions">

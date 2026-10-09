@@ -225,23 +225,16 @@ scanStatsRouter.get("/", asyncHandler(async (req, res) => {
       GROUP BY 1
     `.execute(db),
 
-    // "Unconfirmed" ports: open, but last seen before this host's own most
-    // recent observation - so the newest scan did not re-confirm them.
-    // The definition is deliberately the same one GET /api/hosts uses per
-    // host (see search/routes.ts's stale_port_count), including comparing
-    // against the host's own newest observation rather than
-    // hosts.last_seen_at: that column is set from the webserver's clock
-    // while observed_at comes from Postgres's, and mixing the two produces
-    // false positives on a perfectly fresh scan.
+    // "Unconfirmed" ports: open, but not re-confirmed by any scan within
+    // app_settings.unconfirmed_port_days - deliberately the same
+    // definition GET /api/hosts uses per host (search/routes.ts's
+    // stale_port_count), so the two numbers cannot disagree.
     sql<{ ports: string | number; hosts: string | number }>`
       SELECT count(*) AS ports, count(DISTINCT chp.host_id) AS hosts
       FROM current_host_ports chp
       JOIN hosts h ON h.id = chp.host_id
       WHERE chp.state = 'open' ${hostWhere}
-        AND chp.observed_at < (
-          SELECT max(newest.observed_at) FROM current_host_ports newest
-          WHERE newest.host_id = chp.host_id
-        )
+        AND chp.observed_at < now() - make_interval(days => (SELECT unconfirmed_port_days FROM app_settings WHERE id = 1))
     `.execute(db),
 
     // Newest key per (host, port, key_type) - the same identity the

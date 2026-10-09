@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HostPortObservation } from "../api";
-import { diffScans, scanRuns } from "./scanDiff";
+import { changesInRun, diffScans, scanRuns } from "./scanDiff";
 
 function obs(overrides: Partial<HostPortObservation>): HostPortObservation {
   return {
@@ -31,15 +31,18 @@ describe("scanRuns", () => {
 });
 
 describe("diffScans", () => {
+  const T1 = "2026-09-01T10:00:00Z";
+  const T2 = "2026-09-02T10:00:00Z";
   const history: HostPortObservation[] = [
     // Before: 22 and 80 open, 443 recorded closed.
-    obs({ scan_job_id: "before", port: 22, service_name: "ssh" }),
-    obs({ scan_job_id: "before", port: 80, service_name: "http", service_product: "nginx", service_version: "1.18.0" }),
-    obs({ scan_job_id: "before", port: 443, state: "closed", service_name: null }),
-    // After: 22 gone, 80 upgraded, 443 now open, 3389 new.
-    obs({ scan_job_id: "after", port: 80, service_name: "http", service_product: "nginx", service_version: "1.24.0" }),
-    obs({ scan_job_id: "after", port: 443, service_name: "https" }),
-    obs({ scan_job_id: "after", port: 3389, service_name: "ms-wbt-server" }),
+    obs({ scan_job_id: "before", observed_at: T1, port: 22, service_name: "ssh" }),
+    obs({ scan_job_id: "before", observed_at: T1, port: 80, service_name: "http", service_product: "nginx", service_version: "1.18.0" }),
+    obs({ scan_job_id: "before", observed_at: T1, port: 443, state: "closed", service_name: null }),
+    // After: 22 recorded closed, 80 upgraded, 443 now open, 3389 new.
+    obs({ scan_job_id: "after", observed_at: T2, port: 22, state: "closed", service_name: null }),
+    obs({ scan_job_id: "after", observed_at: T2, port: 80, service_name: "http", service_product: "nginx", service_version: "1.24.0" }),
+    obs({ scan_job_id: "after", observed_at: T2, port: 443, service_name: "https" }),
+    obs({ scan_job_id: "after", observed_at: T2, port: 3389, service_name: "ms-wbt-server" }),
   ];
 
   it("reports what opened, closed and changed between two runs", () => {
@@ -55,6 +58,34 @@ describe("diffScans", () => {
     expect(byPort[80].details).toEqual(["version nginx 1.18.0 → nginx 1.24.0"]);
   });
 
+  it("never reports a port as closed because a later scan did not ask about it", () => {
+    // The case this exists for: a full scan, then targeted scans of single
+    // ports. Port 22 is only in the first, but is still open afterwards.
+    const targeted: HostPortObservation[] = [
+      obs({ scan_job_id: "full", observed_at: T1, port: 22, service_name: "ssh", scan_port_spec: "1-1024" }),
+      obs({ scan_job_id: "full", observed_at: T1, port: 25, service_name: "smtp", scan_port_spec: "1-1024" }),
+      obs({ scan_job_id: "only80", observed_at: T2, port: 80, service_name: "http", scan_port_spec: "80" }),
+      obs({ scan_job_id: "only143", observed_at: "2026-09-03T10:00:00Z", port: 143, service_name: "imap", scan_port_spec: "143" }),
+    ];
+    const between = diffScans(targeted, "full", "only143");
+    expect(between.filter((c) => c.kind === "closed")).toEqual([]);
+    expect(between.filter((c) => c.kind === "opened").map((c) => c.port)).toEqual([80, 143]);
+    expect(between.filter((c) => c.kind === "unchanged").map((c) => c.port)).toEqual([22, 25]);
+
+    // And a single run's own changes are just what it found.
+    expect(changesInRun(targeted, "only143").map((c) => `${c.kind} ${c.port}`)).toEqual(["opened 143"]);
+    expect(changesInRun(targeted, "only80").map((c) => `${c.kind} ${c.port}`)).toEqual(["opened 80"]);
+  });
+
+  it("reports a close only from a scan that recorded one", () => {
+    const h: HostPortObservation[] = [
+      obs({ scan_job_id: "a", observed_at: T1, port: 22 }),
+      obs({ scan_job_id: "a", observed_at: T1, port: 25 }),
+      obs({ scan_job_id: "b", observed_at: T2, port: 25, state: "closed" }),
+    ];
+    expect(changesInRun(h, "b").map((c) => `${c.kind} ${c.port}`)).toEqual(["closed 25"]);
+  });
+
   it("orders by what matters: opened, then closed, then changed", () => {
     const kinds = diffScans(history, "before", "after").map((c) => c.kind);
     expect(kinds.indexOf("opened")).toBeLessThan(kinds.indexOf("closed"));
@@ -65,7 +96,7 @@ describe("diffScans", () => {
     const changes = diffScans(
       [
         obs({ scan_job_id: "before", port: 8080, state: "closed" }),
-        obs({ scan_job_id: "after", port: 8080, state: "filtered" }),
+        obs({ scan_job_id: "after", observed_at: "2026-09-02T10:00:00Z", port: 8080, state: "filtered" }),
       ],
       "before",
       "after"
@@ -76,7 +107,7 @@ describe("diffScans", () => {
 
   it("keeps a port that is open and identical in both as unchanged", () => {
     const changes = diffScans(
-      [obs({ scan_job_id: "before", port: 22 }), obs({ scan_job_id: "after", port: 22 })],
+      [obs({ scan_job_id: "before", port: 22 }), obs({ scan_job_id: "after", observed_at: "2026-09-02T10:00:00Z", port: 22 })],
       "before",
       "after"
     );
@@ -89,8 +120,8 @@ describe("diffScans", () => {
     const changes = diffScans(
       [
         obs({ scan_job_id: "before", port: 53, protocol: "tcp" }),
-        obs({ scan_job_id: "after", port: 53, protocol: "tcp" }),
-        obs({ scan_job_id: "after", port: 53, protocol: "udp" }),
+        obs({ scan_job_id: "after", observed_at: "2026-09-02T10:00:00Z", port: 53, protocol: "tcp" }),
+        obs({ scan_job_id: "after", observed_at: "2026-09-02T10:00:00Z", port: 53, protocol: "udp" }),
       ],
       "before",
       "after"

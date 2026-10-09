@@ -120,12 +120,12 @@ export default function ScanStats({ me, onLogout }: { me: Me; onLogout: () => vo
           {stats.totals.unconfirmedPorts > 0 && (
             <p className="empty">
               {stats.totals.unconfirmedPorts.toLocaleString()} open{" "}
-              {stats.totals.unconfirmedPorts === 1 ? "port is" : "ports are"} counted above from an observation older
-              than the newest scan of {stats.totals.hostsWithUnconfirmedPorts === 1 ? "that host" : "their host"} -{" "}
+              {stats.totals.unconfirmedPorts === 1 ? "port is" : "ports are"} counted above that no scan has confirmed
+              within the limit set under Settings -{" "}
               {stats.totals.hostsWithUnconfirmedPorts.toLocaleString()}{" "}
-              {stats.totals.hostsWithUnconfirmedPorts === 1 ? "host" : "hosts"} in total. masscan only reports ports it
-              currently sees open, so a port that stops answering is never explicitly recorded as closed and keeps its
-              last known state. The Dashboard's "Only hosts with unconfirmed ports" filter lists them.
+              {stats.totals.hostsWithUnconfirmedPorts === 1 ? "host" : "hosts"} in total. A port keeps its last known
+              state until a scan that covers it records otherwise, so one in a range nobody rescans stays "open". The
+              Dashboard's "Only hosts with unconfirmed ports" filter lists them.
             </p>
           )}
           {stats.comparison && (

@@ -16,6 +16,9 @@ export interface ScanRun {
   observedAt: string;
   scannerAgentName: string | null;
   portCount: number;
+  // The ports the run asked about, e.g. "80" or "1-1024,U:53". Null for
+  // history rows that predate the field.
+  portSpec: string | null;
 }
 
 export interface PortChange {
@@ -40,6 +43,7 @@ export function scanRuns(history: HostPortObservation[]): ScanRun[] {
     const existing = byJob.get(row.scan_job_id);
     if (existing) {
       existing.portCount++;
+      if (row.observed_at > existing.observedAt) existing.observedAt = row.observed_at;
       continue;
     }
     byJob.set(row.scan_job_id, {
@@ -47,45 +51,67 @@ export function scanRuns(history: HostPortObservation[]): ScanRun[] {
       observedAt: row.observed_at,
       scannerAgentName: row.scanner_agent_name ?? null,
       portCount: 1,
+      portSpec: row.scan_port_spec ?? null,
     });
   }
   return [...byJob.values()].sort((a, b) => new Date(b.observedAt).getTime() - new Date(a.observedAt).getTime());
 }
 
-function keyOf(row: HostPortObservation): string {
+function keyOf(row: Pick<HostPortObservation, "port" | "protocol">): string {
   return `${row.port}/${row.protocol}`;
 }
 
-/**
- * The port-level difference between two scan runs of one host.
- *
- * "Opened" and "closed" are relative to what each scan *recorded*, which
- * is not the same as what was true - masscan only ever reports ports it
- * sees open, so a port absent from a scan was either closed or simply not
- * covered by that scan's port spec. The caller shows both scans' port
- * specs alongside for exactly that reason; this cannot tell them apart
- * and does not pretend to.
- */
-export function diffScans(
-  history: HostPortObservation[],
-  beforeJobId: string,
-  afterJobId: string
-): PortChange[] {
-  const before = new Map<string, HostPortObservation>();
-  const after = new Map<string, HostPortObservation>();
+function runBounds(history: HostPortObservation[], jobId: string): { first: number; last: number } | null {
+  let first = Infinity;
+  let last = -Infinity;
   for (const row of history) {
-    if (row.scan_job_id === beforeJobId) before.set(keyOf(row), row);
-    if (row.scan_job_id === afterJobId) after.set(keyOf(row), row);
+    if (row.scan_job_id !== jobId) continue;
+    const t = Date.parse(row.observed_at);
+    if (t < first) first = t;
+    if (t > last) last = t;
   }
+  return first === Infinity ? null : { first, last };
+}
 
+// The host's cumulative port state at a moment: for every port, its newest
+// observation from any scan up to then. This is what makes runs of
+// different port ranges add up instead of contradicting each other - a
+// scan of port 80 updates port 80 and leaves every other port as the last
+// scan that asked about it saw it. The same reconstruction the server uses
+// for current_host_ports, with the clock wound back.
+function stateAt(history: HostPortObservation[], include: (row: HostPortObservation) => boolean): Map<string, HostPortObservation> {
+  const state = new Map<string, HostPortObservation>();
+  for (const row of history) {
+    if (!include(row)) continue;
+    const current = state.get(keyOf(row));
+    if (!current || Date.parse(row.observed_at) > Date.parse(current.observed_at)) state.set(keyOf(row), row);
+  }
+  return state;
+}
+
+/** The cumulative state as of the end of a run, that run included. */
+export function stateAfterRun(history: HostPortObservation[], jobId: string): Map<string, HostPortObservation> {
+  const bounds = runBounds(history, jobId);
+  if (!bounds) return new Map();
+  return stateAt(history, (r) => r.scan_job_id === jobId || Date.parse(r.observed_at) <= bounds.last);
+}
+
+/** The cumulative state just before a run began, that run excluded. */
+export function stateBeforeRun(history: HostPortObservation[], jobId: string): Map<string, HostPortObservation> {
+  const bounds = runBounds(history, jobId);
+  if (!bounds) return new Map();
+  return stateAt(history, (r) => r.scan_job_id !== jobId && Date.parse(r.observed_at) < bounds.first);
+}
+
+function compareStates(beforeState: Map<string, HostPortObservation>, afterState: Map<string, HostPortObservation>): PortChange[] {
   const changes: PortChange[] = [];
-  for (const key of new Set([...before.keys(), ...after.keys()])) {
-    const b = before.get(key) ?? null;
-    const a = after.get(key) ?? null;
+  for (const key of new Set([...beforeState.keys(), ...afterState.keys()])) {
+    const b = beforeState.get(key) ?? null;
+    const a = afterState.get(key) ?? null;
     const [portStr, protocol] = key.split("/");
     const port = Number(portStr);
 
-    // A port recorded as closed in one scan and absent from the other is
+    // A port recorded as closed in one state and unknown in the other is
     // not a change worth reporting - both mean "not open".
     const bOpen = b?.state === "open";
     const aOpen = a?.state === "open";
@@ -109,17 +135,23 @@ export function diffScans(
     if (beforeProduct !== afterProduct) {
       details.push(`version ${beforeProduct || "unknown"} → ${afterProduct || "unknown"}`);
     }
-    changes.push({
-      port,
-      protocol,
-      before: b,
-      after: a,
-      kind: details.length > 0 ? "changed" : "unchanged",
-      details,
-    });
+    changes.push({ port, protocol, before: b, after: a, kind: details.length > 0 ? "changed" : "unchanged", details });
   }
-
   // Opened first, then closed, then changed - the order they matter in.
   const rank = { opened: 0, closed: 1, changed: 2, unchanged: 3 };
   return changes.sort((x, y) => rank[x.kind] - rank[y.kind] || x.port - y.port);
+}
+
+/**
+ * What one run changed: the host's cumulative state just before it against
+ * the state after it. Only ports the run actually reported can differ -
+ * everything else carries over unchanged - so a scan of a single port
+ * never reports the host's other ports as closed.
+ */
+export function changesInRun(history: HostPortObservation[], jobId: string): PortChange[] {
+  return compareStates(stateBeforeRun(history, jobId), stateAfterRun(history, jobId)).filter((c) => c.kind !== "unchanged");
+}
+
+export function diffScans(history: HostPortObservation[], beforeJobId: string, afterJobId: string): PortChange[] {
+  return compareStates(stateAfterRun(history, beforeJobId), stateAfterRun(history, afterJobId));
 }

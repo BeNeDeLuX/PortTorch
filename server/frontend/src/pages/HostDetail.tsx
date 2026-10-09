@@ -7,6 +7,7 @@ import { identitySourceLabel } from "../lib/derivedIdentity";
 import { isAutoTag } from "../lib/knownServiceTags";
 import PageHeader from "../components/PageHeader";
 import ScanCompare from "../components/ScanCompare";
+import { changesInRun } from "../lib/scanDiff";
 import ScreenshotCompare from "../components/ScreenshotCompare";
 import { formatDateTime, formatDateOnly } from "../lib/formatDate";
 import Lightbox, { LightboxItem } from "../components/Lightbox";
@@ -297,19 +298,13 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
   const rescanStatus = data.lastScanRequest?.status;
   const rescanInFlight = rescanStatus === "pending" || rescanStatus === "claimed";
   const historyGroups = groupHistoryByScan(data.history);
-  const changes = computeChanges(historyGroups);
-  // Comparing each port's own observed_at against this (rather than
-  // host.last_seen_at) keeps the comparison within a single clock source -
-  // last_seen_at is set from the webserver's own Date.now() while
-  // observed_at comes from Postgres's now(), and those two can disagree by
-  // a few milliseconds even for ports written in the very same scan,
-  // which would otherwise flag every port on a perfectly fresh scan as
-  // stale (confirmed this the wrong way round via testing before settling
-  // on this fix).
-  const latestPortObservedAt = data.ports.reduce(
-    (max, p) => Math.max(max, new Date(p.observed_at).getTime()),
-    0
-  );
+  // What the most recent run changed, against the host's cumulative state
+  // before it - so a scan of one port never reports the others as closed.
+  const changes = historyGroups.length >= 2 ? changesInRun(data.history, historyGroups[0].scanJobId) : null;
+  // A port nobody has re-confirmed for this long is flagged - by age, not
+  // by "missing from the newest scan", which every targeted single-port
+  // scan would trip for all the other ports.
+  const unconfirmedBefore = Date.now() - data.unconfirmedPortDays * 86_400_000;
   const screenshotItems: LightboxItem[] = data.screenshots.map((s) => ({
     src: `/api/screenshots/${s.id}/image`,
     alt: s.page_title ?? s.url,
@@ -377,6 +372,12 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
           <div className="timeline-time">
             {formatDateTime(run.observedAt, me.preferences)}
             {run.scannerAgentName && ` · ${run.scannerAgentName}`}
+            {run.ports[0]?.scan_port_spec && (
+              <span className="host-meta" title="The ports this scan asked about - any port not listed here was not checked by it">
+                {" "}
+                · scan of {run.ports[0].scan_port_spec}
+              </span>
+            )}
           </div>
           <div className="timeline-ports">
             {run.ports.map((p, i) => (
@@ -692,29 +693,33 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
 
       {changes && (
         <section className="callout">
-          <h2>Changes since last scan</h2>
-          {changes.newlyOpen.length === 0 && changes.newlyClosed.length === 0 && changes.serviceChanged.length === 0 ? (
-            <p className="host-meta">No changes since the previous scan.</p>
+          <h2>Changes in the last scan</h2>
+          <p className="host-meta">
+            {historyGroups[0].ports[0]?.scan_port_spec
+              ? `That scan asked about ${historyGroups[0].ports[0].scan_port_spec}. `
+              : ""}
+            Compared with the host's state before it; ports it did not ask about keep their last known state.
+          </p>
+          {changes.length === 0 ? (
+            <p className="host-meta">Nothing changed.</p>
           ) : (
             <>
-              {changes.newlyOpen.length > 0 && (
-                <p>
-                  <strong>Newly open:</strong>{" "}
-                  {changes.newlyOpen.map((p) => p.port + (p.service_name ? `/${p.service_name}` : "")).join(", ")}
-                </p>
-              )}
-              {changes.newlyClosed.length > 0 && (
-                <p>
-                  <strong>Closed since last scan:</strong>{" "}
-                  {changes.newlyClosed.map((p) => p.port + (p.service_name ? `/${p.service_name}` : "")).join(", ")}
-                </p>
-              )}
-              {changes.serviceChanged.length > 0 && (
-                <p>
-                  <strong>Service changed:</strong>{" "}
-                  {changes.serviceChanged.map((c) => `${c.port} (${c.from} → ${c.to})`).join(", ")}
-                </p>
-              )}
+              {(["opened", "closed", "changed"] as const).map((kind) => {
+                const rows = changes.filter((c) => c.kind === kind);
+                if (rows.length === 0) return null;
+                return (
+                  <p key={kind}>
+                    <strong>{kind === "opened" ? "Newly open:" : kind === "closed" ? "Closed:" : "Changed:"}</strong>{" "}
+                    {rows
+                      .map((c) => {
+                        const svc = (c.after ?? c.before)?.service_name;
+                        const label = `${c.port}/${c.protocol}${svc ? ` ${svc}` : ""}`;
+                        return kind === "changed" ? `${label} (${c.details.join(", ")})` : label;
+                      })
+                      .join(", ")}
+                  </p>
+                );
+              })}
             </>
           )}
         </section>
@@ -738,19 +743,11 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
             </thead>
             <tbody>
               {data.ports.map((p) => {
-                // A port only ever gets a fresh observation row when the
-                // scanner actually rediscovers it - masscan has no
-                // "checked and it's now closed" signal of its own (it's a
-                // stateless SYN scanner that just doesn't report a port it
-                // gets no response for, indistinguishable at that layer
-                // from one lost probe on an otherwise-fine port), so a port
-                // that quietly stops answering keeps showing its last-seen
-                // "open" row indefinitely instead of ever flipping to
-                // closed. Flagging whenever this port's own observation
-                // predates this host's most recently observed port is the
-                // cheap, false-positive-free signal: it means this specific
-                // port wasn't part of the most recent run's results at all.
-                const stale = new Date(p.observed_at).getTime() < latestPortObservedAt;
+                // A port keeps its last "open" row until a scan that covers
+                // it records it closed, so one in a range nobody rescans
+                // stays "open" indefinitely. Flagged once it has gone
+                // unconfirmed for app_settings.unconfirmed_port_days.
+                const stale = new Date(p.observed_at).getTime() < unconfirmedBefore;
                 const hasDetails = portsWithDetails.has(`${p.port}-${p.protocol}`);
                 return (
                   <tr key={`${p.port}-${p.protocol}`}>
@@ -822,9 +819,9 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
                       {stale && (
                         <span
                           className="stale-badge"
-                          title="This port wasn't part of the most recent scan's results - it may no longer be open. masscan can't distinguish a genuinely closed port from one lost probe, so this isn't auto-corrected to 'closed'."
+                          title={`No scan has confirmed this port for more than ${data.unconfirmedPortDays} days - it may no longer be open. A scan that covers it will record it closed if it is. The limit is set under Settings.`}
                         >
-                          stale
+                          unconfirmed
                         </span>
                       )}
                     </td>
@@ -1111,40 +1108,3 @@ function groupHistoryByScan(history: HostDetailData["history"]) {
   return Array.from(groups.values()).sort((a, b) => (a.observedAt < b.observedAt ? 1 : -1));
 }
 
-interface HostChanges {
-  newlyOpen: HostDetailData["history"];
-  newlyClosed: HostDetailData["history"];
-  serviceChanged: Array<{ port: number; from: string; to: string }>;
-}
-
-// Compares the two most recent scan runs for this host (by port number -
-// history doesn't carry protocol) to surface what changed since the
-// previous scan. Returns null if there's no previous scan to compare
-// against yet.
-function computeChanges(groups: ReturnType<typeof groupHistoryByScan>): HostChanges | null {
-  if (groups.length < 2) return null;
-  const [latest, previous] = groups;
-  const latestByPort = new Map(latest.ports.map((p) => [p.port, p]));
-  const previousByPort = new Map(previous.ports.map((p) => [p.port, p]));
-
-  const newlyOpen: HostDetailData["history"] = [];
-  const newlyClosed: HostDetailData["history"] = [];
-  const serviceChanged: Array<{ port: number; from: string; to: string }> = [];
-
-  for (const [port, p] of latestByPort) {
-    const prev = previousByPort.get(port);
-    if (p.state === "open" && prev?.state !== "open") {
-      newlyOpen.push(p);
-    } else if (p.state === "open" && prev?.state === "open" && (prev.service_name ?? "") !== (p.service_name ?? "")) {
-      serviceChanged.push({ port, from: prev.service_name || "unknown", to: p.service_name || "unknown" });
-    }
-  }
-  for (const [port, p] of previousByPort) {
-    const cur = latestByPort.get(port);
-    if (p.state === "open" && cur?.state !== "open") {
-      newlyClosed.push(p);
-    }
-  }
-
-  return { newlyOpen, newlyClosed, serviceChanged };
-}

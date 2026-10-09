@@ -103,6 +103,7 @@ export interface ProxySettings {
 export interface AppSettings {
   requireAdminTotp: boolean;
   scannerAutoUpdate: boolean;
+  unconfirmedPortDays: number;
   hostRetentionDays: number;
   staleScanThresholdMinutes: number;
   scanQueueWarningThreshold: number;
@@ -454,6 +455,9 @@ export interface HostDetail {
   tags: string[];
   comments: HostComment[];
   lastScanRequest: ScanRequest | null;
+  // Days an open port may go without re-confirmation before it is shown
+  // as unconfirmed - app_settings.unconfirmed_port_days.
+  unconfirmedPortDays: number;
 }
 
 export interface HostComment {
@@ -872,6 +876,9 @@ export interface HostPortObservation {
   observed_at: string;
   scan_job_id: string;
   scanner_agent_name: string | null;
+  // The port spec of the run this row came from - what that scan asked
+  // about at all.
+  scan_port_spec?: string | null;
 }
 
 export interface CveEntry {

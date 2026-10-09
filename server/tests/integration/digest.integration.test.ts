@@ -18,6 +18,7 @@ import {
 // collide with genuine data even run against a copy of a real database.
 const NEW_HOST_IP = "240.2.1.1";
 const CHANGED_HOST_IP = "240.2.1.2";
+const TARGETED_HOST_IP = "240.2.1.3";
 
 // Digest entries used to have no timestamp or scanner name at all - a
 // user reported both were missing. This covers that both fields are
@@ -81,7 +82,7 @@ describe("digest includes observedAt/scannerAgentName per host", () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom("hosts").where("ip", "in", [NEW_HOST_IP, CHANGED_HOST_IP]).execute();
+    await db.deleteFrom("hosts").where("ip", "in", [NEW_HOST_IP, CHANGED_HOST_IP, TARGETED_HOST_IP]).execute();
     await deleteTestUser(admin.id);
     await deleteTestAgent(agent.id);
     await closeDb();
@@ -104,5 +105,39 @@ describe("digest includes observedAt/scannerAgentName per host", () => {
     expect(entry.scannerAgentName).toBe(agent.name);
     expect(new Date(entry.observedAt).getTime()).toBeGreaterThan(Date.now() - 60_000);
     expect(entry.newlyOpen.map((p: { port: number }) => p.port)).toEqual([80]);
+  });
+
+  // Targeted scans of single ports must add up rather than contradict:
+  // the latest run is compared with the host's cumulative state, so a
+  // port it did not ask about is never reported closed.
+  it("compares the latest scan with the host's cumulative state, not the previous scan", async () => {
+    const scan = async (portSpec: string, ports: Array<{ port: number; state: string }>) => {
+      const job = await request(getApp())
+        .post("/api/ingest/scan-jobs")
+        .set("Authorization", `Bearer ${agent.apiKey}`)
+        .send({ targetSpec: TARGETED_HOST_IP, portSpec });
+      await request(getApp())
+        .post("/api/ingest/hosts")
+        .set("Authorization", `Bearer ${agent.apiKey}`)
+        .send({ scanJobId: job.body.id, hosts: [{ ip: TARGETED_HOST_IP, ports: ports.map((p) => ({ ...p, protocol: "tcp" })) }] });
+    };
+    const entry = async () =>
+      (await client.get(`/api/digest?from=${encodeURIComponent(windowFrom)}`)).body.changedHosts.find(
+        (h: { ip: string }) => h.ip === TARGETED_HOST_IP
+      );
+
+    await scan("22,25", [{ port: 22, state: "open" }, { port: 25, state: "open" }]);
+    await scan("80", [{ port: 80, state: "open" }]);
+    const afterOnly80 = await entry();
+    expect(afterOnly80.newlyOpen.map((p: { port: number }) => p.port)).toEqual([80]);
+    // The previous-scan comparison reported 22 and 25 closed here.
+    expect(afterOnly80.newlyClosed).toEqual([]);
+
+    // A scan that does cover 25 and finds it gone records it closed at
+    // ingest - that is a close.
+    await scan("25", []);
+    const after25 = await entry();
+    expect(after25.newlyClosed.map((p: { port: number }) => p.port)).toEqual([25]);
+    expect(after25.newlyOpen).toEqual([]);
   });
 });

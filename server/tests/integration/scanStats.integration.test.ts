@@ -375,20 +375,25 @@ describe("scan stats", () => {
     expect(body.weakCertKeys).toBe(0);
   });
 
-  it("counts unconfirmed ports against the host's own newest observation", async () => {
+  it("counts ports no scan has confirmed within the configured days", async () => {
     const fresh = await stats(`?scannerAgentId=${agentA.id}`);
-    // Everything was observed in the same submission, so nothing is
-    // behind anything else yet.
     expect(fresh.totals.unconfirmedPorts).toBe(0);
 
-    // Age one port's observation: it is now older than the newest
-    // observation of its own host, which is exactly what "unconfirmed"
-    // means on the Dashboard.
+    // Older than a newer observation of the same host, but well within
+    // the limit: not unconfirmed. A scan of other ports says nothing about
+    // this one - the case that used to flag it.
     await sql`
       UPDATE host_port_observations SET observed_at = now() - interval '2 days'
       WHERE host_id = ${hostA} AND port = 22
     `.execute(db);
+    expect((await stats(`?scannerAgentId=${agentA.id}`)).totals.unconfirmedPorts).toBe(0);
 
+    // Past app_settings.unconfirmed_port_days (default 30): unconfirmed,
+    // by the same definition as the Dashboard's per-host count.
+    await sql`
+      UPDATE host_port_observations SET observed_at = now() - interval '45 days'
+      WHERE host_id = ${hostA} AND port = 22
+    `.execute(db);
     const aged = await stats(`?scannerAgentId=${agentA.id}`);
     expect(aged.totals.unconfirmedPorts).toBe(1);
     expect(aged.totals.hostsWithUnconfirmedPorts).toBe(1);

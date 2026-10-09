@@ -18,12 +18,12 @@ import {
   type TestUser,
 } from "./helpers";
 
-// A port that quietly stops answering never gets an explicit 'closed'
-// observation - masscan only reports what it currently sees open - so
-// current_host_ports keeps surfacing its last known "open" indefinitely.
-// Host Detail has flagged this per port for a while; these tests cover
-// making it visible and filterable fleet-wide, where the open-port counts
-// otherwise silently overstate exposure.
+// An open port keeps its last "open" observation until a scan that covers
+// it records it closed - so one in a range nobody rescans stays "open"
+// indefinitely. It is flagged "unconfirmed" once no scan has confirmed it
+// for app_settings.unconfirmed_port_days. Deliberately by age: a scan of
+// other ports says nothing about it, and targeted single-port scans must
+// never flag the rest of a host.
 describe("fleet-wide unconfirmed (stale) open ports", () => {
   let agent: TestAgent;
   let admin: TestUser;
@@ -35,11 +35,11 @@ describe("fleet-wide unconfirmed (stale) open ports", () => {
     await deleteTestUser(admin.id);
   });
 
-  async function ingest(ports: number[]): Promise<void> {
+  async function ingest(ports: number[], portSpec = "1-10000"): Promise<void> {
     const job = await request(getApp())
       .post("/api/ingest/scan-jobs")
       .set("Authorization", `Bearer ${agent.apiKey}`)
-      .send({ targetSpec: IP, portSpec: "1-1000" });
+      .send({ targetSpec: IP, portSpec });
     await request(getApp())
       .post("/api/ingest/hosts")
       .set("Authorization", `Bearer ${agent.apiKey}`)
@@ -54,46 +54,57 @@ describe("fleet-wide unconfirmed (stale) open ports", () => {
       });
   }
 
-  it("counts only ports the latest scan did not re-confirm, and filters on them", async () => {
+  const hostRow = async (session: Awaited<ReturnType<typeof loginAs>>) => (await session.get(`/api/hosts?q=${IP}`)).body.items[0];
+
+  it("never flags the rest of a host because a scan asked about other ports", async () => {
     agent = await createTestAgent("it-stale-agent");
     admin = await createTestUser("admin");
     const session = await loginAs(admin.username, admin.password);
 
-    // First scan sees both ports - nothing is stale yet, which is the
-    // regression that matters most: a perfectly fresh scan must not flag
-    // its own ports (observed_at vs. hosts.last_seen_at would).
-    await ingest([22, 8080]);
-    const fresh = await session.get(`/api/hosts?q=${IP}`);
-    expect(fresh.body.items[0].open_port_count).toBe(2);
-    expect(fresh.body.items[0].stale_port_count).toBe(0);
+    await ingest([22, 25, 8080]);
+    expect(await hostRow(session)).toMatchObject({ open_port_count: 3, stale_port_count: 0 });
 
-    // Second scan only re-confirms 22. 8080 keeps its last "open"
-    // observation and is now unconfirmed.
+    // The reported case: targeted scans of single ports, one at a time.
+    // Each only speaks for its own port; the others keep their state.
     await new Promise((r) => setTimeout(r, 1100));
-    await ingest([22]);
-
-    const after = await session.get(`/api/hosts?q=${IP}`);
-    expect(after.body.items[0].open_port_count).toBe(2);
-    expect(after.body.items[0].stale_port_count).toBe(1);
-
+    await ingest([80], "80");
+    await ingest([143], "143");
+    const after = await hostRow(session);
+    expect(after.open_port_count).toBe(5);
+    expect(after.stale_port_count).toBe(0);
     // The count is a JS number, not the bigint-as-string node-postgres
-    // hands back - this exact trap has produced two real bugs here before.
-    expect(typeof after.body.items[0].stale_port_count).toBe("number");
-
-    const filtered = await session.get(`/api/hosts?q=${IP}&hasStalePorts=true`);
-    expect(filtered.body.items.map((h: { ip: string }) => h.ip)).toContain(IP);
+    // hands back - this exact trap has produced real bugs here before.
+    expect(typeof after.stale_port_count).toBe("number");
+    expect((await session.get(`/api/hosts?q=${IP}&hasStalePorts=true`)).body.items).toHaveLength(0);
   });
 
-  it("excludes a host whose ports were all re-confirmed", async () => {
+  it("flags a port no scan has confirmed within the configured days, and reads the setting live", async () => {
     const session = await loginAs(admin.username, admin.password);
-    await new Promise((r) => setTimeout(r, 1100));
-    await ingest([22, 8080]);
+    const host = await db.selectFrom("hosts").select("id").where("ip", "=", IP).executeTakeFirstOrThrow();
+    await db
+      .updateTable("host_port_observations")
+      .set({ observed_at: new Date(Date.now() - 40 * 86_400_000).toISOString() })
+      .where("host_id", "=", host.id)
+      .where("port", "=", 8080)
+      .execute();
 
-    const after = await session.get(`/api/hosts?q=${IP}`);
-    expect(after.body.items[0].stale_port_count).toBe(0);
+    expect((await hostRow(session)).stale_port_count).toBe(1);
+    expect((await session.get(`/api/hosts?q=${IP}&hasStalePorts=true`)).body.items.map((h: { ip: string }) => h.ip)).toContain(IP);
 
-    const filtered = await session.get(`/api/hosts?q=${IP}&hasStalePorts=true`);
-    expect(filtered.body.items).toHaveLength(0);
+    // A longer limit applies on the very next request.
+    expect((await session.patch("/api/settings/app").send({ unconfirmedPortDays: 60 })).status).toBe(200);
+    expect((await hostRow(session)).stale_port_count).toBe(0);
+    await session.patch("/api/settings/app").send({ unconfirmedPortDays: 30 });
+  });
+
+  it("clears once a scan that covers the port confirms it - or records it closed", async () => {
+    const session = await loginAs(admin.username, admin.password);
+    // A scan covering 8080 that no longer finds it records it closed, so
+    // it is neither open nor unconfirmed any more.
+    await ingest([22], "22,8080");
+    const after = await hostRow(session);
+    expect(after.open_port_count).toBe(4);
+    expect(after.stale_port_count).toBe(0);
   });
 });
 

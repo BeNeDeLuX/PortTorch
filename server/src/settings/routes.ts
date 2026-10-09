@@ -18,6 +18,7 @@ import {
   setHostRetentionDays,
   setRequireAdminTotp,
   setScannerAutoUpdate,
+  setUnconfirmedPortDays,
   setDigestEmailHourUtc,
   setEpssAlertThreshold,
   setQueueBacklogThresholdMinutes,
@@ -150,6 +151,7 @@ settingsRouter.get("/app", asyncHandler(async (_req, res) => {
 const appSettingsSchema = z.object({
   requireAdminTotp: z.boolean().optional(),
   scannerAutoUpdate: z.boolean().optional(),
+  unconfirmedPortDays: z.number().int().min(1).max(3650).optional(),
   hostRetentionDays: z.number().int().min(0).optional(),
   staleScanThresholdMinutes: z.number().int().min(1).optional(),
   scanQueueWarningThreshold: z.number().int().min(1).optional(),
@@ -254,6 +256,19 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
     });
     recordAudit("settings.scanner_auto_update_updated", req.session.username, req.ip, {
       scanner_auto_update: parsed.data.scannerAutoUpdate,
+    });
+  }
+
+  if ("unconfirmedPortDays" in req.body && parsed.data.unconfirmedPortDays !== undefined) {
+    await setUnconfirmedPortDays(parsed.data.unconfirmedPortDays);
+    logger.info({
+      event: "settings.unconfirmed_port_days_updated",
+      unconfirmed_port_days: parsed.data.unconfirmedPortDays,
+      updated_by: req.session.username,
+      source_ip: req.ip,
+    });
+    recordAudit("settings.unconfirmed_port_days_updated", req.session.username, req.ip, {
+      unconfirmed_port_days: parsed.data.unconfirmedPortDays,
     });
   }
 

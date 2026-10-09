@@ -522,9 +522,9 @@ export function applyHostFilters(
     );
   }
 
-  // Narrows to hosts carrying at least one open port their own most
-  // recent scan didn't re-confirm - same definition as the
-  // stale_port_count column above, expressed as an EXISTS so it stays a
+  // Narrows to hosts carrying at least one open port not re-confirmed
+  // within app_settings.unconfirmed_port_days - same definition as the
+  // stale_port_count column below, expressed as an EXISTS so it stays a
   // plain AND-ed condition like every other filter here.
   if (hasStalePorts) {
     query = query.where((eb: any) =>
@@ -534,14 +534,7 @@ export function applyHostFilters(
           .select("chps.port")
           .whereRef("chps.host_id", "=", "hosts.id")
           .where("chps.state", "=", "open")
-          .where(
-            "chps.observed_at",
-            "<",
-            eb
-              .selectFrom("current_host_ports as chps2")
-              .select(eb.fn.max("chps2.observed_at").as("m"))
-              .whereRef("chps2.host_id", "=", "hosts.id")
-          )
+          .where(sql<boolean>`chps.observed_at < now() - make_interval(days => (SELECT unconfirmed_port_days FROM app_settings WHERE id = 1))`)
       )
     );
   }
@@ -647,29 +640,24 @@ hostsRouter.get("/", asyncHandler(async (req, res) => {
         where chp2.host_id = hosts.id and chp2.state = 'open'
           and ${cveNotTriaged("hosts.id", "cve_elem->>'id'", NOT_A_LIVE_RISK_STATES)}
       )`.as("cve_count"),
-      // Ports still showing "open" that this host's most recent scan did
-      // not actually re-confirm. masscan only ever reports ports it
-      // currently sees open, so a port that quietly stops answering gets
-      // no observation row at all that run - not even a 'closed' one -
-      // and current_host_ports keeps surfacing its last known "open" as
-      // if it were current (see the Database shape notes in CLAUDE.md).
-      // Host Detail has shown this per port for a while; without it here,
-      // the fleet-wide open-port counts silently overstate exposure with
-      // no way to tell which hosts are affected.
+      // Ports still showing "open" that no scan has re-confirmed within
+      // app_settings.unconfirmed_port_days. masscan only ever reports
+      // ports it sees open, so a port that quietly stops answering keeps
+      // its last "open" row until a scan that covers it records it
+      // closed - and a range nobody rescans never gets that scan.
       //
-      // Compared against the newest observed_at among *this host's own
-      // ports*, deliberately not hosts.last_seen_at: that one is written
-      // from the webserver's Date.now() while observed_at comes from
-      // Postgres now(), and the two disagree by milliseconds even within
-      // one scan - which would flag every port of a perfectly fresh scan
-      // as stale. Same comparison HostDetail.tsx already makes.
+      // Age, deliberately not "older than this host's newest
+      // observation": a scan of port 80 alone says nothing about port 22,
+      // and that comparison flagged every other port of the host after
+      // every targeted scan. Read from app_settings inside the query, so
+      // every caller of this column and of the matching filter below -
+      // saved searches and the External API included - uses the current
+      // value without passing it around.
       sql<number>`(
         select count(*)
         from current_host_ports chp3
         where chp3.host_id = hosts.id and chp3.state = 'open'
-          and chp3.observed_at < (
-            select max(chp4.observed_at) from current_host_ports chp4 where chp4.host_id = hosts.id
-          )
+          and chp3.observed_at < now() - make_interval(days => (SELECT unconfirmed_port_days FROM app_settings WHERE id = 1))
       )`.as("stale_port_count"),
       sql<number | null>`(
         select max((cve_elem->>'cvssScore')::float)
@@ -1325,6 +1313,10 @@ hostsRouter.get("/:id", asyncHandler(async (req, res) => {
       "host_port_observations.banner as banner",
       "host_port_observations.observed_at as observed_at",
       "scanner_agents.name as scanner_agent_name",
+      // Which ports the run asked about, so the page can say "scan of
+      // 80/tcp" rather than present a one-port run as if every other port
+      // had vanished.
+      "scan_jobs.port_spec as scan_port_spec",
     ])
     .where("host_port_observations.host_id", "=", req.params.id)
     .orderBy("host_port_observations.observed_at", "desc")
@@ -1423,9 +1415,11 @@ hostsRouter.get("/:id", asyncHandler(async (req, res) => {
     .orderBy("created_at", "desc")
     .execute();
 
+  const { unconfirmedPortDays } = await getAppSettings();
   res.json({
     host,
     ports,
+    unconfirmedPortDays,
     history,
     screenshots,
     rdpScreenshots,

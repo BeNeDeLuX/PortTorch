@@ -3,6 +3,7 @@ import { db } from "../db";
 export interface AppSettings {
   requireAdminTotp: boolean;
   scannerAutoUpdate: boolean;
+  unconfirmedPortDays: number;
   hostRetentionDays: number;
   staleScanThresholdMinutes: number;
   scanQueueWarningThreshold: number;
@@ -97,6 +98,7 @@ export async function getAppSettings(): Promise<AppSettings> {
     .select([
       "require_admin_totp",
       "scanner_auto_update",
+      "unconfirmed_port_days",
       "host_retention_days",
       "stale_scan_threshold_minutes",
       "scan_queue_warning_threshold",
@@ -134,6 +136,7 @@ export async function getAppSettings(): Promise<AppSettings> {
   return {
     requireAdminTotp: row.require_admin_totp,
     scannerAutoUpdate: row.scanner_auto_update,
+    unconfirmedPortDays: row.unconfirmed_port_days,
     hostRetentionDays: row.host_retention_days,
     staleScanThresholdMinutes: row.stale_scan_threshold_minutes,
     scanQueueWarningThreshold: row.scan_queue_warning_threshold,
@@ -251,6 +254,10 @@ export async function setRequireAdminTotp(value: boolean): Promise<void> {
 
 export async function setScannerAutoUpdate(value: boolean): Promise<void> {
   await db.updateTable("app_settings").set({ scanner_auto_update: value }).where("id", "=", 1).execute();
+}
+
+export async function setUnconfirmedPortDays(value: number): Promise<void> {
+  await db.updateTable("app_settings").set({ unconfirmed_port_days: value }).where("id", "=", 1).execute();
 }
 
 export async function setHostRetentionDays(value: number): Promise<void> {
