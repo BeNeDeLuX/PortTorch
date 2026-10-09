@@ -3,6 +3,7 @@ import path from "path";
 import { db } from "../db";
 import { config } from "../config";
 import { logger } from "../logger";
+import { purgeOrphanedThumbs, thumbPathFor } from "./thumbs";
 
 // Deleting the image files behind screenshots/rdp_screenshots rows.
 //
@@ -28,6 +29,9 @@ export function deleteScreenshotFiles(paths: Array<string | null | undefined>): 
   let deleted = 0;
   for (const p of paths) {
     if (!p || !isInsideScreenshotDir(p)) continue;
+    // The gallery preview made from it, if one was ever made - it would
+    // otherwise be an orphan the moment its original is gone.
+    fs.rmSync(thumbPathFor(p), { force: true });
     try {
       fs.unlinkSync(path.resolve(p));
       deleted++;
@@ -86,6 +90,8 @@ export async function purgeOldScreenshots(threshold: Date): Promise<number> {
 const ORPHAN_GRACE_MS = 60 * 60_000;
 
 export async function purgeOrphanedScreenshotFiles(): Promise<number> {
+  const thumbs = purgeOrphanedThumbs(ORPHAN_GRACE_MS);
+  if (thumbs > 0) logger.info({ event: "retention.orphaned_thumbs_purged", purged_count: thumbs });
   const root = path.resolve(config.screenshotDir);
   let entries: string[];
   try {

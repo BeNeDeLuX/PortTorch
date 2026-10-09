@@ -764,6 +764,29 @@ export interface NmapImportResult {
   nmapArgs: string | null;
 }
 
+export interface ScreenshotQuery {
+  page: number;
+  pageSize: number;
+  q: string;
+  kind: "all" | "web" | "rdp" | "changed";
+  exclude: string[];
+  tags: string[];
+  excludeTags: string[];
+}
+
+export interface ScreenshotPage {
+  items: FleetScreenshot[];
+  total: number;
+  page: number;
+  pageSize: number;
+  // Per kind, among what the other filters left - what each chip shows.
+  counts: { all: number; web: number; rdp: number; changed: number };
+  // Tiles hidden by the keyword and tag exclusions.
+  excluded: number;
+  // Tags present on any tile, with how many carry each.
+  tags: Array<{ tag: string; count: number }>;
+}
+
 export interface FleetScreenshot {
   id: string;
   host_id: string;
@@ -787,6 +810,8 @@ export interface FleetScreenshot {
   // capture - decided on stored metadata, never on the images, which are
   // essentially never byte-identical between two scans.
   changed: boolean;
+  // The host's tags, for display on the tile.
+  tags: string[];
 }
 
 export interface MonitoredNetwork {
@@ -1681,7 +1706,15 @@ export const api = {
   expiringCertificates: () => request<LimitedResult<ExpiringCertificate>>("/api/certificates"),
   sshHostKeys: () => request<LimitedResult<FleetSshHostKey>>("/api/ssh-keys"),
   software: () => request<LimitedResult<SoftwareRow>>("/api/software"),
-  screenshots: () => request<FleetScreenshot[]>("/api/screenshots"),
+  screenshots: (query: ScreenshotQuery) => {
+    const params = new URLSearchParams({ page: String(query.page), pageSize: String(query.pageSize) });
+    if (query.q) params.set("q", query.q);
+    if (query.kind !== "all") params.set("kind", query.kind);
+    if (query.exclude.length) params.set("exclude", query.exclude.join(","));
+    if (query.tags.length) params.set("tags", query.tags.join(","));
+    if (query.excludeTags.length) params.set("excludeTags", query.excludeTags.join(","));
+    return request<ScreenshotPage>(`/api/screenshots?${params.toString()}`);
+  },
   networkCoverage: () => request<NetworkCoverageResult>("/api/networks"),
   createNetwork: (label: string, cidr: string, scannerAgentId: string | null) =>
     request<MonitoredNetwork>("/api/networks", {

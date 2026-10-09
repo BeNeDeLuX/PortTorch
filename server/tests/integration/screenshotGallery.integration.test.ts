@@ -1,12 +1,21 @@
+import fs from "fs";
+import os from "os";
+import path from "path";
+import sharp from "sharp";
+import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "kysely";
+import { config } from "../../src/config";
 import { db } from "../../src/db";
+import { deleteScreenshotFiles, purgeOrphanedScreenshotFiles } from "../../src/screenshots/files";
+import { thumbPathFor } from "../../src/screenshots/thumbs";
 import {
   closeDb,
   createTestAgent,
   createTestUser,
   deleteTestAgent,
   deleteTestUser,
+  getApp,
   loginAs,
   type TestAgent,
   type TestUser,
@@ -100,14 +109,18 @@ describe("fleet-wide screenshot gallery", () => {
     await db.deleteFrom("scan_jobs").where("id", "=", jobId).execute();
     await deleteTestAgent(agent.id);
     await deleteTestUser(viewer.id);
-    await closeDb();
   });
 
-  async function gallery(): Promise<GalleryItem[]> {
+  // The response is a page now; the search narrows it to this file's two
+  // hosts, which also exercises the search itself.
+  async function page(query = "", pageSize = 200): Promise<{ items: GalleryItem[]; total: number; excluded: number; counts: Record<string, number>; tags: Array<{ tag: string; count: number }> }> {
     const client = await loginAs(viewer.username, viewer.password);
-    const res = await client.get("/api/screenshots");
+    const res = await client.get(`/api/screenshots?pageSize=${pageSize}&q=240.60.0${query}`);
     expect(res.status).toBe(200);
-    return res.body.filter((s: GalleryItem) => [HOST_A, HOST_B].includes(s.host_ip));
+    return res.body;
+  }
+  async function gallery(): Promise<GalleryItem[]> {
+    return (await page()).items.filter((s: GalleryItem) => [HOST_A, HOST_B].includes(s.host_ip));
   }
 
   it("shows only the newest capture per host and port", async () => {
@@ -197,5 +210,114 @@ describe("fleet-wide screenshot gallery", () => {
     const { getApp } = await import("./helpers");
     const res = await request(getApp()).get("/api/screenshots");
     expect(res.status).toBe(401);
+  });
+
+  it("pages, and hides tiles by keyword - including what the scan learned about the host", async () => {
+    const first = await page("", 2);
+    expect(first.items).toHaveLength(2);
+    expect(first.total).toBe(4);
+
+    // Nothing on host B's page says "Cisco"; its manufacturer does.
+    await db.updateTable("hosts").set({ mac_vendor: "Cisco Systems" }).where("id", "=", hostB).execute();
+    const r = await page("&exclude=cisco,admin%20panel");
+    expect(r.items.map((i) => `${i.host_ip}:${i.port}`)).toEqual([`${HOST_A}:80`]);
+    expect(r.excluded).toBe(3);
+    expect(r.counts).toMatchObject({ all: 1, rdp: 0 });
+  });
+
+  it("filters by tag either way, and lists the tags it saw", async () => {
+    await db.insertInto("host_tags").values({ host_id: hostA, tag: "known" }).execute();
+    const excluded = await page("&excludeTags=known");
+    expect(excluded.items.every((i) => i.host_ip === HOST_B)).toBe(true);
+    const only = await page("&tags=known");
+    expect(only.items.every((i) => i.host_ip === HOST_A)).toBe(true);
+    expect(only.tags).toContainEqual({ tag: "known", count: 2 });
+  });
+});
+
+// Gallery tiles show a small preview, made once from the original and kept.
+describe("screenshot previews", () => {
+  let agent: TestAgent;
+  let viewer: TestUser;
+  let jobId: string;
+  let hostId: string;
+  const originalDir = config.screenshotDir;
+
+  beforeAll(async () => {
+    config.screenshotDir = fs.mkdtempSync(path.join(os.tmpdir(), "porttorch-thumbs-"));
+    agent = await createTestAgent("it-thumb-agent");
+    viewer = await createTestUser("user");
+    jobId = (await db.insertInto("scan_jobs").values({ scanner_agent_id: agent.id, target_spec: "240.60.1.1", port_spec: "80", status: "completed" }).returning("id").executeTakeFirstOrThrow()).id;
+    hostId = (await db.insertInto("hosts").values({ ip: "240.60.1.1", scanner_agent_id: agent.id }).returning("id").executeTakeFirstOrThrow()).id;
+  });
+
+  afterAll(async () => {
+    await sql`DELETE FROM hosts WHERE ip = '240.60.1.1'::inet`.execute(db);
+    await db.deleteFrom("scan_jobs").where("id", "=", jobId).execute();
+    await deleteTestAgent(agent.id);
+    await deleteTestUser(viewer.id);
+    fs.rmSync(config.screenshotDir, { recursive: true, force: true });
+    config.screenshotDir = originalDir;
+    await closeDb();
+  });
+
+  it("serves a small WebP, keeps it, and removes it with its original", async () => {
+    const original = path.join(config.screenshotDir, "capture-1.png");
+    await sharp({ create: { width: 1920, height: 1080, channels: 3, background: "#2a4" } }).png().toFile(original);
+    const row = await db
+      .insertInto("screenshots")
+      .values({ host_id: hostId, scan_job_id: jobId, port: 80, url: "http://x/", image_path: original })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+
+    const client = await loginAs(viewer.username, viewer.password);
+    const res = await client.get(`/api/screenshots/${row.id}/thumb`).buffer(true).parse((r, cb) => {
+      const chunks: Buffer[] = [];
+      r.on("data", (c: Buffer) => chunks.push(c));
+      r.on("end", () => cb(null, Buffer.concat(chunks)));
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toBe("image/webp");
+    const meta = await sharp(res.body as Buffer).metadata();
+    expect(meta).toMatchObject({ format: "webp", width: 480 });
+    expect((res.body as Buffer).length).toBeLessThan(fs.statSync(original).size);
+
+    const thumb = thumbPathFor(original);
+    expect(fs.existsSync(thumb)).toBe(true);
+    // Unauthenticated callers get nothing, previews included.
+    expect((await request(getApp()).get(`/api/screenshots/${row.id}/thumb`)).status).toBe(401);
+
+    deleteScreenshotFiles([original]);
+    expect(fs.existsSync(original)).toBe(false);
+    expect(fs.existsSync(thumb)).toBe(false);
+  });
+
+  it("serves the original when it cannot make a preview", async () => {
+    const broken = path.join(config.screenshotDir, "broken.png");
+    fs.writeFileSync(broken, "not an image");
+    const row = await db
+      .insertInto("screenshots")
+      .values({ host_id: hostId, scan_job_id: jobId, port: 81, url: "http://x/", image_path: broken })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    const client = await loginAs(viewer.username, viewer.password);
+    const res = await client.get(`/api/screenshots/${row.id}/thumb`);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toBe("image/png");
+  });
+
+  it("collects previews whose original is gone, but not fresh ones", async () => {
+    const thumbs = path.join(config.screenshotDir, "thumbs");
+    fs.mkdirSync(thumbs, { recursive: true });
+    const stale = path.join(thumbs, "gone.png.webp");
+    const fresh = path.join(thumbs, "also-gone.png.webp");
+    fs.writeFileSync(stale, "x");
+    fs.writeFileSync(fresh, "x");
+    const old = new Date(Date.now() - 2 * 60 * 60_000);
+    fs.utimesSync(stale, old, old);
+    await purgeOrphanedScreenshotFiles();
+    expect(fs.existsSync(stale)).toBe(false);
+    // Inside the grace period - it may be being written right now.
+    expect(fs.existsSync(fresh)).toBe(true);
   });
 });

@@ -1035,6 +1035,19 @@ The "changed" badge is its own button rather than part of the tile's link, since
 
 `.shot-grid`/`.shot-thumb` are deliberately not `.host-grid`/`.host-thumb`: there the image is a 130px hint under a host's metadata, here the image *is* the content. The tiles are larger and anchored with `object-position: top`, because a web page's header is the recognisable part and centring the crop would cut exactly that away. Images are `loading="lazy"` - a fleet with hundreds of captures would otherwise fetch every one the moment the page opens.
 
+**Paged, filtered on the server, and shown as small previews.** Tested against a fleet of 800 captures, the page took long to load for two reasons, and the bigger one was not the list. Every tile showed the original capture, a 1920x1080 PNG averaging about 300 KB, in a tile about 300 pixels wide. `screenshots/thumbs.ts` serves a 480-pixel WebP from `GET /api/{screenshots,rdp-screenshots}/:id/thumb` instead. Measured on 30 real captures, that is 9.6 MB of originals against 71 KB of previews, about 135 times smaller.
+
+- **Made on first request and kept** (`<screenshotDir>/thumbs/<original>.webp`), not at ingest. That covers every capture taken before this existed with no backfill job.
+- **Named after the original's file**, so `deleteScreenshotFiles` removes a preview with its original, and `purgeOrphanedThumbs` finds a preview whose original is gone (same one-hour grace as the originals' own orphan pass, which only reads the top level and so never takes the `thumbs/` directory for orphans).
+- **A file the image library cannot read falls back to the original**, so a tile is never empty.
+- **`sharp` is the one new dependency**, a prebuilt libvips for Alpine. It must stay at 0.35.5 or newer: 0.34 carries the libvips, libheif and librsvg advisories, which `npm audit` reports.
+
+`GET /api/screenshots` now returns a page: `items`, `total`, `counts` per kind (among what the other filters left, so a chip never promises tiles the page does not show), `excluded`, and the `tags` present with their counts. `screenshots/gallery.ts` holds the rules as a pure, unit-tested function. The query still pairs the newest two captures per (host, port) in SQL and filters in memory, which is cheap at gallery sizes and keeps the "changed" pairing untouched.
+
+**Hiding known devices by keyword**, the reason for the change: "everything Cisco, every IP phone, every switch". `exclude=cisco,ipphone,switch` hides a tile when the keyword appears anywhere a device class shows up. That covers page title, URL, host name and derived host name, the OCR text, the detected web technologies, the response headers, and the host's manufacturer, device type and operating system, plus the product nmap saw on that port. A Cisco phone is identified by its manufacturer as often as by anything on the page. Matching ignores case, spaces and punctuation on both sides, so `ipphone` hides "IP Phone" and "IP-Phone". Tags work both ways: `tags=` narrows to hosts carrying any of them, `excludeTags=` hides them. Tags are searchable text too.
+
+The page keeps every filter in the URL, so a view can be shared. The hidden list is remembered per browser (`localStorage`) and written into the URL on a bare visit, so the address bar always shows what is being filtered. Pinned by `gallery.test.ts`, and by `screenshotGallery.integration.test.ts` against real image files: the preview really is a 480-pixel WebP smaller than the original, the original is served when the preview cannot be made, a preview leaves with its original, and old preview orphans are collected while fresh ones are not.
+
 ### Importing an nmap XML report
 
 Everything else in this database exists because a PortTorch scanner found it, which left no way in for an nmap run from a network with no agent, or a scan predating the platform. `POST /api/imports/nmap` (operator, multipart) is that way in.

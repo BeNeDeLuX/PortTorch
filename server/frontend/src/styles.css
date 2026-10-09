@@ -3888,6 +3888,66 @@ button.subnet-cell:focus-visible,
    the image *is* the content, so the tiles are larger and anchored to the
    top of the capture - a web page's header is the recognisable part, and
    centring would crop exactly that away. */
+.shot-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem 1.2rem;
+  margin: 0.4rem 0;
+}
+
+.shot-exclude-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.4rem;
+}
+
+.shot-exclude-form {
+  max-width: 100%;
+}
+
+.shot-exclude-form label {
+  min-width: 0;
+}
+
+.shot-exclude-form input {
+  width: 16rem;
+  max-width: 100%;
+}
+
+.shot-exclusions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.4rem 0;
+}
+
+.shot-exclusions .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.chip-remove {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+}
+
+.shot-tags {
+  color: var(--accent);
+}
+
+/* While the next page loads, the current one stays visible but reads as
+   stale rather than vanishing to a spinner. */
+.shot-grid-loading {
+  opacity: 0.55;
+}
+
 .shot-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));

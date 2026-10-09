@@ -7,8 +7,11 @@ import { config } from "../config";
 import { requireAuth } from "../auth/middleware";
 import { getAllowedScannerAgentIds } from "../auth/scannerScope";
 import { asyncHandler } from "../lib/asyncHandler";
+import { logger } from "../logger";
+import { ensureThumb } from "./thumbs";
+import { filterGallery, parseGalleryParams } from "./gallery";
 
-function serveImage(table: "screenshots" | "rdp_screenshots") {
+function serveImage(table: "screenshots" | "rdp_screenshots", variant: "original" | "thumb" = "original") {
   return asyncHandler(async (req, res) => {
     const row = await db
       .selectFrom(table)
@@ -29,6 +32,22 @@ function serveImage(table: "screenshots" | "rdp_screenshots") {
     if (!fs.existsSync(resolved)) {
       res.status(404).json({ error: "screenshot file missing" });
       return;
+    }
+
+    if (variant === "thumb") {
+      try {
+        const thumb = await ensureThumb(resolved);
+        res.setHeader("Content-Type", "image/webp");
+        // A capture never changes once written, so neither does its
+        // preview - a week in the browser cache costs nothing.
+        res.setHeader("Cache-Control", "private, max-age=604800, immutable");
+        fs.createReadStream(thumb).pipe(res);
+        return;
+      } catch (err) {
+        // A file the image library cannot read still gets shown: the
+        // original is served instead, so a tile is never left empty.
+        logger.warn({ event: "screenshot.thumb_failed", id: req.params.id, err: err instanceof Error ? err.message : String(err) });
+      }
     }
 
     res.setHeader("Content-Type", "image/png");
@@ -53,6 +72,7 @@ screenshotsRouter.use(requireAuth);
 // Registered before "/:id/image" so the bare path isn't swallowed by it.
 screenshotsRouter.get("/", asyncHandler(async (req, res) => {
   const allowed = getAllowedScannerAgentIds(req);
+  const params = parseGalleryParams(req.query as Record<string, unknown>);
 
   // The newest *two* captures per (host, port), so the gallery can say
   // whether the latest one differs from what was there before. A window
@@ -63,62 +83,51 @@ screenshotsRouter.get("/", asyncHandler(async (req, res) => {
   // Raw SQL rather than the query builder because distinctOn cannot
   // express "top 2 per group" - this is the one place in the gallery that
   // needs more than the newest row.
+  //
+  // Everything a keyword could plausibly name rides along - the page and
+  // what the scan learned about the host and the port - because the thing
+  // that identifies a Cisco phone is as often the manufacturer or the
+  // product nmap saw as anything on the page itself.
   const scopeFilter = allowed ? sql`and h.scanner_agent_id = any(${allowed}::uuid[])` : sql``;
+  const hostColumns = sql`host(h.ip) as host_ip, h.hostname as host_hostname,
+    h.mac_vendor, h.os_name, h.os_family, h.device_type, h.derived_hostname,
+    (select concat_ws(' ', chp.service_name, chp.service_product, chp.service_version, chp.extra_info)
+       from current_host_ports chp where chp.host_id = h.id and chp.port = x.port limit 1) as port_service`;
 
-  const web = await sql<{
-    id: string;
-    host_id: string;
-    host_ip: string;
-    host_hostname: string | null;
-    port: number;
-    url: string | null;
-    page_title: string | null;
-    http_status: number | null;
-    captured_at: Date;
-    rn: string;
-  }>`
-    select s.id, s.host_id, h.ip as host_ip, h.hostname as host_hostname, s.port, s.url,
-           s.page_title, s.http_status, s.captured_at,
-           row_number() over (partition by s.host_id, s.port order by s.captured_at desc) as rn
-    from screenshots s
-    join hosts h on h.id = s.host_id
-    where true ${scopeFilter}
+  const web = await sql<Omit<RankedCapture, "kind">>`
+    select x.*, ${hostColumns}
+    from (
+      select s.id, s.host_id, s.port, s.url, s.page_title, s.http_status, s.captured_at, s.ocr_text,
+             array_to_string(s.technologies, ' ') as technologies, s.headers::text as headers,
+             row_number() over (partition by s.host_id, s.port order by s.captured_at desc) as rn
+      from screenshots s
+    ) x
+    join hosts h on h.id = x.host_id
+    where x.rn <= 2 ${scopeFilter}
   `.execute(db);
 
-  const rdp = await sql<{
-    id: string;
-    host_id: string;
-    host_ip: string;
-    host_hostname: string | null;
-    port: number;
-    captured_at: Date;
-    rn: string;
-  }>`
-    select r.id, r.host_id, h.ip as host_ip, h.hostname as host_hostname, r.port, r.captured_at,
-           row_number() over (partition by r.host_id, r.port order by r.captured_at desc) as rn
-    from rdp_screenshots r
-    join hosts h on h.id = r.host_id
-    where true ${scopeFilter}
+  const rdp = await sql<Omit<RankedCapture, "kind">>`
+    select x.*, null as url, null as page_title, null::int as http_status, null as technologies, null as headers, ${hostColumns}
+    from (
+      select r.id, r.host_id, r.port, r.captured_at, r.ocr_text,
+             row_number() over (partition by r.host_id, r.port order by r.captured_at desc) as rn
+      from rdp_screenshots r
+    ) x
+    join hosts h on h.id = x.host_id
+    where x.rn <= 2 ${scopeFilter}
   `.execute(db);
 
-  const items = [
+  const tiles = [
     ...pair(web.rows.map((r) => ({ ...r, kind: "web" as const }))),
-    ...pair(
-      rdp.rows.map((r) => ({
-        ...r,
-        url: null as string | null,
-        page_title: null as string | null,
-        http_status: null as number | null,
-        kind: "rdp" as const,
-      }))
-    ),
+    ...pair(rdp.rows.map((r) => ({ ...r, kind: "rdp" as const }))),
   ];
 
-  // Newest first: the point of the page is a quick look at what is out
-  // there now, so anything just discovered belongs at the top.
-  items.sort((a, b) => new Date(b.captured_at).getTime() - new Date(a.captured_at).getTime());
+  const hostIds = [...new Set(tiles.map((t) => t.host_id))];
+  const tagRows = hostIds.length > 0 ? await db.selectFrom("host_tags").select(["host_id", "tag"]).where("host_id", "in", hostIds).execute() : [];
+  const tagsByHost = new Map<string, string[]>();
+  for (const r of tagRows) tagsByHost.set(r.host_id, [...(tagsByHost.get(r.host_id) ?? []), r.tag]);
 
-  res.json(items);
+  res.json(filterGallery(tiles, tagsByHost, params));
 }));
 
 interface RankedCapture {
@@ -132,6 +141,15 @@ interface RankedCapture {
   http_status: number | null;
   captured_at: Date;
   rn: string;
+  ocr_text: string | null;
+  technologies: string | null;
+  headers: string | null;
+  mac_vendor: string | null;
+  os_name: string | null;
+  os_family: string | null;
+  device_type: string | null;
+  derived_hostname: string | null;
+  port_service: string | null;
   kind: "web" | "rdp";
 }
 
@@ -170,6 +188,25 @@ function pair(rows: RankedCapture[]) {
       http_status: current.http_status,
       captured_at: current.captured_at,
       kind: current.kind,
+      // Not sent to the browser - what keywords are matched against.
+      searchText: [
+        current.host_ip,
+        current.host_hostname,
+        current.derived_hostname,
+        current.url,
+        current.page_title,
+        current.ocr_text,
+        current.technologies,
+        current.headers,
+        current.mac_vendor,
+        current.os_name,
+        current.os_family,
+        current.device_type,
+        current.port_service,
+        String(current.port),
+      ]
+        .filter(Boolean)
+        .join(" "),
       previous: previous
         ? {
             id: previous.id,
@@ -187,7 +224,9 @@ function pair(rows: RankedCapture[]) {
 }
 
 screenshotsRouter.get("/:id/image", serveImage("screenshots"));
+screenshotsRouter.get("/:id/thumb", serveImage("screenshots", "thumb"));
 
 export const rdpScreenshotsRouter = Router();
 rdpScreenshotsRouter.use(requireAuth);
 rdpScreenshotsRouter.get("/:id/image", serveImage("rdp_screenshots"));
+rdpScreenshotsRouter.get("/:id/thumb", serveImage("rdp_screenshots", "thumb"));
