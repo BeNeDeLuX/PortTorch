@@ -163,6 +163,15 @@ interface RankedCapture {
 // comparison would report a change on almost every scan and be ignored
 // within a week. A title going from "Login" to "Index of /" is the signal
 // worth surfacing, and it is exact.
+function urlHost(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
 function pair(rows: RankedCapture[]) {
   const byKey = new Map<string, { current?: RankedCapture; previous?: RankedCapture }>();
   for (const row of rows) {
@@ -188,6 +197,10 @@ function pair(rows: RankedCapture[]) {
       http_status: current.http_status,
       captured_at: current.captured_at,
       kind: current.kind,
+      // Not sent to the browser - what hostname patterns are matched
+      // against: DNS, what the host calls itself, and the name in the URL
+      // (which carries a probe hostname override when one is set).
+      hostNames: [current.host_hostname, current.derived_hostname, urlHost(current.url)].filter((n): n is string => Boolean(n)),
       // Not sent to the browser - what keywords are matched against.
       searchText: [
         current.host_ip,

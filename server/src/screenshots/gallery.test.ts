@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterGallery, matchesKeyword, normalise, parseGalleryParams, type GalleryTile } from "./gallery";
+import { filterGallery, hostnamePattern, isHostnamePattern, matchesKeyword, normalise, parseGalleryParams, type GalleryTile } from "./gallery";
 
 const tile = (id: string, searchText: string, over: Partial<GalleryTile> = {}): GalleryTile => ({
   id,
@@ -73,5 +73,44 @@ describe("paging and counts", () => {
     expect(run({}).items[0]).not.toHaveProperty("searchText");
     expect(parseGalleryParams({ pageSize: "100000" }).pageSize).toBe(200);
     expect(parseGalleryParams({ kind: "bogus" }).kind).toBe("all");
+  });
+});
+
+describe("hostname patterns", () => {
+  it("are entries with a wildcard, matched against the whole name", () => {
+    expect(isHostnamePattern("ap*.corp.local")).toBe(true);
+    expect(isHostnamePattern("cisco")).toBe(false);
+    const re = hostnamePattern("sw*core.corp.LOCAL");
+    expect(re.test("sw01-core.corp.local")).toBe(true);
+    expect(re.test("sw01-core.corp.local.evil")).toBe(false);
+    // A dot in the pattern is a dot, not "any character".
+    expect(hostnamePattern("a?.corp.local").test("ab.corpxlocal")).toBe(false);
+    expect(hostnamePattern("a?.corp.local").test("ab.corp.local")).toBe(true);
+  });
+
+  it("hide tiles by any name the host goes by, and nothing else", () => {
+    const named = [
+      tile("ap1", "Access point web ui", { hostNames: ["ap01.corp.local"] }),
+      tile("ap2", "Access point", { hostNames: ["AP02.CORP.LOCAL"] }),
+      // Its DNS name does not match, the name it gives itself does.
+      tile("self", "Printer", { hostNames: ["10-0-0-9.dyn.isp", "ap99.corp.local"] }),
+      // Mentions the pattern's text on the page but is not named so.
+      tile("page", "see ap01.corp.local for help", { hostNames: ["helpdesk.corp.local"] }),
+      tile("bare", "No name at all"),
+    ];
+    const r = filterGallery(named, new Map(), parseGalleryParams({ exclude: "ap*.corp.local" }));
+    expect(r.items.map((i) => i.id).sort()).toEqual(["bare", "page"]);
+    expect(r.excluded).toBe(3);
+    expect(r.items[0]).not.toHaveProperty("hostNames");
+  });
+
+  it("mix with keywords in one list", () => {
+    const named = [
+      tile("ap", "x", { hostNames: ["ap01.corp.local"] }),
+      tile("phone", "Cisco IP Phone", { hostNames: ["sep001122.voice.local"] }),
+      tile("keep", "x", { hostNames: ["srv01.corp.local"] }),
+    ];
+    const r = filterGallery(named, new Map(), parseGalleryParams({ exclude: "ap*.corp.local,ipphone" }));
+    expect(r.items.map((i) => i.id)).toEqual(["keep"]);
   });
 });

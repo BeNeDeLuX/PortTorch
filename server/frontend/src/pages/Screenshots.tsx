@@ -163,7 +163,7 @@ export default function Screenshots({ me, onLogout }: { me: Me; onLogout: () => 
           <label className="hide-empty-toggle">
             Hide keywords
             <input
-              placeholder="e.g. cisco, ipphone, switch"
+              placeholder="e.g. cisco, ipphone, ap*.corp.local"
               value={keywordInput}
               onChange={(e) => setKeywordInput(e.target.value)}
               aria-label="Keywords to hide"
@@ -197,8 +197,8 @@ export default function Screenshots({ me, onLogout }: { me: Me; onLogout: () => 
         <div className="shot-exclusions">
           <span className="host-meta">Hidden:</span>
           {query.exclude.map((k) => (
-            <span key={`k-${k}`} className="chip active">
-              {k}
+            <span key={`k-${k}`} className="chip active" title={/[*?]/.test(k) ? "Host name pattern" : "Keyword"}>
+              {/[*?]/.test(k) ? `host: ${k}` : k}
               <button
                 type="button"
                 className="chip-remove"
@@ -231,8 +231,10 @@ export default function Screenshots({ me, onLogout }: { me: Me; onLogout: () => 
       <p className="host-meta">
         A keyword hides a tile when it appears in the page title, URL, host name, the text on the screenshot, the detected
         web technologies or server headers, the manufacturer, device type or operating system, or the service on that
-        port. Spacing and dashes do not matter: <code>ipphone</code> also hides "IP Phone". The hidden list is remembered in
-        this browser.
+        port. Spacing and dashes do not matter: <code>ipphone</code> also hides "IP Phone". An entry with <code>*</code> or{" "}
+        <code>?</code> is a host name pattern instead: <code>sw*core.corp.local</code> hides every host whose DNS name, the
+        name it reports itself, or the name in its URL matches - the whole name, <code>*</code> for any characters,{" "}
+        <code>?</code> for one. The hidden list is remembered in this browser.
       </p>
 
       {counts && (

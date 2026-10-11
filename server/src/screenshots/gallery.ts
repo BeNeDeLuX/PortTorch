@@ -28,6 +28,9 @@ export interface GalleryTile {
   captured_at: Date | string;
   changed: boolean;
   searchText: string;
+  // Every name the host goes by - DNS, what it calls itself, the name in
+  // the captured URL - for hostname patterns. Not sent to the browser.
+  hostNames?: string[];
   [key: string]: unknown;
 }
 
@@ -64,9 +67,30 @@ export function matchesKeyword(haystack: string, keyword: string): boolean {
   return k.length > 0 && haystack.includes(k);
 }
 
+// An exclusion containing * or ? is a hostname pattern rather than a
+// keyword: "prefix*name.domain.tld". Matched against the whole name - a
+// pattern names hosts, so "web*" must not hide "intranet-web01" the way the
+// keyword "web" would - case-insensitively, * for any run of characters
+// (dots included), ? for exactly one.
+export function isHostnamePattern(entry: string): boolean {
+  return /[*?]/.test(entry);
+}
+
+export function hostnamePattern(entry: string): RegExp {
+  const body = entry
+    .trim()
+    .toLowerCase()
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*")
+    .replace(/\?/g, ".");
+  return new RegExp(`^${body}$`);
+}
+
 export function filterGallery(tiles: GalleryTile[], tagsByHost: Map<string, string[]>, p: GalleryParams) {
   const lower = (xs: string[]) => xs.map((x) => x.toLowerCase());
   const includeTags = new Set(lower(p.tags));
+  const patterns = p.exclude.filter(isHostnamePattern).map(hostnamePattern);
+  const keywords = p.exclude.filter((e) => !isHostnamePattern(e));
   const excludeTags = new Set(lower(p.excludeTags));
 
   // Tags present on any tile, for the picker - counted before filtering so
@@ -82,8 +106,11 @@ export function filterGallery(tiles: GalleryTile[], tagsByHost: Map<string, stri
     // hosts tagged so as well.
     const haystack = normalise(`${t.searchText} ${tags.join(" ")}`);
     if (includeTags.size > 0 && ![...includeTags].some((x) => hostTags.has(x))) return false;
+    const names = (t.hostNames ?? []).map((n) => n.toLowerCase());
     const hidden =
-      [...excludeTags].some((x) => hostTags.has(x)) || p.exclude.some((keyword) => matchesKeyword(haystack, keyword));
+      [...excludeTags].some((x) => hostTags.has(x)) ||
+      keywords.some((keyword) => matchesKeyword(haystack, keyword)) ||
+      patterns.some((re) => names.some((n) => re.test(n)));
     if (hidden) {
       excluded++;
       return false;
@@ -109,7 +136,7 @@ export function filterGallery(tiles: GalleryTile[], tagsByHost: Map<string, stri
   const page = Math.min(p.page, pages);
   const items = ofKind
     .slice((page - 1) * p.pageSize, page * p.pageSize)
-    .map(({ searchText: _drop, ...rest }) => ({ ...rest, tags: tagsByHost.get(rest.host_id) ?? [] }));
+    .map(({ searchText: _drop, hostNames: _names, ...rest }) => ({ ...rest, tags: tagsByHost.get(rest.host_id) ?? [] }));
 
   return {
     items,

@@ -225,6 +225,19 @@ describe("fleet-wide screenshot gallery", () => {
     expect(r.counts).toMatchObject({ all: 1, rdp: 0 });
   });
 
+  it("hides tiles by hostname pattern, whichever name matches", async () => {
+    await db.updateTable("hosts").set({ hostname: "ap01.corp.local" }).where("id", "=", hostA).execute();
+    // Host B has no DNS name that matches; the name it reports itself does.
+    await db.updateTable("hosts").set({ hostname: null, derived_hostname: "AP02.corp.local" }).where("id", "=", hostB).execute();
+    const r = await page("&exclude=ap*.corp.local");
+    expect(r.items).toEqual([]);
+    expect(r.excluded).toBe(4);
+    // Anchored to the whole name: a pattern for another domain hides nothing.
+    expect((await page("&exclude=ap*.corp")).items).toHaveLength(4);
+    await db.updateTable("hosts").set({ hostname: null }).where("id", "=", hostA).execute();
+    await db.updateTable("hosts").set({ derived_hostname: null }).where("id", "=", hostB).execute();
+  });
+
   it("filters by tag either way, and lists the tags it saw", async () => {
     await db.insertInto("host_tags").values({ host_id: hostA, tag: "known" }).execute();
     const excluded = await page("&excludeTags=known");
