@@ -37,6 +37,7 @@ const EVENTS: WebhookEvent[] = [
   "baseline.deviation",
   "port_policy.violation",
   "backup.failed",
+  "scanner.resource_pressure",
 ];
 const uuidSchema = z.string().uuid();
 const WEBHOOK_COLUMNS = [

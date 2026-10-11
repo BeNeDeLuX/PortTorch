@@ -9,6 +9,7 @@ import { db } from "../db";
 import { config } from "../config";
 import { apiKeyAuth } from "./apiKeyAuth";
 import { asyncHandler } from "../lib/asyncHandler";
+import { metricsBatchSchema, storeSamples } from "../scannerMetrics/metrics";
 import { logger } from "../logger";
 import { dispatchWebhook } from "../webhooks/dispatch";
 import { zIp } from "../lib/zodIp";
@@ -313,6 +314,25 @@ ingestRouter.get("/config", asyncHandler(async (req, res) => {
 // nine values that are perfectly good. Bounds are still enforced, since
 // an out-of-range number displayed as "your config.yaml says this" would
 // be misinformation either way.
+// Host CPU, memory, network and load, once a minute from a serve-mode
+// scanner (scanner/internal/hostmetrics). A batch, because a scanner keeps
+// what it could not deliver and sends it with the next report. Samples
+// with an implausible timestamp are dropped rather than refusing the
+// batch: a clock off by days is a fact about that host, not a reason to
+// lose the rest.
+ingestRouter.post("/metrics", asyncHandler(async (req, res) => {
+  const parsed = metricsBatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const { dropped } = await storeSamples(req.scannerAgentId!, parsed.data.samples);
+  if (dropped > 0) {
+    logger.warn({ event: "scanner_metrics.samples_dropped", scanner_agent_id: req.scannerAgentId, dropped, reason: "timestamp out of range" });
+  }
+  res.status(204).end();
+}));
+
 ingestRouter.put("/config-report", asyncHandler(async (req, res) => {
   const body = req.body;
   if (typeof body !== "object" || body === null || Array.isArray(body)) {

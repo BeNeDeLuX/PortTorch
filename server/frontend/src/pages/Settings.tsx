@@ -10,6 +10,7 @@ import ProxyCard from "./settings/ProxyCard";
 import RequireTotpCard from "./settings/RequireTotpCard";
 import RetentionCard from "./settings/RetentionCard";
 import ScanLogRetentionCard from "./settings/ScanLogRetentionCard";
+import ScannerMetricsRetentionCard from "./settings/ScannerMetricsRetentionCard";
 import ScannerAutoUpdateCard from "./settings/ScannerAutoUpdateCard";
 import ScanningCard from "./settings/ScanningCard";
 import SmtpCard from "./settings/SmtpCard";
@@ -82,6 +83,7 @@ export default function Settings({ me, onLogout }: { me: Me; onLogout: () => voi
         <div className="settings-grid">
           {settings && <RetentionCard settings={settings} onUpdated={setSettings} />}
           {settings && <ScanLogRetentionCard settings={settings} onUpdated={setSettings} />}
+          {settings && <ScannerMetricsRetentionCard settings={settings} onUpdated={setSettings} />}
           <StorageCard />
         </div>
         {/* Wide on its own row: it holds two separate actions plus the

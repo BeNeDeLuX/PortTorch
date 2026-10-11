@@ -60,6 +60,8 @@ export interface ScannerAgentsTable {
   // app_settings.scanner_auto_update, true/false pin it. See
   // scannerUpdate/autoUpdate.ts.
   auto_update: ColumnType<boolean | null, boolean | null | undefined, boolean | null>;
+  // Come-and-go dedup for scanner.resource_pressure.
+  resource_alert_sent_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
   // Takes a new release first; the rest of the fleet is auto-updated only
   // after a canary completed a scan on it. See scannerUpdate/autoUpdate.ts.
   update_canary: ColumnType<boolean, boolean | undefined, boolean>;
@@ -887,6 +889,37 @@ export interface PortPoliciesTable {
   updated_at: ColumnType<Date, string | Date | undefined, string | Date>;
 }
 
+// Scanner host metrics - see scannerMetrics/ and migration
+// 1747900000000_scanner_metrics.js.
+export interface ScannerMetricsTable {
+  scanner_agent_id: string;
+  at: ColumnType<Date, string | Date, string | Date>;
+  cpu_percent: number;
+  mem_used_bytes: ColumnType<string, number, number>;
+  mem_total_bytes: ColumnType<string, number, number>;
+  net_rx_bps: number;
+  net_tx_bps: number;
+  load1: number;
+  scans_running: number;
+}
+
+export interface ScannerMetricsHourlyTable {
+  scanner_agent_id: string;
+  hour: ColumnType<Date, string | Date, string | Date>;
+  samples: number;
+  cpu_avg: number;
+  cpu_max: number;
+  mem_used_avg: number;
+  mem_used_max: ColumnType<string, number, number>;
+  mem_total: ColumnType<string, number, number>;
+  net_rx_avg: number;
+  net_rx_max: number;
+  net_tx_avg: number;
+  net_tx_max: number;
+  load1_avg: number;
+  scans_max: number;
+}
+
 // Approved state per network - see baselines/ and migration
 // 1747300000000_network_baselines.js.
 export interface NetworkBaselinesTable {
@@ -917,6 +950,10 @@ export interface AppSettingsTable {
   // Days an open port may go without re-confirmation before it is flagged
   // "unconfirmed" - see migration 1747800000000.
   unconfirmed_port_days: ColumnType<number, number | undefined, number>;
+  // Retention of scanner host metrics - raw minute samples, and hourly
+  // roll-ups. See scannerMetrics/.
+  scanner_metrics_raw_days: ColumnType<number, number | undefined, number>;
+  scanner_metrics_hourly_days: ColumnType<number, number | undefined, number>;
   // Single sign-on (auth/oidc.ts). The client secret is withheld from the
   // settings API like smtp_password.
   oidc_enabled: ColumnType<boolean, boolean | undefined, boolean>;
@@ -1033,6 +1070,8 @@ export interface Database {
   users: UsersTable;
   scanner_agents: ScannerAgentsTable;
   network_baselines: NetworkBaselinesTable;
+  scanner_metrics: ScannerMetricsTable;
+  scanner_metrics_hourly: ScannerMetricsHourlyTable;
   port_policies: PortPoliciesTable;
   oidc_scanner_groups: OidcScannerGroupsTable;
   api_tokens: ApiTokensTable;

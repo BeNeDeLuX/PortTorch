@@ -104,6 +104,8 @@ export interface AppSettings {
   requireAdminTotp: boolean;
   scannerAutoUpdate: boolean;
   unconfirmedPortDays: number;
+  scannerMetricsRawDays: number;
+  scannerMetricsHourlyDays: number;
   hostRetentionDays: number;
   staleScanThresholdMinutes: number;
   scanQueueWarningThreshold: number;
@@ -1469,6 +1471,45 @@ export interface OidcSettings {
 
 export type OidcSettingsInput = Omit<OidcSettings, "clientSecretSet" | "missing"> & { clientSecret?: string | null };
 
+export interface ScannerMetricsPoint {
+  t: string;
+  cpu: number;
+  cpuMax: number;
+  memUsed: number;
+  memMax: number;
+  memTotal: number;
+  rx: number;
+  rxMax: number;
+  tx: number;
+  txMax: number;
+  load1: number;
+  scans: number;
+}
+
+export type ScannerMetricsRange = "24h" | "7d" | "14d" | "30d" | "90d" | "365d";
+
+export interface ScannerMetrics {
+  agent: { id: string; name: string; version: string | null };
+  range: ScannerMetricsRange;
+  from: string;
+  to: string;
+  bucketSeconds: number;
+  // Minute samples for short ranges, the hourly roll-up for long ones.
+  source: "minute" | "hourly";
+  points: ScannerMetricsPoint[];
+  scans: Array<{ id: string; targetSpec: string; portSpec: string; status: string; startedAt: string; finishedAt: string | null }>;
+  latest: {
+    at: string;
+    cpuPercent: number;
+    memUsedBytes: number;
+    memTotalBytes: number;
+    netRxBytesPerSec: number;
+    netTxBytesPerSec: number;
+    load1: number;
+    scansRunning: number;
+  } | null;
+}
+
 export interface AutoUpdateStatus {
   fleetDefault: boolean;
   latestVersion: string | null;
@@ -1791,6 +1832,8 @@ export const api = {
   setScannerAutoUpdate: (id: string, change: { autoUpdate?: boolean | null; canary?: boolean }) =>
     request<void>(`/api/agents/${id}/auto-update`, { method: "PUT", body: JSON.stringify(change) }),
   autoUpdateStatus: () => request<AutoUpdateStatus>("/api/agents/auto-update-status"),
+  scannerMetrics: (id: string, range: ScannerMetricsRange) =>
+    request<ScannerMetrics>(`/api/agents/${id}/metrics?range=${range}`),
   baselines: () => request<NetworkBaselineSummary[]>("/api/baselines"),
   portPolicies: () => request<PortPolicySummary[]>("/api/port-policies"),
   portPolicy: (id: string) =>

@@ -73,7 +73,8 @@ export type WebhookEvent =
   | "ca_certificate.expiring_soon"
   | "baseline.deviation"
   | "port_policy.violation"
-  | "backup.failed";
+  | "backup.failed"
+  | "scanner.resource_pressure";
 
 // Plain-English subject line for an email channel - a webhook channel has
 // no equivalent need, since "event"/"data" already ride along in the JSON
@@ -102,6 +103,7 @@ const EVENT_SUBJECTS: Record<WebhookEvent, string> = {
   "baseline.deviation": "Network deviates from its approved baseline",
   "port_policy.violation": "Open port violates a port policy",
   "backup.failed": "Scheduled backup failed",
+  "scanner.resource_pressure": "Scanner host running at its limits",
 };
 
 // A Teams "Workflows" webhook (the current replacement for the classic,

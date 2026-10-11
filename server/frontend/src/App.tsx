@@ -9,6 +9,7 @@ import Account from "./pages/Account";
 import Dashboard from "./pages/Dashboard";
 import HostDetail from "./pages/HostDetail";
 import ScannerAgents from "./pages/ScannerAgents";
+import ScannerAgentDetail from "./pages/ScannerAgentDetail";
 import ScanHistory from "./pages/ScanHistory";
 import Schedules from "./pages/Schedules";
 import AdhocScans from "./pages/AdhocScans";
@@ -117,6 +118,10 @@ export default function App() {
       <Route
         path="/agents"
         element={routeElement(false, (m) => <ScannerAgents me={m} onLogout={() => setMe(null)} />)}
+      />
+      <Route
+        path="/agents/:id"
+        element={routeElement(false, (m) => <ScannerAgentDetail me={m} onLogout={() => setMe(null)} />)}
       />
       <Route
         path="/schedules"

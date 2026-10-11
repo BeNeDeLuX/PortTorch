@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"porttorch/scanner/internal/hostmetrics"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -802,6 +803,14 @@ func (c *Client) GetConfigOverrides(ctx context.Context) (map[string]int, error)
 // effective config already has any dashboard override folded into it -
 // reporting that would make an override look like the file's own value
 // and there would be nothing left to clear back to.
+// ReportMetrics sends host resource samples - CPU, memory, network, load -
+// for the dashboard's per-scanner charts. A batch rather than one sample,
+// so samples buffered while the webserver was unreachable arrive together
+// once it is back.
+func (c *Client) ReportMetrics(ctx context.Context, samples []hostmetrics.Sample) error {
+	return c.doJSON(ctx, http.MethodPost, "/api/ingest/metrics", map[string]any{"samples": samples}, nil)
+}
+
 func (c *Client) ReportBaseConfig(ctx context.Context, values map[string]int) error {
 	return c.doJSON(ctx, http.MethodPut, "/api/ingest/config-report", values, nil)
 }

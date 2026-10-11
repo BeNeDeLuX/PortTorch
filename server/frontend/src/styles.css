@@ -2828,6 +2828,21 @@ button.scan-part-badge:hover {
   pointer-events: none;
 }
 
+/* Scanner host metrics (ScannerAgentDetail.tsx): a running scan is a
+   shaded band behind the lines, so a load spike can be read against the
+   scan that caused it. Muted rather than a series colour - it is context,
+   not data. */
+.metrics-band {
+  fill: var(--muted);
+  opacity: 0.12;
+  pointer-events: none;
+}
+
+.metrics-band-swatch {
+  background: var(--muted);
+  opacity: 0.35;
+}
+
 .trend-tooltip {
   position: absolute;
   top: 0.5rem;

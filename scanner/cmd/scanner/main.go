@@ -319,6 +319,10 @@ func newServeCmd(configPath *string) *cobra.Command {
 			// never rewritten, so a restart falls back to the file and the
 			// override is simply fetched again.
 			go server.StartConfigWatcher(context.Background(), pollInterval)
+			// Host CPU, memory and network for the dashboard's per-scanner
+			// charts - once a minute, independent of the poll interval, so
+			// every scanner's chart has the same resolution.
+			go server.StartMetricsReporter(context.Background(), time.Minute)
 			log.Info("scanner config watcher started", "event", "serve.config_watcher_started", "poll_interval", pollInterval.String())
 
 			retryInterval := time.Duration(cfg.RetryIntervalSeconds) * time.Second

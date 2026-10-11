@@ -183,6 +183,10 @@ The effective setting is `scanner_agents.auto_update` (true/false pins it) or, w
 
 Pinned by the staggering case in `scannerAutoUpdate.integration.test.ts`, which drives the real version header and a real completed scan.
 
+### Scanner host metrics
+
+A serve-mode scanner reports its host's CPU, memory, network throughput, load and running scans once a minute (`internal/hostmetrics`, from scanner 0.30.0), and the dashboard charts them per scanner over 24 hours to a year, with the scans that ran shaded behind the lines. Scanner-initiated like everything else: the scanner pushes and buffers up to two hours of samples through an outage; the webserver never asks. The webserver keeps minute samples for a short window and hourly averages plus peaks for a long one, and alerts with `scanner.resource_pressure` on a sustained 90% CPU or memory. See `scanner/CLAUDE.md` for what is measured and how, and `server/CLAUDE.md` for storage, roll-up and the chart.
+
 ### Logging is SIEM-oriented, not incidental
 
 Every stdout line on both services is a single JSON object (pino on the webserver, stdlib `log/slog` on the scanner) — no plain-text `console.log`/`fmt.Printf` mixed in on the `scan`/`serve` scanner paths or anywhere in the webserver, since a log shipper reading the stream line-by-line needs every line to parse. The scanner's interactive `menu` (TUI) is the one exception, since it owns the whole terminal screen. The core traceability event is `scan.host_scanned` (webserver, in `src/ingest/routes.ts`) — scanner identity, target IP, ports with state/service, source IP, timestamp — and `scan_job_id` correlates events across both services' logs. Never log secrets (API keys, passwords, session cookies, `Authorization` headers) — only IDs/names.

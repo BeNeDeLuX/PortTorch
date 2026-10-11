@@ -453,6 +453,19 @@ Capacity is only useful if whoever queues work can see it, and the webserver can
 
 The header is **omitted entirely** rather than sent as `0/0` when this process has no scan slots at all (`scan`/`menu`), because absence is load-bearing: it is how the webserver distinguishes "unknown" from a reported 0, and a one-shot run on the same host must not overwrite a serve process's reported capacity. `PublishScanSlots` is called once at startup so an idle scanner reports `0/N` from its very first request rather than staying unknown until it happens to run something, and again from the config watcher, since otherwise a dashboard-changed limit wouldn't show up until the next scan started or finished. The two values are separate atomics rather than a mutex-guarded pair: they are only ever read together to build one header line, and a momentarily mismatched pair during a limit change is a cosmetically odd number, not a correctness problem (the webserver rejects `running > max` anyway).
 
+### Host metrics, sampled from /proc and buffered
+
+`Server.StartMetricsReporter` (serve mode only, beside the other watchers) samples the host once a minute through `internal/hostmetrics` and posts it to `POST /api/ingest/metrics`. The dashboard charts it per scanner (see `server/CLAUDE.md`).
+
+`/proc` is read directly rather than through a library: four small files, a few lines of parsing each, and no dependency for a feature that only runs on Linux. The parsers are tested against real Debian output, and four decisions are in them:
+
+- **CPU idle counts iowait**, and the total is the first eight fields of the `cpu` line. `guest`/`guest_nice` are already inside `user`/`nice`, so adding them again would double-count a VM host's guests.
+- **Used memory is `MemTotal - MemAvailable`**, so a host with a large page cache is not reported as full.
+- **Loopback and container/VM plumbing are left out of network throughput** (`docker`, `br-`, `veth`, `virbr`, `vnet`, `cni`, `flannel`, `cali`, `kube-`). Their bytes also cross the physical interface, and would be counted twice on a Docker or libvirt host. A VPN tunnel is kept, since its traffic is real.
+- **A counter that went backwards reads as 0**, not as a spike. That happens when an interface is re-created or a counter wraps.
+
+Rates need two readings, so the first sample after start only primes the baseline. Samples that fail to send are kept, up to 120 (two hours), and go out with the next batch. The webserver ignores a sample it already has, so a re-send after a lost response is harmless. `scansRunning` is read from `activeScans`, the same counter the slot header uses, so it counts scans genuinely running rather than slot reservations. A host with no `/proc` (anything not Linux) simply does not start the reporter.
+
 ## Dashboard-managed config overrides
 
 `serve` mode runs a fifth watcher alongside `StartPolling`/`StartCancelWatcher`/`StartUpdateWatcher`/`StartTemplateUpdateWatcher`: `Server.StartConfigWatcher` polls `GET /api/ingest/config` and overlays the returned tuning onto the in-memory pipeline config. Its own loop rather than a step inside `pollOnce` for the same reason as the others: "lower the rate on this scanner, it's hammering a fragile segment" should land on a fixed interval *during* a long scan, not whenever the queue loop next happens to have something to do.

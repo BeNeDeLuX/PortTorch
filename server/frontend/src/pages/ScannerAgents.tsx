@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
+import { Link } from "react-router";
 import { ActiveScanJob, api, Me, QueuedScanRequest, ScannerAgent, ScannerReleaseInfo } from "../api";
 import { IconBan, IconCheck, IconInfo, IconPlus, IconRefresh, IconRocket, IconSettings, IconStop, IconTrash, IconX } from "../components/icons";
 import ScannerConfigModal from "../components/ScannerConfigModal";
@@ -380,7 +381,11 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
     const behind = isVersionBehind(a.version, latestRelease?.latestVersion ?? null);
     return (
       <>
-        <td>{a.name}</td>
+        <td>
+          <Link to={`/agents/${a.id}`} title="CPU, memory and network over time">
+            {a.name}
+          </Link>
+        </td>
         <td>{a.last_seen_at ? formatDateTime(a.last_seen_at, me.preferences) : "never"}</td>
         <td>{a.last_seen_ip ?? "-"}</td>
         <td>

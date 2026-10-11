@@ -19,6 +19,7 @@ import {
   setRequireAdminTotp,
   setScannerAutoUpdate,
   setUnconfirmedPortDays,
+  setScannerMetricsRetention,
   setDigestEmailHourUtc,
   setEpssAlertThreshold,
   setQueueBacklogThresholdMinutes,
@@ -152,6 +153,8 @@ const appSettingsSchema = z.object({
   requireAdminTotp: z.boolean().optional(),
   scannerAutoUpdate: z.boolean().optional(),
   unconfirmedPortDays: z.number().int().min(1).max(3650).optional(),
+  scannerMetricsRawDays: z.number().int().min(1).max(90).optional(),
+  scannerMetricsHourlyDays: z.number().int().min(7).max(1825).optional(),
   hostRetentionDays: z.number().int().min(0).optional(),
   staleScanThresholdMinutes: z.number().int().min(1).optional(),
   scanQueueWarningThreshold: z.number().int().min(1).optional(),
@@ -256,6 +259,21 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
     });
     recordAudit("settings.scanner_auto_update_updated", req.session.username, req.ip, {
       scanner_auto_update: parsed.data.scannerAutoUpdate,
+    });
+  }
+
+  if (parsed.data.scannerMetricsRawDays !== undefined || parsed.data.scannerMetricsHourlyDays !== undefined) {
+    await setScannerMetricsRetention(parsed.data.scannerMetricsRawDays, parsed.data.scannerMetricsHourlyDays);
+    logger.info({
+      event: "settings.scanner_metrics_retention_updated",
+      raw_days: parsed.data.scannerMetricsRawDays,
+      hourly_days: parsed.data.scannerMetricsHourlyDays,
+      updated_by: req.session.username,
+      source_ip: req.ip,
+    });
+    recordAudit("settings.scanner_metrics_retention_updated", req.session.username, req.ip, {
+      raw_days: parsed.data.scannerMetricsRawDays,
+      hourly_days: parsed.data.scannerMetricsHourlyDays,
     });
   }
 

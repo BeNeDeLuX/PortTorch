@@ -9,6 +9,7 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { getAutoUpdateStatus } from "../scannerUpdate/autoUpdate";
+import { metricsSeries, RANGES, type MetricsRange } from "../scannerMetrics/metrics";
 import { requestScannerUpdate } from "../scannerUpdate/requestUpdate";
 import { requestTemplateUpdate } from "../scannerUpdate/requestTemplateUpdate";
 import { syncScannerRelease } from "../scannerUpdate/githubSync";
@@ -76,6 +77,29 @@ agentsRouter.get("/auto-update-status", asyncHandler(async (req, res) => {
   const status = await getAutoUpdateStatus();
   const allowed = getAllowedScannerAgentIds(req);
   res.json(allowed ? { ...status, canaries: status.canaries.filter((c) => allowed.includes(c.id)) } : status);
+}));
+
+// A scanner's host metrics over a range, for its charts. Read-only and
+// scoped like the agent list: a restricted session sees only its own
+// scanners, and gets a 404 for any other rather than a confirmation it
+// exists.
+agentsRouter.get("/:id/metrics", asyncHandler(async (req, res) => {
+  if (!uuidSchema.safeParse(req.params.id).success) {
+    res.status(404).json({ error: "scanner agent not found" });
+    return;
+  }
+  const allowed = getAllowedScannerAgentIds(req);
+  if (allowed && !allowed.includes(req.params.id as string)) {
+    res.status(404).json({ error: "scanner agent not found" });
+    return;
+  }
+  const agent = await db.selectFrom("scanner_agents").select(["id", "name", "version"]).where("id", "=", req.params.id as string).executeTakeFirst();
+  if (!agent) {
+    res.status(404).json({ error: "scanner agent not found" });
+    return;
+  }
+  const range = (String(req.query.range ?? "24h") in RANGES ? String(req.query.range ?? "24h") : "24h") as MetricsRange;
+  res.json({ agent, ...(await metricsSeries(agent.id, range)) });
 }));
 
 agentsRouter.get("/", asyncHandler(async (req, res) => {

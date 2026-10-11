@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"porttorch/scanner/internal/hostmetrics"
 	"strings"
 	"sync"
 	"time"
@@ -287,6 +288,57 @@ func (s *Server) pipelineConfig() pipeline.Config {
 	s.cfgMu.RLock()
 	defer s.cfgMu.RUnlock()
 	return s.pcfg
+}
+
+// metricsBufferCap is how many samples are kept while the webserver is
+// unreachable - two hours at one a minute. Older ones are dropped first: a
+// gap in a chart is fine, a scanner's memory growing without bound is not.
+const metricsBufferCap = 120
+
+// StartMetricsReporter samples this host's CPU, memory, network and load
+// every interval and sends them to the webserver for the dashboard's
+// charts. Same scanner-initiated shape as every other watcher here - the
+// webserver can never ask. Samples that cannot be delivered are buffered
+// and sent with the next successful report, so a webserver restart leaves
+// no gap. Does nothing on a host without /proc.
+func (s *Server) StartMetricsReporter(ctx context.Context, interval time.Duration) {
+	sampler := hostmetrics.New()
+	if !sampler.Available() {
+		s.logger.Info("host metrics unavailable on this platform", "event", "scanner.metrics_unavailable")
+		return
+	}
+	// Primes the sampler so the first tick already has a rate to report.
+	_, _, _ = sampler.Sample(time.Now())
+	var buffer []hostmetrics.Sample
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			sample, ok, err := sampler.Sample(now)
+			if err != nil {
+				s.logger.Warn("reading host metrics failed", "event", "scanner.metrics_read_failed", "err", err.Error())
+				continue
+			}
+			if !ok {
+				continue
+			}
+			s.mu.Lock()
+			sample.ScansRunning = s.activeScans
+			s.mu.Unlock()
+			buffer = append(buffer, sample)
+			if len(buffer) > metricsBufferCap {
+				buffer = buffer[len(buffer)-metricsBufferCap:]
+			}
+			if err := s.client.ReportMetrics(ctx, buffer); err != nil {
+				s.logger.Warn("reporting host metrics failed", "event", "scanner.metrics_report_failed", "buffered", len(buffer), "err", err.Error())
+				continue
+			}
+			buffer = buffer[:0]
+		}
+	}
 }
 
 // StartConfigWatcher periodically fetches this agent's dashboard-managed
