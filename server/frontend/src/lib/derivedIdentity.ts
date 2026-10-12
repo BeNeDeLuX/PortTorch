@@ -10,6 +10,9 @@ export const IDENTITY_SOURCE_LABEL: Record<string, string> = {
   "smb-os-discovery": "from SMB (smb-os-discovery)",
   nbstat: "from NetBIOS (nbstat)",
   "snmp-interfaces": "from SNMP's interface table (snmp-interfaces)",
+  // The device's own MAC, typically the chassis/base address - not
+  // necessarily that of the interface carrying the scanned IP.
+  "snmp-engine-id": "from the SNMPv3 engine ID (snmp-info) - the device's base MAC, not necessarily this interface's",
   // The eight services nmap can elicit an NTLM message from. They answer
   // both a name and the exact Windows build (see lib/windowsBuilds.ts),
   // so the same labels serve the hostname marker and the version badge.

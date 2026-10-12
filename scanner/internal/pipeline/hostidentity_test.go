@@ -311,3 +311,59 @@ func TestSNMPDoesNotOverrideARP(t *testing.T) {
 		t.Error("derived a MAC although ARP already resolved one")
 	}
 }
+
+// snmp-info against a real Cisco device, as shown on its host page.
+const ciscoSNMPInfo = `
+  enterprise: ciscoSystems
+  engineIDFormat: mac
+  engineIDData: 00:d4:78:9b:c0:c7
+  snmpEngineBoots: 110
+  snmpEngineTime: 5d03h56m16s
+`
+
+func snmpInfoHost(output string) *HostResult {
+	return &HostResult{
+		IP: "10.20.30.1",
+		Ports: []PortResult{
+			{Port: 161, Protocol: "udp", State: "open", ServiceName: "snmp", ExtraScripts: []NSEScript{{ID: "snmp-info", Output: output}}},
+		},
+	}
+}
+
+func TestDeriveMACFromTheSNMPEngineID(t *testing.T) {
+	host := snmpInfoHost(ciscoSNMPInfo)
+	deriveHostIdentity(host)
+	if host.DerivedMACAddress != "00:D4:78:9B:C0:C7" {
+		t.Errorf("DerivedMACAddress = %q, want the engine ID's MAC", host.DerivedMACAddress)
+	}
+	if host.DerivedMACSource != IdentitySourceSNMPEngineID {
+		t.Errorf("source = %q, want snmp-engine-id", host.DerivedMACSource)
+	}
+}
+
+// The engine ID can be built from an address, text or opaque octets
+// instead - only the mac format names a MAC.
+func TestSNMPEngineIDInAnotherFormatYieldsNothing(t *testing.T) {
+	for _, output := range []string{
+		"  enterprise: netSnmp\n  engineIDFormat: unknown\n  engineIDData: 7a:1f:3b:2c:00:00:00:00:12:34:56:78\n",
+		"  enterprise: ciscoSystems\n  engineIDFormat: ipv4\n  engineIDData: 10.20.30.1\n",
+		"  enterprise: ciscoSystems\n  engineIDFormat: mac\n  engineIDData: 00:00:00:00:00:00\n",
+	} {
+		host := snmpInfoHost(output)
+		deriveHostIdentity(host)
+		if host.DerivedMACAddress != "" {
+			t.Errorf("derived %q from %q", host.DerivedMACAddress, output)
+		}
+	}
+}
+
+// The interface table names the MAC of the scanned address itself, so it
+// wins over the device-wide engine ID whenever both are there.
+func TestSNMPInterfaceMACOutranksTheEngineID(t *testing.T) {
+	host := snmpHost("10.41.72.135", realSNMPInterfaces)
+	host.Ports[1].ExtraScripts = append(host.Ports[1].ExtraScripts, NSEScript{ID: "snmp-info", Output: ciscoSNMPInfo})
+	deriveHostIdentity(host)
+	if host.DerivedMACSource != IdentitySourceSNMPInterfaces || host.DerivedMACAddress != "00:30:D6:39:36:16" {
+		t.Errorf("got %q from %q, want the interface table's MAC", host.DerivedMACAddress, host.DerivedMACSource)
+	}
+}

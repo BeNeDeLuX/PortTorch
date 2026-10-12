@@ -40,6 +40,7 @@ const (
 	IdentitySourceSMBOSDiscovery = "smb-os-discovery"
 	IdentitySourceNbstat         = "nbstat"
 	IdentitySourceSNMPInterfaces = "snmp-interfaces"
+	IdentitySourceSNMPEngineID   = "snmp-engine-id"
 )
 
 // Deliberately strict: this only has to accept the shapes a Windows host
@@ -168,7 +169,37 @@ func deriveMAC(host *HostResult) (mac string, vendor string, source string) {
 			return m, v, IdentitySourceNbstat
 		}
 	}
+	for _, script := range hostScripts(host, "snmp-info") {
+		if m := macFromSNMPEngineID(script); m != "" {
+			return m, "", IdentitySourceSNMPEngineID
+		}
+	}
 	return "", "", ""
+}
+
+// The SNMPv3 engine ID that snmp-info reads, when its format is "mac":
+//
+//	enterprise: ciscoSystems
+//	engineIDFormat: mac
+//	engineIDData: 00:d4:78:9b:c0:c7
+//
+// Last among the sources because it identifies the device rather than
+// an address. RFC 3411 lets an agent build its engine ID from any MAC it
+// owns, and network gear typically uses the chassis or base MAC - which
+// need not be the MAC of the interface carrying the scanned IP. Still
+// worth having: it is the only MAC a switch or router with SNMPv3 but no
+// readable interface table gives up, and its OUI names the vendor. On
+// two real devices it matched the ARP-resolved MAC exactly.
+//
+// Only the "mac" format is read. The same field can hold an IPv4/IPv6
+// address, text or opaque octets, none of which is an address here.
+func macFromSNMPEngineID(output string) string {
+	fields := parseIndentedFields(output)
+	if !strings.EqualFold(fields["engineidformat"], "mac") {
+		return ""
+	}
+	mac, _ := macFromScriptOutput(fields["engineiddata"])
+	return mac
 }
 
 // smb-os-discovery and nbstat are host-level scripts, so their output is

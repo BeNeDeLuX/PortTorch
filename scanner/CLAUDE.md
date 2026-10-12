@@ -335,7 +335,7 @@ plus domain, so on a workgroup machine it holds the short name, and a dot
 is what distinguishes the two rather than the field's name. Then `nbstat`,
 last because a NetBIOS name is always the short, uppercase form.
 
-Two sources carry a MAC, in this order:
+Three sources carry a MAC, in this order:
 
 1. **SNMP's interface table (`snmp-interfaces`)**, from the SNMP probe
    every host gets. It is the only source tied to an address: it names the
@@ -344,6 +344,17 @@ Two sources carry a MAC, in this order:
    and appliances with no SMB.
 2. **`nbstat`.** Its MAC is whichever adapter NetBIOS answered from, which
    on a multi-homed Windows machine need not be the scanned one.
+3. **The SNMPv3 engine ID (`snmp-info`)**, when its `engineIDFormat` is
+   `mac`. Last, because it identifies the device rather than an address:
+   network gear usually builds it from the chassis or base MAC, which need
+   not be the MAC of the interface carrying the scanned IP. The dashboard
+   says so in the marker's tooltip. It is still the only MAC a switch or
+   router with SNMPv3 but no readable interface table gives up. On two real
+   devices it matched the ARP-resolved MAC exactly. Other formats (an IP
+   address, text, opaque octets) are ignored. Added in scanner 0.30.1;
+   migration `1748000000000` fills it in once from the `snmp-info` output
+   already stored for older scans, under the same rule (no ARP MAC, no
+   derived MAC yet).
 
 `smb-os-discovery` reports OS, computer name, domain and system time and no
 address at all. That was confirmed against real output, not assumed.
