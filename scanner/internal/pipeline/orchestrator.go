@@ -629,28 +629,25 @@ func RunScan(ctx context.Context, cfg Config, targetSpec, portSpec string, exclu
 					subTasks++
 				}
 			}
-			// SNMP, IPMI, DNS recursion, and UPnP are all unconditional
-			// (every host, not gated on any already-discovered port -
-			// see snmp.go's doc comment for why; ipmi.go's
-			// RunIPMIProbe, dnsrecursion.go's RunDNSRecursionProbe, and
-			// upnp.go's RunUPnPProbe are the identical exception for
-			// UDP/623, UDP/53, and UDP/1900 respectively), except when
-			// an exclude specifically covers that port for this host -
-			// none of the TCP-only exclude mechanisms above would
-			// otherwise ever see any of these four ports.
-			probeSNMP := !isPortExcludedForHost(host.IP, 161, excludes)
+			// SNMP, IPMI, DNS recursion, and UPnP are not gated on any
+			// discovered port (see snmp.go's doc comment for why), but
+			// only run when their port is in the requested spec - see
+			// fixedUDPProbeInScope - and not when an exclude covers that
+			// port for this host, since none of the TCP-only exclude
+			// mechanisms above would otherwise ever see these four ports.
+			probeSNMP := fixedUDPProbeInScope(portSpec, 161) && !isPortExcludedForHost(host.IP, 161, excludes)
 			if probeSNMP {
 				subTasks++
 			}
-			probeIPMI := !isPortExcludedForHost(host.IP, 623, excludes)
+			probeIPMI := fixedUDPProbeInScope(portSpec, 623) && !isPortExcludedForHost(host.IP, 623, excludes)
 			if probeIPMI {
 				subTasks++
 			}
-			probeDNSRecursion := !isPortExcludedForHost(host.IP, 53, excludes)
+			probeDNSRecursion := fixedUDPProbeInScope(portSpec, 53) && !isPortExcludedForHost(host.IP, 53, excludes)
 			if probeDNSRecursion {
 				subTasks++
 			}
-			probeUPnP := !isPortExcludedForHost(host.IP, 1900, excludes)
+			probeUPnP := fixedUDPProbeInScope(portSpec, 1900) && !isPortExcludedForHost(host.IP, 1900, excludes)
 			if probeUPnP {
 				subTasks++
 			}
@@ -1129,7 +1126,7 @@ func startSNMPWorkers(ctx context.Context, cfg Config, jobs <-chan snmpJob, trac
 						tracker.complete(j.ip, nil)
 						return
 					}
-					tracker.complete(j.ip, func(h *HostResult) { h.Ports = append(h.Ports, *port) })
+					tracker.complete(j.ip, func(h *HostResult) { addProbePort(h, *port) })
 				})
 			}
 		}()
@@ -1167,7 +1164,7 @@ func startIPMIWorkers(ctx context.Context, cfg Config, jobs <-chan ipmiJob, trac
 						tracker.complete(j.ip, nil)
 						return
 					}
-					tracker.complete(j.ip, func(h *HostResult) { h.Ports = append(h.Ports, *port) })
+					tracker.complete(j.ip, func(h *HostResult) { addProbePort(h, *port) })
 				})
 			}
 		}()
@@ -1206,7 +1203,7 @@ func startDNSRecursionWorkers(ctx context.Context, cfg Config, jobs <-chan dnsRe
 						tracker.complete(j.ip, nil)
 						return
 					}
-					tracker.complete(j.ip, func(h *HostResult) { h.Ports = append(h.Ports, *port) })
+					tracker.complete(j.ip, func(h *HostResult) { addProbePort(h, *port) })
 				})
 			}
 		}()
@@ -1244,7 +1241,7 @@ func startUPnPWorkers(ctx context.Context, cfg Config, jobs <-chan upnpJob, trac
 						tracker.complete(j.ip, nil)
 						return
 					}
-					tracker.complete(j.ip, func(h *HostResult) { h.Ports = append(h.Ports, *port) })
+					tracker.complete(j.ip, func(h *HostResult) { addProbePort(h, *port) })
 				})
 			}
 		}()
