@@ -1096,7 +1096,29 @@ Ingest drops samples dated more than 26 hours back or 5 minutes ahead, which no 
 
 **`scanner.resource_pressure`** alerts when a scanner's last 15 minutes average 90% CPU or 90% memory, with at least 10 samples so one busy minute never pages anyone. Come-and-go like `scanner.offline` (`scanner_agents.resource_alert_sent_at`): it clears only once a full, quiet window has been seen, so a scanner that stops reporting does not look like it recovered.
 
+**Disk space joined in scanner 0.31.0** (migration `1748200000000`): the fullest filesystem among the scanner's submit queue and temp directory, nullable so an older scanner reads as "not reported" rather than an empty disk. The hourly roll-up keeps the minimum free. `scanner.disk_low` fires on a single sample under 10% free - space does not spike, it runs out - and re-arms above 15%, so a disk hovering at the line alerts once.
+
+**The same samples feed three other views.** `GET /api/agents/metrics-summary` gives every scanner's latest sample and a 24-hour CPU sparkline in one query each, for a "Load (24h)" column on Scanner Agents and a Scanner Load card on Fleet Health (critical when a disk is running out - judged from the latest sample as well as the alert flag, so it does not read "OK" for the five minutes until the next check - warning on CPU or memory pressure). Scan History's "Host peak" column is the highest CPU, memory and throughput while each scan ran (`scanPeaks`, one query per page; minute samples, or the hourly peaks for older scans). Fleet Health also gained a Scanner Activity card (no completed scan in 7 days, from `last_completed_scan_at` on `GET /api/agents`) and turns Scanner Updates to a warning for a scanner 3+ minor releases behind - one release behind is normal between update rounds, seven is a scanner nobody updates.
+
 Network throughput is shown in bits per second, the unit links are sold and monitored in. An older scanner, or one run as `scan`/`menu`, sends nothing, and the page says so rather than drawing an empty chart. `TimeSeriesChart` is the Trends chart's style with real time on x: points further apart than a few buckets are not joined, so an offline stretch is a gap rather than a straight line across a period nobody measured. Its viewBox takes the container's measured width, so the plot fills the card instead of being scaled and centred.
+
+### Manufacturer names from the MAC registries
+
+nmap names the vendor of a MAC it resolved by ARP, and only those - so every MAC the scanner *derives* (SNMP, NetBIOS, the SNMPv3 engine ID; see `scanner/CLAUDE.md`) arrived without a manufacturer, and the manufacturer filter and Scan Stats chart only ever saw hosts on a scanner's own L2 segment. `macOui/sync.ts` (migration `1748100000000_mac_oui.js`) keeps a prefix table and fills `mac_vendor`/`derived_mac_vendor` wherever a MAC has none.
+
+**Two sources, nmap's first.** nmap's own `nmap-mac-prefixes` (about 52,000 prefixes including the 28- and 36-bit MA-M/MA-S blocks) carries the short names nmap writes into `mac_vendor` - "Cisco Systems" where the IEEE says "Cisco Systems, Inc" - so one manufacturer stays one facet entry. The IEEE MA-L registry then adds only the prefixes nmap's copy lacks: the first real sync took 53,475 prefixes, 1,390 of them from the IEEE alone. A lookup takes the longest registered prefix (a 36-bit block belongs to a different company than the 24-bit block it sits in) and never names a locally administered address (the 0x02 bit), whose prefix belongs to nobody. A prefix in neither list gets no vendor rather than a guess - a real Cisco engine-ID MAC, `00:D4:78`, is registered in no IEEE registry at all.
+
+Synced weekly (a daily tick checks whether a week has passed), refused when the nmap list comes back with under 1,000 entries so a truncated download cannot wipe the table, and the IEEE half is optional - its failure costs the newest prefixes, not the table. Filled fleet-wide after a sync and for one scanner's hosts after each ingest, off the response path. The IEEE CSV is read with a real CSV reader: addresses are quoted and can contain newlines, so the live file has more lines than records.
+
+Filters, facets and Scan Stats read the manufacturer as `coalesce(mac_vendor, derived_mac_vendor)` (`search/routes.ts`'s `MANUFACTURER`), so the ARP-resolved vendor wins where both exist.
+
+**A manufacturer with a comma could never be filtered.** Every host filter parameter is a comma-joined list, so "Icann, Iana Department" - already on a real fleet - split into two values that matched nothing. A comma inside a value is now written `\,` (`frontend/src/lib/filterList.ts`, `search/routes.ts`'s `parseCommaList`). A list without a backslash reads exactly as before, so existing URLs and saved searches are unchanged. Pinned by `macOui.integration.test.ts`, which filters by "Cisco Systems, Inc" both ways.
+
+### What a port spec includes, said where it is typed
+
+Since scanner 0.30.2 the fixed UDP probes (DNS recursion, SNMP, IPMI, UPnP) only run when their port is in the spec, which silently changed what every narrow schedule collects. `lib/udpProbes.ts` (frontend and server copies of the scanner's `fixedUDPProbeInScope`, held to the same test cases) drives three places that say so: the port hint under both scan forms ("Also runs the UDP probes for SNMP (161)" / "No UDP probes"), a line under each schedule's ports, and a notice naming the active schedules that run none - dismissible per browser, coming back when that set changes.
+
+`POST /api/scan-estimate` also reports the UDP probes and a summary of the excludes the scanner will apply (global plus scanner-scoped, the union `/api/ingest/excludes` serves; the excluded port values only for an admin, and only for scanners the session may see), and the Ad-hoc form adds its NSE and nuclei choices - the same questions the scanner's `--dry-run` answers on the host.
 
 ### SSH host keys, fleet-wide
 

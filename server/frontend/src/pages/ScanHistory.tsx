@@ -1,5 +1,6 @@
+import { formatBitRate } from "../lib/units";
 import { FormEvent, useEffect, useState } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { api, Me, ScanHistoryEntry, ScanHistoryResult } from "../api";
 import { IconInfo, IconWarning, IconSearch, IconRefresh, IconPlay } from "../components/icons";
 import PageHeader from "../components/PageHeader";
@@ -164,6 +165,9 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
                 <th onClick={() => setSort("open_ports_found")}>Open ports{sortIndicator("open_ports_found")}</th>
                 <th onClick={() => setSort("screenshots")}>Screenshots{sortIndicator("screenshots")}</th>
                 <th onClick={() => setSort("tls_certificates")}>TLS certs{sortIndicator("tls_certificates")}</th>
+                <th title="The highest load the scanner's host reached while this scan ran, from the scanner's own metrics">
+                  Host peak
+                </th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -224,6 +228,28 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
                   <td>{s.open_ports_found}</td>
                   <td>{s.screenshots + s.rdp_screenshots}</td>
                   <td>{s.tls_certificates}</td>
+                  <td>
+                    {s.host_peak ? (
+                      <Link
+                        to={s.scanner_agent_id ? `/agents/${s.scanner_agent_id}` : "/agents"}
+                        className="host-meta"
+                        title={
+                          s.host_peak.source === "hourly"
+                            ? "Peaks of the hours this scan touched - older scans only have hourly figures"
+                            : "Highest minute sample while the scan ran"
+                        }
+                      >
+                        CPU {s.host_peak.cpuMax.toFixed(0)}%
+                        {s.host_peak.memMaxPercent !== null && ` · RAM ${s.host_peak.memMaxPercent.toFixed(0)}%`}
+                        <br />
+                        out {formatBitRate(s.host_peak.txMax)} · in {formatBitRate(s.host_peak.rxMax)}
+                      </Link>
+                    ) : (
+                      <span className="host-meta" title="No host metrics for this scan - an older scanner, or a scan before metrics existed">
+                        -
+                      </span>
+                    )}
+                  </td>
                   <td>
                     <div className="actions-cell">
                       <button className="btn-icon-label" onClick={() => setDetailsJobId(s.id)}>

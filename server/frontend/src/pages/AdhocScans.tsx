@@ -260,7 +260,7 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
             Ports
             <input placeholder="1-1000" value={portSpec} onChange={(e) => setPortSpec(e.target.value)} />
           </label>
-          <PortSpecHint />
+          <PortSpecHint portSpec={portSpec} />
           <label>
             Scan profile
             <ScanProfilePicker value={profile} onChange={setProfile} />
@@ -313,6 +313,10 @@ export default function AdhocScans({ me, onLogout }: { me: Me; onLogout: () => v
               masscanRate={masscanRate}
               rateSplit={rateSplit}
               agents={agents}
+              choices={[
+                profile.kind === "all_safe" ? "All Safe NSE modules" : profile.kind === "custom" ? "a custom NSE profile" : "the default NSE scripts",
+                nucleiProfile.kind === "off" ? "no nuclei" : nucleiProfile.kind === "safe" ? "nuclei (safe templates)" : "nuclei (custom profile)",
+              ]}
             />
           </div>
         </form>

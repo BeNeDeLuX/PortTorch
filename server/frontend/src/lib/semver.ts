@@ -22,3 +22,17 @@ export function isVersionBehind(current: string | null, latest: string | null): 
   if (!current || !latest) return false;
   return compareSemver(latest, current) > 0;
 }
+
+// How many minor releases `current` trails `latest` by, for "far behind":
+// patch releases do not count (0.30.0 -> 0.30.2 is one fix, not two
+// features), and a different major counts as far behind regardless.
+// Null when either side is unknown or current is not behind at all.
+export const FAR_BEHIND_MINOR_RELEASES = 3;
+
+export function minorReleasesBehind(current: string | null, latest: string | null): number | null {
+  if (!current || !latest || !isVersionBehind(current, latest)) return null;
+  const [cMaj = 0, cMin = 0] = current.split(".").map((n) => parseInt(n, 10) || 0);
+  const [lMaj = 0, lMin = 0] = latest.split(".").map((n) => parseInt(n, 10) || 0);
+  if (lMaj !== cMaj) return Number.POSITIVE_INFINITY;
+  return lMin - cMin;
+}

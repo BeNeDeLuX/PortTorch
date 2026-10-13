@@ -185,7 +185,7 @@ Pinned by the staggering case in `scannerAutoUpdate.integration.test.ts`, which 
 
 ### Scanner host metrics
 
-A serve-mode scanner reports its host's CPU, memory, network throughput, load and running scans once a minute (`internal/hostmetrics`, from scanner 0.30.0), and the dashboard charts them per scanner over 24 hours to a year, with the scans that ran shaded behind the lines. Scanner-initiated like everything else: the scanner pushes and buffers up to two hours of samples through an outage; the webserver never asks. The webserver keeps minute samples for a short window and hourly averages plus peaks for a long one, and alerts with `scanner.resource_pressure` on a sustained 90% CPU or memory. See `scanner/CLAUDE.md` for what is measured and how, and `server/CLAUDE.md` for storage, roll-up and the chart.
+A serve-mode scanner reports its host's CPU, memory, network throughput, load, running scans and (from 0.31.0) free disk space once a minute (`internal/hostmetrics`, from scanner 0.30.0), and the dashboard charts them per scanner over 24 hours to a year, with the scans that ran shaded behind the lines. Scanner-initiated like everything else: the scanner pushes and buffers up to two hours of samples through an outage; the webserver never asks. The webserver keeps minute samples for a short window and hourly averages plus peaks for a long one, and alerts with `scanner.resource_pressure` on a sustained 90% CPU or memory and `scanner.disk_low` under 10% free disk. See `scanner/CLAUDE.md` for what is measured and how, and `server/CLAUDE.md` for storage, roll-up and the chart.
 
 ### Logging is SIEM-oriented, not incidental
 

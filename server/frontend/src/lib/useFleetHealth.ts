@@ -7,13 +7,14 @@ import {
   Me,
   QueuedScanRequest,
   ScannerAgent,
+  ScannerMetricsSummary,
   ScannerOverlap,
   ScannerReleaseInfo,
   TlsCertificateInfo,
   WebserverReleaseStatus,
 } from "../api";
 import { certExpiryStatus } from "./certExpiry";
-import { isVersionBehind } from "./semver";
+import { FAR_BEHIND_MINOR_RELEASES, isVersionBehind, minorReleasesBehind } from "./semver";
 
 export type HealthStatus = "ok" | "warning" | "critical";
 
@@ -40,6 +41,15 @@ export const STALE_QUEUE_THRESHOLD_MS = 30 * 60_000;
 // quarter is "you are almost certainly missing recent checks".
 export const NUCLEI_TEMPLATES_WARN_DAYS = 30;
 export const NUCLEI_TEMPLATES_CRITICAL_DAYS = 90;
+
+// A live scanner that has not finished a scan in this long is either
+// forgotten or broken - polling happily with nothing scheduled on it, or
+// failing every scan it starts. Display-only heuristic, like the others.
+export const IDLE_SCANNER_DAYS = 7;
+
+// Below this share free, a scanner's disk is "running out" - the same line
+// the server's scanner.disk_low alert uses (scannerMetrics/metrics.ts).
+export const DISK_LOW_PERCENT = 10;
 
 export interface FleetHealthData {
   loading: boolean;
@@ -86,6 +96,17 @@ export interface FleetHealthData {
   backupStatus: HealthStatus;
   backup: BackupSchedule | null;
   setOverlap: (o: ScannerOverlap) => void;
+  // Scanners FAR_BEHIND_MINOR_RELEASES or more minor releases behind.
+  farBehindAgents: ScannerAgent[];
+  // Live scanners with no completed scan in IDLE_SCANNER_DAYS (and not
+  // created more recently than that).
+  idleAgents: ScannerAgent[];
+  activityStatus: HealthStatus;
+  // Host load from the scanners' own metrics (scanner 0.30.0+).
+  loadStatus: HealthStatus;
+  metricsSummary: Record<string, ScannerMetricsSummary> | null;
+  pressuredAgents: ScannerAgent[];
+  diskLowAgents: ScannerAgent[];
 }
 
 // Shared by the Fleet Health page itself and the Dashboard's own small
@@ -109,6 +130,7 @@ export function useFleetHealth(me: Me): FleetHealthData {
   const [overlap, setOverlap] = useState<ScannerOverlap | null>(null);
   const [autoUpdate, setAutoUpdate] = useState<AutoUpdateStatus | null>(null);
   const [backup, setBackup] = useState<BackupSchedule | null>(null);
+  const [metricsSummary, setMetricsSummary] = useState<Record<string, ScannerMetricsSummary> | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -128,8 +150,10 @@ export function useFleetHealth(me: Me): FleetHealthData {
       api.hostsOverlap().catch(() => null),
       api.autoUpdateStatus().catch(() => null),
       me.role === "admin" ? api.backupSchedule().catch(() => null) : Promise.resolve(null),
+      api.scannerMetricsSummary().catch(() => null),
     ])
-      .then(([a, release, ws, threshold, serverRelease, dup, auto, schedule]) => {
+      .then(([a, release, ws, threshold, serverRelease, dup, auto, schedule, summary]) => {
+        setMetricsSummary(summary);
         setAutoUpdate(auto);
         setBackup(schedule);
         setAgents(a);
@@ -183,7 +207,36 @@ export function useFleetHealth(me: Me): FleetHealthData {
   // attention. Version drift/pending-ness still shows as a plain, muted
   // detail line on the card itself (see FleetHealth.tsx) - a quiet fact,
   // not an escalated status.
-  const updatesStatus: HealthStatus = failedUpdates.length > 0 ? "critical" : "ok";
+  // Being a release or two behind is normal between update rounds; being
+  // several minor releases behind means a scanner nobody is updating, which
+  // is a warning - it is missing fixes, and nothing else on the page says
+  // so. (A real case: one sat seven releases behind for weeks.)
+  const farBehindAgents = liveAgents.filter(
+    (a) => (minorReleasesBehind(a.version, latestRelease?.latestVersion ?? null) ?? 0) >= FAR_BEHIND_MINOR_RELEASES
+  );
+  const updatesStatus: HealthStatus = failedUpdates.length > 0 ? "critical" : farBehindAgents.length > 0 ? "warning" : "ok";
+
+  const idleCutoff = Date.now() - IDLE_SCANNER_DAYS * 86_400_000;
+  const idleAgents = liveAgents.filter(
+    (a) =>
+      new Date(a.created_at).getTime() < idleCutoff &&
+      (a.last_completed_scan_at === null || new Date(a.last_completed_scan_at).getTime() < idleCutoff)
+  );
+  const activityStatus: HealthStatus = idleAgents.length > 0 ? "warning" : "ok";
+
+  // A full disk makes scans fail, so it is critical; sustained CPU or
+  // memory pressure slows them, so it is a warning. Both come from the
+  // webserver's own alert state (scannerMetrics/metrics.ts), so this card
+  // and the webhooks agree about what counts.
+  const pressuredAgents = liveAgents.filter((a) => metricsSummary?.[a.id]?.pressure);
+  // The latest sample decides as well as the alert flag: the server checks
+  // every five minutes, and a disk that is nearly full now should not read
+  // "OK" until then. Same 10% line as scannerMetrics/metrics.ts.
+  const diskLowAgents = liveAgents.filter((a) => {
+    const m = metricsSummary?.[a.id];
+    return m?.diskLow || (m?.latest?.diskFreePercent !== null && m?.latest?.diskFreePercent !== undefined && m.latest.diskFreePercent < DISK_LOW_PERCENT);
+  });
+  const loadStatus: HealthStatus = diskLowAgents.length > 0 ? "critical" : pressuredAgents.length > 0 ? "warning" : "ok";
 
   const oldestQueuedMs =
     scanQueue.length > 0 ? Math.max(...scanQueue.map((q) => Date.now() - new Date(q.created_at).getTime())) : 0;
@@ -322,6 +375,8 @@ export function useFleetHealth(me: Me): FleetHealthData {
     overlapStatus,
     autoUpdateStatus,
     backupStatus,
+    activityStatus,
+    loadStatus,
     webserverCert ? webserverCertStatus : "ok",
     webserverVersionStatus
   );
@@ -365,5 +420,12 @@ export function useFleetHealth(me: Me): FleetHealthData {
     webserverRelease,
     staleTemplateAgents,
     oldestTemplateAgeDays,
+    farBehindAgents,
+    idleAgents,
+    activityStatus,
+    loadStatus,
+    metricsSummary,
+    pressuredAgents,
+    diskLowAgents,
   };
 }

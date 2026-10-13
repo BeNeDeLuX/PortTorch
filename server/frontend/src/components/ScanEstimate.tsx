@@ -18,6 +18,7 @@ export default function ScanEstimateButton({
   masscanRate,
   rateSplit = false,
   agents = [],
+  choices = [],
 }: {
   targetSpec: string;
   portSpec: string;
@@ -28,6 +29,9 @@ export default function ScanEstimateButton({
   rateSplit?: boolean;
   // For naming the parts.
   agents?: ScannerAgent[];
+  // What else the form has chosen (scan profile, nuclei), shown with the
+  // estimate so it reads as a full preview of the scan.
+  choices?: string[];
 }) {
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [busy, setBusy] = useState(false);
@@ -63,12 +67,12 @@ export default function ScanEstimateButton({
         <IconInfo /> {busy ? "Calculating..." : "Estimate time"}
       </button>
       {error && <p className="error">{error}</p>}
-      {estimate && <EstimateResult estimate={estimate} agents={agents} />}
+      {estimate && <EstimateResult estimate={estimate} agents={agents} choices={choices} />}
     </>
   );
 }
 
-function EstimateResult({ estimate, agents }: { estimate: Estimate; agents: ScannerAgent[] }) {
+function EstimateResult({ estimate, agents, choices }: { estimate: Estimate; agents: ScannerAgent[]; choices: string[] }) {
   // A target this cannot count is a hostname, which is a perfectly valid
   // thing to scan - so it says which half is unknown and why, rather than
   // failing or showing a zero.
@@ -81,6 +85,7 @@ function EstimateResult({ estimate, agents }: { estimate: Estimate; agents: Scan
             : "This port spec could not be read, so there is nothing to count."}
           {estimate.ports !== null && ` The port spec covers ${estimate.ports.toLocaleString()} port(s) per address.`}
         </p>
+        <ScanPreview estimate={estimate} choices={choices} />
       </div>
     );
   }
@@ -116,6 +121,7 @@ function EstimateResult({ estimate, agents }: { estimate: Estimate; agents: Scan
           address{estimate.addresses === 1 ? "" : "es"}.
         </p>
       )}
+      <ScanPreview estimate={estimate} choices={choices} />
       {estimate.splitError && <p className="callout-warning">{estimate.splitError}</p>}
       {estimate.parts && estimate.parts.length > 1 && <SplitEstimate estimate={estimate} agents={agents} />}
       <p className="empty">
@@ -166,10 +172,54 @@ function SplitEstimate({ estimate, agents }: { estimate: Estimate; agents: Scann
   );
 }
 
+// What the scan does besides discovery - the questions the scanner's
+// own --dry-run answers on the host: which UDP probes go out, which
+// excludes it will honour, and what the form chose for scripts and nuclei.
+function ScanPreview({ estimate, choices }: { estimate: Estimate; choices: string[] }) {
+  const ex = estimate.excludes;
+  const exParts = ex
+    ? [
+        ex.ips > 0 && `${ex.ips} address/range`,
+        ex.ipPatterns > 0 && `${ex.ipPatterns} address pattern`,
+        ex.ports > 0 && `${ex.ports} port${ex.portValues ? ` (${ex.portValues.join(", ")})` : ""}`,
+        ex.ipPorts > 0 && `${ex.ipPorts} address:port`,
+      ].filter(Boolean)
+    : [];
+  return (
+    <dl className="settings-facts">
+      {estimate.udpProbes && (
+        <>
+          <dt>UDP probes</dt>
+          <dd>
+            {estimate.udpProbes.length > 0
+              ? estimate.udpProbes.map((p) => `${p.label} (${p.port})`).join(", ")
+              : "none - SNMP, IPMI, DNS recursion and UPnP only run when their port is in the spec"}
+          </dd>
+        </>
+      )}
+      {ex && (
+        <>
+          <dt>Excludes</dt>
+          <dd>{exParts.length > 0 ? exParts.join(", ") : "none apply to this scanner"}</dd>
+        </>
+      )}
+      {choices.length > 0 && (
+        <>
+          <dt>Runs</dt>
+          <dd>{choices.join(" · ")}</dd>
+        </>
+      )}
+    </dl>
+  );
+}
+
 // Minutes and hours are what this is read in; seconds below a minute and
 // a bare second count above an hour are both noise.
 function formatDuration(seconds: number): string {
-  if (seconds < 90) return `about ${Math.round(seconds)} seconds`;
+  if (seconds < 90) {
+    const n = Math.max(1, Math.round(seconds));
+    return `about ${n} second${n === 1 ? "" : "s"}`;
+  }
   if (seconds < 5400) return `about ${Math.round(seconds / 60)} minutes`;
   if (seconds < 172800) return `about ${(seconds / 3600).toFixed(1)} hours`;
   return `about ${(seconds / 86400).toFixed(1)} days`;

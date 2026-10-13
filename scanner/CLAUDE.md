@@ -487,6 +487,8 @@ The header is **omitted entirely** rather than sent as `0/0` when this process h
 - **Loopback and container/VM plumbing are left out of network throughput** (`docker`, `br-`, `veth`, `virbr`, `vnet`, `cni`, `flannel`, `cali`, `kube-`). Their bytes also cross the physical interface, and would be counted twice on a Docker or libvirt host. A VPN tunnel is kept, since its traffic is real.
 - **A counter that went backwards reads as 0**, not as a spike. That happens when an interface is re-created or a counter wraps.
 
+Since 0.31.0 each sample also carries free and total disk space: the fullest of the submit queue's and the temp directory's filesystems, since screenshots and queued results are staged there. Free is `Bavail` (what the unprivileged service user can still write, not the blocks reserved for root), and a queue directory that does not exist yet is measured at its nearest existing parent.
+
 Rates need two readings, so the first sample after start only primes the baseline. Samples that fail to send are kept, up to 120 (two hours), and go out with the next batch. The webserver ignores a sample it already has, so a re-send after a lost response is harmless. `scansRunning` is read from `activeScans`, the same counter the slot header uses, so it counts scans genuinely running rather than slot reservations. A host with no `/proc` (anything not Linux) simply does not start the reporter.
 
 ## Dashboard-managed config overrides

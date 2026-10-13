@@ -130,6 +130,37 @@ describe("scan estimate", () => {
     }
   });
 
+  it("says which UDP probes run and which excludes apply", async () => {
+    const rows = await db
+      .insertInto("scan_excludes")
+      .values([
+        { kind: "port", value: "65001", scanner_agent_id: null },
+        { kind: "ip", value: "10.250.0.9", scanner_agent_id: agent.id },
+      ])
+      .returning("id")
+      .execute();
+    const admin = await createTestUser("admin");
+    try {
+      const narrow = await client.post("/api/scan-estimate").send({ targetSpec: "10.0.0.0/24", portSpec: "22", scannerAgentId: agent.id });
+      expect(narrow.body.udpProbes).toEqual([]);
+      const wide = await client.post("/api/scan-estimate").send({ targetSpec: "10.0.0.0/24", portSpec: "1-10000", scannerAgentId: agent.id });
+      expect(wide.body.udpProbes.map((p: { port: number }) => p.port)).toEqual([53, 161, 623, 1900]);
+      const tcpOnly = await client.post("/api/scan-estimate").send({ targetSpec: "10.0.0.0/24", portSpec: "T:1-10000", scannerAgentId: agent.id });
+      expect(tcpOnly.body.udpProbes).toEqual([]);
+
+      // Global plus this scanner's own; the port values only for an admin.
+      expect(narrow.body.excludes.ports).toBeGreaterThanOrEqual(1);
+      expect(narrow.body.excludes.ips).toBeGreaterThanOrEqual(1);
+      expect(narrow.body.excludes.portValues).toBeUndefined();
+      const adminClient = await loginAs(admin.username, admin.password);
+      const asAdmin = await adminClient.post("/api/scan-estimate").send({ targetSpec: "10.0.0.0/24", portSpec: "22", scannerAgentId: agent.id });
+      expect(asAdmin.body.excludes.portValues).toContain("65001");
+    } finally {
+      await db.deleteFrom("scan_excludes").where("id", "in", rows.map((r) => r.id)).execute();
+      await deleteTestUser(admin.id);
+    }
+  });
+
   it("requires authentication", async () => {
     const request = (await import("supertest")).default;
     const { getApp } = await import("./helpers");

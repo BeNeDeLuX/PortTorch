@@ -1,3 +1,4 @@
+import { scanPeaks } from "../scannerMetrics/metrics";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -162,9 +163,14 @@ scanJobsRouter.get("/history", asyncHandler(async (req, res) => {
     .offset((page - 1) * pageSize)
     .execute();
 
+  // The peak load each scan put on its scanner's host, from the scanner
+  // metrics - one query for the whole page, not one per row.
+  const peaks = await scanPeaks(items);
+
   res.json({
     items: items.map((i) => ({
       ...i,
+      host_peak: peaks.get(i.id) ?? null,
       // Postgres count(*)/count(distinct ...) are bigint, which node-pg
       // returns as strings (not numbers) to avoid silent precision loss
       // above Number.MAX_SAFE_INTEGER - fine to display directly, but

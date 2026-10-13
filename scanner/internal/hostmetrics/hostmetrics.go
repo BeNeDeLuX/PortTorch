@@ -29,6 +29,10 @@ type Sample struct {
 	NetTxBps      float64   `json:"netTxBytesPerSec"`
 	Load1         float64   `json:"load1"`
 	ScansRunning  int       `json:"scansRunning"`
+	// Free and total space of the fullest filesystem the scanner writes to
+	// (see WithDiskPaths); omitted when none could be read.
+	DiskFreeBytes  uint64 `json:"diskFreeBytes,omitempty"`
+	DiskTotalBytes uint64 `json:"diskTotalBytes,omitempty"`
 }
 
 type reading struct {
@@ -44,8 +48,42 @@ type reading struct {
 
 // Sampler turns successive /proc readings into rates.
 type Sampler struct {
-	root string
-	prev *reading
+	root      string
+	prev      *reading
+	diskPaths []string
+}
+
+// WithDiskPaths names the directories whose filesystems the scanner writes
+// to - its submit queue, and the temp directory screenshots and scan
+// output are staged in. A full disk there makes scans fail quietly, so the
+// fullest of them (by share free) is reported with every sample.
+func (s *Sampler) WithDiskPaths(paths ...string) *Sampler {
+	s.diskPaths = append(s.diskPaths, paths...)
+	return s
+}
+
+// diskUsage reads every configured path and returns the one with the
+// smallest share free. A path that does not exist yet (a submit queue
+// that has never held anything) is measured at its nearest existing
+// parent, which is the filesystem it will be created on.
+func (s *Sampler) diskUsage() (free, total uint64) {
+	best := 2.0
+	for _, p := range s.diskPaths {
+		for dir := filepath.Clean(p); ; dir = filepath.Dir(dir) {
+			if _, err := os.Stat(dir); err == nil {
+				if f, t, err := statDisk(dir); err == nil && t > 0 {
+					if share := float64(f) / float64(t); share < best {
+						best, free, total = share, f, t
+					}
+				}
+				break
+			}
+			if dir == filepath.Dir(dir) {
+				break
+			}
+		}
+	}
+	return free, total
 }
 
 // New samples the real /proc.
@@ -94,6 +132,7 @@ func (s *Sampler) Sample(now time.Time) (Sample, bool, error) {
 	}
 	out.NetRxBps = float64(delta(prev.netRx, r.netRx)) / secs
 	out.NetTxBps = float64(delta(prev.netTx, r.netTx)) / secs
+	out.DiskFreeBytes, out.DiskTotalBytes = s.diskUsage()
 	return out, true, nil
 }
 

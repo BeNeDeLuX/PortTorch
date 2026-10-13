@@ -9,7 +9,8 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { logger } from "../logger";
 import { recordAudit } from "../audit/log";
 import { getAutoUpdateStatus } from "../scannerUpdate/autoUpdate";
-import { metricsSeries, RANGES, type MetricsRange } from "../scannerMetrics/metrics";
+import { metricsSeries, metricsSummary, RANGES, type MetricsRange } from "../scannerMetrics/metrics";
+import { sql } from "kysely";
 import { requestScannerUpdate } from "../scannerUpdate/requestUpdate";
 import { requestTemplateUpdate } from "../scannerUpdate/requestTemplateUpdate";
 import { syncScannerRelease } from "../scannerUpdate/githubSync";
@@ -83,6 +84,12 @@ agentsRouter.get("/auto-update-status", asyncHandler(async (req, res) => {
 // scoped like the agent list: a restricted session sees only its own
 // scanners, and gets a 404 for any other rather than a confirmation it
 // exists.
+// Latest load and a 24-hour sparkline for every scanner the session may
+// see, keyed by scanner id - for the Scanner Agents list and Fleet Health.
+agentsRouter.get("/metrics-summary", asyncHandler(async (req, res) => {
+  res.json(await metricsSummary(getAllowedScannerAgentIds(req)));
+}));
+
 agentsRouter.get("/:id/metrics", asyncHandler(async (req, res) => {
   if (!uuidSchema.safeParse(req.params.id).success) {
     res.status(404).json({ error: "scanner agent not found" });
@@ -128,6 +135,12 @@ agentsRouter.get("/", asyncHandler(async (req, res) => {
       "template_update_status",
       "template_update_failure_reason",
       "config_overrides",
+      // When this scanner last finished a scan, for Fleet Health's
+      // "has not scanned in a week" check - a scanner can be online and
+      // polling while nothing is scheduled on it any more.
+      sql<Date | null>`(SELECT max(finished_at) FROM scan_jobs WHERE scan_jobs.scanner_agent_id = scanner_agents.id AND status = 'completed')`.as(
+        "last_completed_scan_at"
+      ),
     ]);
   if (allowed) {
     query = query.where("id", "in", allowed);

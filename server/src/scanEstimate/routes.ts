@@ -8,6 +8,7 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { MAX_SPLIT_SCANNERS, partRate, splitTargetSpec } from "../lib/scanSplit";
 import { DEFAULT_MASSCAN_RATE, estimateScan, type ScanEstimate } from "./estimate";
 import { expandTargetPattern } from "../lib/targetPattern";
+import { udpProbesInScope } from "../lib/udpProbes";
 
 export const scanEstimateRouter = Router();
 scanEstimateRouter.use(requireAuth);
@@ -50,6 +51,31 @@ function rateFor(id: string | undefined, override: number | undefined, configure
   return c ? { rate: c, rateSource: "scanner" as const } : { rate: DEFAULT_MASSCAN_RATE, rateSource: "default" as const };
 }
 
+interface ExcludeSummary {
+  ips: number;
+  ipPatterns: number;
+  ipPorts: number;
+  ports: number;
+  // The excluded ports themselves - admin only, like every other view of
+  // the exclude list (see /api/scan-jobs/active's applicable_excludes).
+  portValues?: string[];
+}
+
+// The excludes the scanner will fetch for this scan: the global ones plus
+// any scoped to the chosen scanner(s), the same union GET
+// /api/ingest/excludes serves.
+async function excludeSummary(ids: string[], isAdmin: boolean): Promise<ExcludeSummary> {
+  const rows = await db
+    .selectFrom("scan_excludes")
+    .select(["kind", "value"])
+    .where((eb) => (ids.length > 0 ? eb.or([eb("scanner_agent_id", "is", null), eb("scanner_agent_id", "in", ids)]) : eb("scanner_agent_id", "is", null)))
+    .execute();
+  const count = (kind: string) => rows.filter((r) => r.kind === kind).length;
+  const summary: ExcludeSummary = { ips: count("ip"), ipPatterns: count("ip_pattern"), ipPorts: count("ip_port"), ports: count("port") };
+  if (isAdmin) summary.portValues = [...new Set(rows.filter((r) => r.kind === "port").map((r) => r.value))].sort();
+  return summary;
+}
+
 // Same access level as the Ad-hoc Scans form it sits in - anyone who can
 // see that form can ask what a scan would cost, which is strictly less
 // than being able to start one. Read-only: it computes, it stores
@@ -78,6 +104,8 @@ scanEstimateRouter.post("/", asyncHandler(async (req, res) => {
     parts?: Array<ScanEstimate & { scannerAgentId: string; targetSpec: string }>;
     splitError?: string;
     expandedFrom?: string;
+    udpProbes?: Array<{ port: number; label: string }>;
+    excludes?: ExcludeSummary;
   } = estimateScan(targetSpec, parsed.data.portSpec, whole.rate, whole.rateSource);
 
   if (ids.length > 1) {
@@ -94,5 +122,13 @@ scanEstimateRouter.post("/", asyncHandler(async (req, res) => {
   }
 
   if (expansion.expanded) estimate.expandedFrom = parsed.data.targetSpec;
+  // What the scan will actually do beyond the discovery pass, so the
+  // estimate answers the same questions the scanner's --dry-run does.
+  estimate.udpProbes = udpProbesInScope(parsed.data.portSpec);
+  // Scoped like the rates above: a restricted session never learns about
+  // excludes on a scanner it is not assigned to.
+  const allowed = getAllowedScannerAgentIds(req);
+  const visibleIds = allowed ? ids.filter((id) => allowed.includes(id)) : ids;
+  estimate.excludes = await excludeSummary(visibleIds, req.session.role === "admin");
   res.json(estimate);
 }));

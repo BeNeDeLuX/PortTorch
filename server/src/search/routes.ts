@@ -77,6 +77,12 @@ hostsRouter.param("id", (req, res, next, id) => {
 // can reuse the exact same filter parsing/query logic - otherwise a saved
 // search's "matches" could silently drift from what the dashboard itself
 // would show for the same filters.
+// One manufacturer per host for filters and facets: nmap's own vendor for
+// an ARP-resolved MAC wins, otherwise the registry's name for a derived
+// MAC. Without the second half the manufacturer filter could only ever
+// see hosts on a scanner's own L2 segment.
+export const MANUFACTURER = sql<string | null>`coalesce(nullif(hosts.mac_vendor, ''), nullif(hosts.derived_mac_vendor, ''))`;
+
 export interface HostFilterParams {
   q: string;
   ports: number[];
@@ -94,10 +100,10 @@ export interface HostFilterParams {
   // search box does not narrow the facet counts the way a filter does.
   products: string[];
   excludeProducts: string[];
-  // hosts.mac_vendor - the hardware manufacturer nmap derives from the
-  // MAC's OUI. Only ever populated for hosts on a scanner's own L2
-  // segment (nmap resolves it via ARP), so this narrows to a subset by
-  // construction; see the "Not resolved" slice in the Scan Stats chart.
+  // The hardware manufacturer: hosts.mac_vendor (nmap's, for an
+  // ARP-resolved MAC) or else hosts.derived_mac_vendor (the IEEE registry's
+  // name for a MAC derived from SNMP or NetBIOS - see macOui/sync.ts). See
+  // MANUFACTURER above and the "Not resolved" slice in Scan Stats.
   macVendors: string[];
   excludeMacVendors: string[];
   osFamily: string;
@@ -127,9 +133,28 @@ export interface HostFilterParams {
 
 // Comma-separated (?port=21,3389) rather than repeated query keys - simpler
 // to build from the frontend's URLSearchParams and to reason about here.
-function parseCommaList(value: unknown): string[] {
+// Comma-joined, with "\," for a comma inside a value - a manufacturer
+// like "Cisco Systems, Inc" or "Icann, Iana Department" is one value, and
+// splitting it made it impossible to filter by. A list without a
+// backslash reads exactly as it always did. Same grammar as the
+// frontend's lib/filterList.ts.
+export function parseCommaList(value: unknown): string[] {
   if (typeof value !== "string" || !value.trim()) return [];
-  return value.split(",").map((v) => v.trim()).filter(Boolean);
+  const out: string[] = [];
+  let current = "";
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i];
+    if (c === "\\" && i + 1 < value.length && (value[i + 1] === "," || value[i + 1] === "\\")) {
+      current += value[++i];
+    } else if (c === ",") {
+      out.push(current);
+      current = "";
+    } else {
+      current += c;
+    }
+  }
+  out.push(current);
+  return out.map((v) => v.trim()).filter(Boolean);
 }
 
 // A leading "-" negates an entry: ?port=443,-53 means "has 443 open and
@@ -267,6 +292,7 @@ export function applyHostFilters(
         ...(isCidr ? [sql<boolean>`hosts.ip <<= ${q}::cidr`] : []),
         eb("hosts.hostname", "ilike", `%${q}%`),
         eb("hosts.mac_vendor", "ilike", `%${q}%`),
+        eb("hosts.derived_mac_vendor", "ilike", `%${q}%`),
         eb("hosts.mac_address", "ilike", `%${q}%`),
         eb.exists(
           eb
@@ -461,11 +487,11 @@ export function applyHostFilters(
   // and a list rather than a single value, matching how port/service/tag
   // already accept several.
   if (macVendors.length > 0) {
-    query = query.where("hosts.mac_vendor", "in", macVendors);
+    query = query.where(sql<boolean>`${MANUFACTURER} = ANY(${macVendors}::text[])`);
   }
   if (excludeMacVendors.length > 0) {
     query = query.where((eb: any) =>
-      eb.or([eb("hosts.mac_vendor", "is", null), eb.not(eb("hosts.mac_vendor", "in", excludeMacVendors))])
+      eb.or([sql<boolean>`${MANUFACTURER} IS NULL`, sql<boolean>`NOT (${MANUFACTURER} = ANY(${excludeMacVendors}::text[]))`])
     );
   }
 
@@ -1096,17 +1122,16 @@ hostsRouter.get("/facets", asyncHandler(async (req, res) => {
 
   let macVendorQuery = db
     .selectFrom("hosts")
-    .select(["mac_vendor", sql<number>`count(*)`.as("count")])
-    .where("mac_vendor", "is not", null)
-    .where("mac_vendor", "!=", "");
+    .select([MANUFACTURER.as("mac_vendor"), sql<number>`count(*)`.as("count")])
+    .where(sql<boolean>`${MANUFACTURER} IS NOT NULL`);
   const macVendorFilters = { ...filters, macVendors: [] };
   if (hasActiveHostFilters(macVendorFilters) || allowed) {
     macVendorQuery = applyHostFilters(macVendorQuery, macVendorFilters, allowed);
   }
   const macVendors = await macVendorQuery
-    .groupBy("mac_vendor")
+    .groupBy(MANUFACTURER)
     .orderBy("count", "desc")
-    .orderBy("mac_vendor")
+    .orderBy(MANUFACTURER)
     .limit(20)
     .execute();
 

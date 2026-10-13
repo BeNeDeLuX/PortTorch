@@ -4,6 +4,7 @@ import { api, Me, ScannerMetrics, ScannerMetricsRange } from "../api";
 import PageHeader from "../components/PageHeader";
 import TimeSeriesChart, { TimeBand } from "../components/TimeSeriesChart";
 import { formatDateTime } from "../lib/formatDate";
+import { formatBitRate, formatBytes } from "../lib/units";
 
 // Per-scanner host metrics: CPU, memory, network throughput and running
 // scans over a chosen range, so "is this scanner keeping up, and what made
@@ -20,31 +21,6 @@ const RANGES: Array<{ value: ScannerMetricsRange; label: string }> = [
 ];
 
 const RANGE_KEY = "porttorch.scannerMetrics.range";
-
-function formatBytes(n: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let v = n;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v >= 10 || i === 0 ? v.toFixed(0) : v.toFixed(1)} ${units[i]}`;
-}
-
-// Network throughput reads in bits per second, the unit links are sold and
-// monitored in - "40 Mbit/s" is comparable to a 1 Gbit uplink at a glance.
-function formatBitRate(bytesPerSec: number): string {
-  const bits = bytesPerSec * 8;
-  const units = ["bit/s", "kbit/s", "Mbit/s", "Gbit/s"];
-  let v = bits;
-  let i = 0;
-  while (v >= 1000 && i < units.length - 1) {
-    v /= 1000;
-    i++;
-  }
-  return `${v >= 10 || i === 0 ? v.toFixed(0) : v.toFixed(1)} ${units[i]}`;
-}
 
 function storedRange(): ScannerMetricsRange {
   try {
@@ -169,6 +145,14 @@ export default function ScannerAgentDetail({ me, onLogout }: { me: Me; onLogout:
             <div className="stat-tile-value">{formatBitRate(latest.netTxBytesPerSec)}</div>
             <div className="stat-tile-label">Network out</div>
           </div>
+          {latest.diskFreeBytes !== null && latest.diskTotalBytes !== null && latest.diskTotalBytes > 0 && (
+            <div className="stat-tile">
+              <div className="stat-tile-value">{((100 * latest.diskFreeBytes) / latest.diskTotalBytes).toFixed(0)}% free</div>
+              <div className="stat-tile-label">
+                Disk · {formatBytes(latest.diskFreeBytes)} of {formatBytes(latest.diskTotalBytes)}
+              </div>
+            </div>
+          )}
           <div className="stat-tile">
             <div className="stat-tile-value">{latest.scansRunning}</div>
             <div className="stat-tile-label">Scans running · as of {fmtTime(Date.parse(latest.at))}</div>
@@ -252,6 +236,30 @@ export default function ScannerAgentDetail({ me, onLogout }: { me: Me; onLogout:
               },
             ]}
           />
+
+          {data.points.some((p) => p.diskFree !== null) && (
+            <>
+              <h3>
+                Disk space free
+                <span className="host-meta">
+                  {" "}
+                  · the fullest of the scanner's submit queue and temp directory; the hourly view shows each hour's lowest
+                </span>
+              </h3>
+              <TimeSeriesChart
+                times={view.times}
+                from={view.from}
+                to={view.to}
+                gapMs={view.gapMs}
+                bands={view.bands}
+                yMax={Math.max(0, ...data.points.map((p) => p.diskTotal ?? 0)) || undefined}
+                format={formatBytes}
+                formatTime={fmtTime}
+                ariaLabel="Free disk space over time"
+                series={[{ label: "Free", color: "var(--chart-series-3)", values: data.points.map((p) => p.diskFree) }]}
+              />
+            </>
+          )}
 
           <h3>Scans running</h3>
           <TimeSeriesChart

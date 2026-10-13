@@ -13,6 +13,7 @@ import TargetPatternHint from "../components/TargetPatternHint";
 import PortSpecHint from "../components/PortSpecHint";
 import { formatDateTime } from "../lib/formatDate";
 import { parseTagList } from "../lib/scanTags";
+import { udpProbesInScope } from "../lib/udpProbes";
 import {
   resolveTimezone,
   shiftWeekday,
@@ -539,6 +540,19 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
   const scannerFiltered =
     scannerFilterIds.length === 0 ? schedules : schedules.filter((s) => scannerFilterIds.includes(s.scanner_agent_id));
   const activeSchedules = scannerFiltered.filter((s) => scheduleStatus(s) === "active");
+  // Active schedules whose port spec no longer includes any of the fixed
+  // UDP probes - which they all ran before scanner 0.30.2. Named once, so a
+  // narrow schedule that silently stopped collecting SNMP/IPMI data is
+  // noticed rather than discovered months later as a gap.
+  const withoutUdpProbes = activeSchedules.filter((s) => udpProbesInScope(s.port_spec).length === 0);
+  const udpNoticeKey = withoutUdpProbes.map((s) => s.id).sort().join(",");
+  const [udpNoticeDismissed, setUdpNoticeDismissed] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(UDP_NOTICE_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  });
   const doneSchedules = scannerFiltered.filter((s) => scheduleStatus(s) === "done");
   const pausedSchedules = scannerFiltered.filter((s) => scheduleStatus(s) === "paused");
 
@@ -562,7 +576,10 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
     return (
       <>
         <td className="spec-cell">{s.target_spec}</td>
-        <td className="spec-cell">{s.port_spec}</td>
+        <td className="spec-cell">
+          {s.port_spec}
+          <UdpProbeNote portSpec={s.port_spec} />
+        </td>
         <td>
           {s.schedule_type === "interval" ? (
             `every ${s.interval_minutes} min`
@@ -673,7 +690,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
             Ports
             <input placeholder="1-1000" value={portSpec} onChange={(e) => setPortSpec(e.target.value)} />
           </label>
-          <PortSpecHint />
+          <PortSpecHint portSpec={portSpec} />
           <label>
             Scan profile
             <ScanProfilePicker
@@ -922,6 +939,38 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
             <ScannerMultiSelect agents={agents} selectedIds={scannerFilterIds} onChange={setScannerFilterIds} align="right" />
           </label>
 
+          {withoutUdpProbes.length > 0 && udpNoticeDismissed !== udpNoticeKey && (
+            <div className="callout">
+              <p>
+                {withoutUdpProbes.length === 1 ? "One active schedule runs" : `${withoutUdpProbes.length} active schedules run`}{" "}
+                no UDP probes:{" "}
+                {withoutUdpProbes.map((s, i) => (
+                  <span key={s.id}>
+                    {i > 0 && ", "}
+                    <code>{s.target_spec}</code> ({s.port_spec})
+                  </span>
+                ))}
+                . Since scanner 0.30.2, SNMP (161), IPMI (623), DNS recursion (53) and UPnP (1900) only run when their
+                port is in the spec - before that they ran on every scan. Add the ports whose data you want, e.g.{" "}
+                <code>161</code> for SNMP and the device MACs it reports.
+              </p>
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => {
+                  setUdpNoticeDismissed(udpNoticeKey);
+                  try {
+                    localStorage.setItem(UDP_NOTICE_STORAGE_KEY, udpNoticeKey);
+                  } catch {
+                    // Dismissal is a convenience; it comes back next visit.
+                  }
+                }}
+              >
+                These are meant to be TCP only - hide this
+              </button>
+            </div>
+          )}
+
           <h3>Active ({activeSchedules.length})</h3>
           {activeSchedules.length === 0 ? (
             <p className="empty">No active schedules.</p>
@@ -977,6 +1026,19 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
           )}
         </>
       )}
+    </div>
+  );
+}
+
+// Remembers which set of schedules the notice was dismissed for, so a
+// schedule added or narrowed later brings it back.
+const UDP_NOTICE_STORAGE_KEY = "porttorch.schedules.udpNoticeDismissed";
+
+function UdpProbeNote({ portSpec }: { portSpec: string }) {
+  const probes = udpProbesInScope(portSpec);
+  return (
+    <div className="host-meta" title="The scanner's fixed UDP probes this port spec includes">
+      {probes.length > 0 ? `+ UDP: ${probes.map((p) => p.label).join(", ")}` : "no UDP probes"}
     </div>
   );
 }

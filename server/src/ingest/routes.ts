@@ -12,6 +12,7 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { metricsBatchSchema, storeSamples } from "../scannerMetrics/metrics";
 import { logger } from "../logger";
 import { dispatchWebhook } from "../webhooks/dispatch";
+import { fillMacVendors } from "../macOui/sync";
 import { zIp } from "../lib/zodIp";
 import { singleParam } from "../lib/reqParams";
 import { deriveServiceTags } from "../lib/serviceTags";
@@ -1168,6 +1169,14 @@ export async function ingestHostPayload(
       skipped: skippedPortless,
     });
   }
+
+  // A MAC this scan reported without a manufacturer (always the case for
+  // one derived from SNMP or NetBIOS) is named from the IEEE registry.
+  // Best-effort and off the response path: a vendor name is never worth
+  // failing or delaying an ingest for.
+  void fillMacVendors(ctx.scannerAgentId).catch((err) =>
+    logger.warn({ event: "mac_oui.fill_failed", err: err instanceof Error ? err.message : String(err) })
+  );
 
   const alertHostIds = [
     ...new Set([

@@ -2838,6 +2838,19 @@ button.scan-part-badge:hover {
   pointer-events: none;
 }
 
+/* Scanner Agents' "Load (24h)" cell (LoadSparkline.tsx). */
+.load-sparkline {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  text-decoration: none;
+  color: inherit;
+}
+
+.load-sparkline-alert {
+  color: var(--warning);
+}
+
 .metrics-band-swatch {
   background: var(--muted);
   opacity: 0.35;

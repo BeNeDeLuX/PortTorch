@@ -1,3 +1,5 @@
+import { udpProbesInScope } from "../lib/udpProbes";
+
 // Shared explanation of the port-spec grammar for the two forms that take
 // one (Ad-hoc Scans, Schedule Scans). Kept in one place so the two can't
 // end up describing the syntax differently - the same reason
@@ -10,13 +12,34 @@
 // timeout per port - a wide UDP range is orders of magnitude slower than
 // the same TCP range, and it is genuinely easy to queue a scan that runs
 // for days without meaning to.
-export default function PortSpecHint() {
+// Given the spec being typed, it also says which of the scanner's fixed UDP
+// probes (DNS recursion, SNMP, IPMI, UPnP) the scan will include - since
+// scanner 0.30.2 those follow the port scope rather than always running,
+// so "22,80,443" no longer collects SNMP data. See lib/udpProbes.ts.
+export default function PortSpecHint({ portSpec }: { portSpec?: string }) {
+  const probes = portSpec && portSpec.trim() ? udpProbesInScope(portSpec) : null;
   return (
+    <>
+    {probes && (
+      <p className="host-meta">
+        {probes.length > 0 ? (
+          <>
+            Also runs the UDP probes for {probes.map((p) => `${p.label} (${p.port})`).join(", ")}.
+          </>
+        ) : (
+          <>
+            No UDP probes: SNMP (161), IPMI (623), DNS recursion (53) and UPnP (1900) only run when their port is in
+            the spec - add e.g. <code>161</code> for SNMP data such as the device's MAC.
+          </>
+        )}
+      </p>
+    )}
     <p className="empty">
       Ports are TCP unless prefixed: <code>80,443,8000-8010</code> is TCP, <code>U:53,U:161</code> is UDP, and the two
       can be mixed in one spec (<code>80,443,U:53</code>). <strong>UDP is much slower than TCP</strong> - an unanswered
       UDP probe can only be timed out, not refused, so a wide UDP range can take hours or days where the same TCP range
       takes minutes. Name the few UDP ports you actually care about rather than sweeping a range.
     </p>
+    </>
   );
 }

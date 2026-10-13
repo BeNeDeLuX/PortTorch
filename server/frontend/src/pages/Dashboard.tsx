@@ -38,16 +38,16 @@ import ScanProgressInline from "../components/ScanProgressInline";
 import ActiveScanTarget from "../components/ActiveScanTarget";
 import ScanGroupModal from "../components/ScanGroupModal";
 import { elapsedLabel } from "../lib/elapsed";
+import { joinFilterList, parseFilterList } from "../lib/filterList";
 import { formatDateTime } from "../lib/formatDate";
 import { cveSeverityClass } from "../lib/cveSeverity";
 import { STATUS_LABEL, useFleetHealth } from "../lib/useFleetHealth";
 
 const PAGE_SIZE = 50;
 
-function parseCommaList(value: string | null): string[] {
-  if (!value) return [];
-  return value.split(",").map((v) => v.trim()).filter(Boolean);
-}
+// Escaped commas, so a manufacturer like "Cisco Systems, Inc" stays one
+// value - see lib/filterList.ts.
+const parseCommaList = parseFilterList;
 
 // A leading "-" means "exclude", in the URL exactly as the server reads
 // it (?port=443,-53) - one parameter carrying both directions, so a
@@ -556,7 +556,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
     const next = new URLSearchParams();
     if (merged.q) next.set("q", merged.q);
     const withNegated = (include: (string | number)[] = [], exclude: (string | number)[] = []) =>
-      [...include.map(String), ...exclude.map((v) => `-${v}`)].join(",");
+      joinFilterList([...include.map(String), ...exclude.map((v) => `-${v}`)]);
     const portParam = withNegated(merged.ports, merged.excludePorts);
     const serviceParam = withNegated(merged.services, merged.excludeServices);
     const tagParam = withNegated(merged.tags, merged.excludeTags);

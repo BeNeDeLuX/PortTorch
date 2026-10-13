@@ -62,6 +62,7 @@ export interface ScannerAgentsTable {
   auto_update: ColumnType<boolean | null, boolean | null | undefined, boolean | null>;
   // Come-and-go dedup for scanner.resource_pressure.
   resource_alert_sent_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
+  disk_alert_sent_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
   // Takes a new release first; the rest of the fleet is auto-updated only
   // after a canary completed a scan on it. See scannerUpdate/autoUpdate.ts.
   update_canary: ColumnType<boolean, boolean | undefined, boolean>;
@@ -790,6 +791,19 @@ export interface TrustedCaCertificatesTable {
   expiry_alert_sent_at: ColumnType<Date | null, string | null | undefined, string | null>;
 }
 
+export interface MacOuiTable {
+  prefix: string;
+  vendor: string;
+}
+
+export interface MacOuiStateTable {
+  id: number;
+  synced_at: Date | null;
+  entries: number | null;
+  last_attempt_at: Date | null;
+  last_error: string | null;
+}
+
 export interface ScanExcludesTable {
   id: Generated<string>;
   kind: string;
@@ -901,6 +915,8 @@ export interface ScannerMetricsTable {
   net_tx_bps: number;
   load1: number;
   scans_running: number;
+  disk_free_bytes: ColumnType<string | number | null, number | null | undefined, number | null>;
+  disk_total_bytes: ColumnType<string | number | null, number | null | undefined, number | null>;
 }
 
 export interface ScannerMetricsHourlyTable {
@@ -918,6 +934,8 @@ export interface ScannerMetricsHourlyTable {
   net_tx_max: number;
   load1_avg: number;
   scans_max: number;
+  disk_free_min: ColumnType<string | number | null, number | null | undefined, number | null>;
+  disk_total: ColumnType<string | number | null, number | null | undefined, number | null>;
 }
 
 // Approved state per network - see baselines/ and migration
@@ -1085,6 +1103,8 @@ export interface Database {
   host_tags: HostTagsTable;
   host_comments: HostCommentsTable;
   scan_excludes: ScanExcludesTable;
+  mac_oui: MacOuiTable;
+  mac_oui_state: MacOuiStateTable;
   trusted_ca_certificates: TrustedCaCertificatesTable;
   finding_triage_rules: FindingTriageRulesTable;
   hec_state: HecStateTable;

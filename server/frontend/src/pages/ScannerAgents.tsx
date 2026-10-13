@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router";
-import { ActiveScanJob, api, Me, QueuedScanRequest, ScannerAgent, ScannerReleaseInfo } from "../api";
+import { ActiveScanJob, api, Me, QueuedScanRequest, ScannerAgent, ScannerMetricsSummary, ScannerReleaseInfo } from "../api";
 import { IconBan, IconCheck, IconInfo, IconPlus, IconRefresh, IconRocket, IconSettings, IconStop, IconTrash, IconX } from "../components/icons";
 import ScannerConfigModal from "../components/ScannerConfigModal";
 import PageHeader from "../components/PageHeader";
@@ -12,6 +12,7 @@ import ScanGroupModal from "../components/ScanGroupModal";
 import { formatDateTime } from "../lib/formatDate";
 import { elapsedLabel } from "../lib/elapsed";
 import { isVersionBehind } from "../lib/semver";
+import LoadSparkline from "../components/LoadSparkline";
 import { NUCLEI_TEMPLATES_WARN_DAYS } from "../lib/useFleetHealth";
 
 type SortKey = "name" | "last_seen_at" | "last_seen_ip" | "version" | "current_scan" | "created_at";
@@ -118,6 +119,7 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
   const isAdmin = me.role === "admin";
   const canEdit = me.role === "admin" || me.role === "operator";
   const [agents, setAgents] = useState<ScannerAgent[]>([]);
+  const [metricsSummary, setMetricsSummary] = useState<Record<string, ScannerMetricsSummary>>({});
   const [name, setName] = useState("");
   const [newKey, setNewKey] = useState<{ name: string; apiKey: string } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -189,7 +191,16 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
     const jobsInterval = setInterval(loadActiveScanJobs, 5000);
     const queueInterval = setInterval(loadScanQueue, 5000);
     const clockInterval = setInterval(() => setClockTick((t) => t + 1), 1000);
+    // Host load changes by the minute - the sampling interval.
+    const loadSummary = () =>
+      api
+        .scannerMetricsSummary()
+        .then(setMetricsSummary)
+        .catch(() => setMetricsSummary({}));
+    loadSummary();
+    const summaryInterval = setInterval(loadSummary, 60_000);
     return () => {
+      clearInterval(summaryInterval);
       clearInterval(jobsInterval);
       clearInterval(queueInterval);
       clearInterval(clockInterval);
@@ -374,6 +385,7 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
       <th onClick={() => setSort("last_seen_at")}>Last seen{sortIndicator("last_seen_at")}</th>
       <th onClick={() => setSort("last_seen_ip")}>Last seen from{sortIndicator("last_seen_ip")}</th>
       <th onClick={() => setSort("version")}>Version{sortIndicator("version")}</th>
+      <th>Load (24h)</th>
     </>
   );
 
@@ -421,6 +433,9 @@ export default function ScannerAgents({ me, onLogout }: { me: Me; onLogout: () =
               templates {templateAgeDays(a)}d old
             </span>
           )}
+        </td>
+        <td>
+          <LoadSparkline agentId={a.id} summary={metricsSummary[a.id]} />
         </td>
       </>
     );

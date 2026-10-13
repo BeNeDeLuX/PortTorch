@@ -6,9 +6,11 @@ import PageHeader from "../components/PageHeader";
 import { certExpiryDaysLeft, certExpiryLabel } from "../lib/certExpiry";
 import { elapsedLabel } from "../lib/elapsed";
 import { formatDateOnly } from "../lib/formatDate";
+import { FAR_BEHIND_MINOR_RELEASES } from "../lib/semver";
 import {
   HealthStatus,
   NUCLEI_TEMPLATES_WARN_DAYS,
+  IDLE_SCANNER_DAYS,
   STALE_QUEUE_THRESHOLD_MS,
   STATUS_LABEL,
   useFleetHealth,
@@ -254,6 +256,67 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
           {health.behindAgents.length > 0 ? `${health.behindAgents.length} behind` : "All up to date"}
           {health.pendingUpdates.length > 0 && `, ${health.pendingUpdates.length} update pending`}
           {health.failedUpdates.length > 0 && `, ${health.failedUpdates.length} update failed`}
+          {health.farBehindAgents.length > 0 && (
+            <>
+              <br />
+              {health.farBehindAgents.map((a) => `${a.name} (v${a.version})`).join(", ")}{" "}
+              {health.farBehindAgents.length === 1 ? "is" : "are"} {FAR_BEHIND_MINOR_RELEASES}+ releases behind - update
+              from Scanner Agents, or turn on auto-update for {health.farBehindAgents.length === 1 ? "it" : "them"}
+            </>
+          )}
+        </HealthCard>
+
+        <HealthCard to="/scan-history" title="Scanner Activity" status={health.activityStatus}>
+          {health.idleAgents.length === 0 ? (
+            `Every scanner finished a scan in the last ${IDLE_SCANNER_DAYS} days`
+          ) : (
+            <>
+              No completed scan in {IDLE_SCANNER_DAYS}+ days:{" "}
+              {health.idleAgents
+                .map(
+                  (a) =>
+                    `${a.name} (${
+                      a.last_completed_scan_at
+                        ? `last scan ${Math.floor((Date.now() - new Date(a.last_completed_scan_at).getTime()) / 86_400_000)} days ago`
+                        : "never"
+                    })`
+                )
+                .join(", ")}
+              <br />
+              <span className="host-meta">Nothing scheduled on it any more, or every scan it starts fails</span>
+            </>
+          )}
+        </HealthCard>
+
+        <HealthCard to="/agents" title="Scanner Load" status={health.loadStatus}>
+          {(() => {
+            const reporting = health.liveAgents.filter((a) => health.metricsSummary?.[a.id]?.latest);
+            if (reporting.length === 0) return "No scanner reports host metrics (needs scanner 0.30.0 in serve mode)";
+            const busiest = reporting.reduce((a, b) =>
+              (health.metricsSummary![a.id].latest!.cpuPercent ?? 0) >= (health.metricsSummary![b.id].latest!.cpuPercent ?? 0) ? a : b
+            );
+            const lowestDisk = reporting
+              .filter((a) => health.metricsSummary![a.id].latest!.diskFreePercent !== null)
+              .sort((a, b) => health.metricsSummary![a.id].latest!.diskFreePercent! - health.metricsSummary![b.id].latest!.diskFreePercent!)[0];
+            return (
+              <>
+                {reporting.length} reporting · busiest {busiest.name} at {health.metricsSummary![busiest.id].latest!.cpuPercent.toFixed(0)}% CPU
+                {lowestDisk && ` · least disk free: ${lowestDisk.name} ${health.metricsSummary![lowestDisk.id].latest!.diskFreePercent!.toFixed(0)}%`}
+                {health.diskLowAgents.length > 0 && (
+                  <>
+                    <br />
+                    Running out of disk: {health.diskLowAgents.map((a) => a.name).join(", ")}
+                  </>
+                )}
+                {health.pressuredAgents.length > 0 && (
+                  <>
+                    <br />
+                    At its limits (CPU or memory): {health.pressuredAgents.map((a) => a.name).join(", ")}
+                  </>
+                )}
+              </>
+            );
+          })()}
         </HealthCard>
 
         {health.autoUpdate && (

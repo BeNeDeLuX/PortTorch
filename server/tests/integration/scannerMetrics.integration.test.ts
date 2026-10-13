@@ -3,7 +3,7 @@ import type { AddressInfo } from "net";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "../../src/db";
-import { checkResourcePressure, rollupAndPrune } from "../../src/scannerMetrics/metrics";
+import { checkDiskLow, checkResourcePressure, rollupAndPrune } from "../../src/scannerMetrics/metrics";
 import {
   closeDb,
   createTestAgent,
@@ -61,7 +61,7 @@ describe("scanner host metrics", () => {
           name: `it-metrics-${Date.now()}`,
           channel_type: "webhook",
           url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/hook`,
-          events: ["scanner.resource_pressure"],
+          events: ["scanner.resource_pressure", "scanner.disk_low"],
           enabled: true,
         })
         .returning("id")
@@ -215,5 +215,71 @@ describe("scanner host metrics", () => {
     await checkResourcePressure(later);
     const row = await db.selectFrom("scanner_agents").select("resource_alert_sent_at").where("id", "=", agent.id).executeTakeFirstOrThrow();
     expect(row.resource_alert_sent_at).toBeNull();
+  });
+  it("stores disk space, charts it, and alerts once when it runs low", async () => {
+    const disk = await createTestAgent("it-metrics-disk");
+    try {
+      const GB = 1024 ** 3;
+      const now = new Date();
+      expect((await report(disk, [sample(new Date(now.getTime() - 2 * MIN), { diskFreeBytes: 5 * GB, diskTotalBytes: 100 * GB })])).status).toBe(204);
+      // A pair that cannot be true is not stored as one.
+      await report(disk, [sample(new Date(now.getTime() - 3 * MIN), { diskFreeBytes: 200 * GB, diskTotalBytes: 100 * GB })]);
+      const series = await adminClient.get(`/api/agents/${disk.id}/metrics?range=24h`);
+      expect(series.body.latest.diskFreeBytes).toBe(5 * GB);
+      expect(series.body.points.some((p: { diskFree: number | null }) => p.diskFree === 5 * GB)).toBe(true);
+
+      received = [];
+      await checkDiskLow(now);
+      await checkDiskLow(now);
+      await new Promise((r) => setTimeout(r, 300));
+      const mine = received.filter((r) => r.data.scanner_agent_id === disk.id);
+      expect(mine).toHaveLength(1);
+      expect(mine[0].event).toBe("scanner.disk_low");
+
+      // 12% is still under the clear line: stays alerted, no repeat.
+      await report(disk, [sample(new Date(now.getTime() - MIN), { diskFreeBytes: 12 * GB, diskTotalBytes: 100 * GB })]);
+      await checkDiskLow(now);
+      expect((await db.selectFrom("scanner_agents").select("disk_alert_sent_at").where("id", "=", disk.id).executeTakeFirstOrThrow()).disk_alert_sent_at).not.toBeNull();
+      await report(disk, [sample(new Date(now.getTime() - 30_000), { diskFreeBytes: 40 * GB, diskTotalBytes: 100 * GB })]);
+      await checkDiskLow(now);
+      expect((await db.selectFrom("scanner_agents").select("disk_alert_sent_at").where("id", "=", disk.id).executeTakeFirstOrThrow()).disk_alert_sent_at).toBeNull();
+
+      // The fleet summary carries the latest disk share and the alert flags.
+      const summary = await adminClient.get("/api/agents/metrics-summary");
+      expect(summary.body[disk.id].latest.diskFreePercent).toBeCloseTo(40, 0);
+      expect(summary.body[disk.id].spark.length).toBeGreaterThanOrEqual(1);
+      expect((await restrictedClient.get("/api/agents/metrics-summary")).body[disk.id]).toBeUndefined();
+    } finally {
+      await deleteTestAgent(disk.id);
+    }
+  });
+
+  it("reports the peak load of each scan in Scan History, and when a scanner last finished one", async () => {
+    const peak = await createTestAgent("it-metrics-peak");
+    try {
+      const start = new Date(Date.now() - 20 * MIN);
+      const end = new Date(Date.now() - 10 * MIN);
+      await report(peak, [
+        sample(new Date(start.getTime() + 2 * MIN), { cpuPercent: 40, netTxBytesPerSec: 1000 }),
+        sample(new Date(start.getTime() + 5 * MIN), { cpuPercent: 88, netTxBytesPerSec: 9000 }),
+        // After the scan: must not count.
+        sample(new Date(end.getTime() + 5 * MIN), { cpuPercent: 99 }),
+      ]);
+      const target = `198.51.100.${Date.now() % 200}`;
+      await db
+        .insertInto("scan_jobs")
+        .values({ scanner_agent_id: peak.id, target_spec: target, port_spec: "22", status: "completed", started_at: start, finished_at: end })
+        .execute();
+      const history = await adminClient.get(`/api/scan-jobs/history?q=${encodeURIComponent(target)}`);
+      const row = history.body.items.find((i: { target_spec: string }) => i.target_spec === target);
+      expect(row.host_peak).toMatchObject({ cpuMax: 88, txMax: 9000, source: "minute" });
+
+      const agents = await adminClient.get("/api/agents");
+      const me = agents.body.find((a: { id: string }) => a.id === peak.id);
+      expect(new Date(me.last_completed_scan_at).getTime()).toBe(end.getTime());
+    } finally {
+      await db.deleteFrom("scan_jobs").where("scanner_agent_id", "=", peak.id).execute();
+      await deleteTestAgent(peak.id);
+    }
   });
 });

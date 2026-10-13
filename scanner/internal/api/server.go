@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"porttorch/scanner/internal/hostmetrics"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +16,7 @@ import (
 
 	"porttorch/scanner/internal/auditlog"
 	"porttorch/scanner/internal/client"
+	"porttorch/scanner/internal/hostmetrics"
 	"porttorch/scanner/internal/pipeline"
 	"porttorch/scanner/internal/progress"
 	"porttorch/scanner/internal/submitqueue"
@@ -302,7 +303,7 @@ const metricsBufferCap = 120
 // and sent with the next successful report, so a webserver restart leaves
 // no gap. Does nothing on a host without /proc.
 func (s *Server) StartMetricsReporter(ctx context.Context, interval time.Duration) {
-	sampler := hostmetrics.New()
+	sampler := hostmetrics.New().WithDiskPaths(s.queueDir, os.TempDir())
 	if !sampler.Available() {
 		s.logger.Info("host metrics unavailable on this platform", "event", "scanner.metrics_unavailable")
 		return

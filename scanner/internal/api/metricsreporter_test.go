@@ -89,4 +89,8 @@ func TestMetricsReporterBuffersWhileTheWebserverIsDown(t *testing.T) {
 	if first["memTotalBytes"].(float64) <= 0 {
 		t.Error("memTotalBytes should be read from the real /proc/meminfo")
 	}
+	// The submit queue's (or temp directory's) filesystem.
+	if total, _ := first["diskTotalBytes"].(float64); total <= 0 {
+		t.Errorf("diskTotalBytes = %v, want the real filesystem's size", first["diskTotalBytes"])
+	}
 }

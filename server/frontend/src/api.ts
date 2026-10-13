@@ -1,3 +1,5 @@
+import { joinFilterList } from "./lib/filterList";
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
     credentials: "include",
@@ -979,6 +981,8 @@ export interface ScannerAgent {
   // When this scanner last updated its nuclei templates. null = unknown
   // (nuclei not installed, or a scanner build that doesn't report it).
   nuclei_templates_updated_at: string | null;
+  // When this scanner last finished a scan (completed status).
+  last_completed_scan_at: string | null;
   // Admin-triggered nuclei template refresh (the "Update templates"
   // button), independent of the binary self-update above - both can be
   // outstanding at once. Unlike update_requested_at, this one stays set
@@ -1028,6 +1032,11 @@ export interface ScanEstimate {
   splitError?: string;
   // Set when the target was a pattern: the estimate is for its expansion.
   expandedFrom?: string;
+  // The scanner's fixed UDP probes this port spec includes.
+  udpProbes?: Array<{ port: number; label: string }>;
+  // The excludes the scanner will apply (global plus scanner-scoped);
+  // the excluded ports themselves only for an admin.
+  excludes?: { ips: number; ipPatterns: number; ipPorts: number; ports: number; portValues?: string[] };
 }
 
 export interface WebserverReleaseStatus {
@@ -1310,6 +1319,9 @@ export interface ScanHistoryEntry {
   screenshots: number;
   rdp_screenshots: number;
   tls_certificates: number;
+  // The peak load this scan put on its scanner's host; null without
+  // metrics (an older scanner, or a scan before metrics existed).
+  host_peak: { cpuMax: number; memMaxPercent: number | null; txMax: number; rxMax: number; source: "minute" | "hourly" } | null;
   // What the scanner's discovery stage turned up before enrichment.
   // null for a scan run by a scanner too old to report it - deliberately
   // not 0, which would claim discovery found nothing.
@@ -1484,6 +1496,9 @@ export interface ScannerMetricsPoint {
   txMax: number;
   load1: number;
   scans: number;
+  // Null where the scanner did not report disk space (before 0.31.0).
+  diskFree: number | null;
+  diskTotal: number | null;
 }
 
 export type ScannerMetricsRange = "24h" | "7d" | "14d" | "30d" | "90d" | "365d";
@@ -1507,7 +1522,18 @@ export interface ScannerMetrics {
     netTxBytesPerSec: number;
     load1: number;
     scansRunning: number;
+    diskFreeBytes: number | null;
+    diskTotalBytes: number | null;
   } | null;
+}
+
+// Per scanner id: the latest sample when recent, a 24-hour sparkline, and
+// whether the webserver currently has a load or disk alert open for it.
+export interface ScannerMetricsSummary {
+  latest: { at: string; cpuPercent: number; memPercent: number | null; netBytesPerSec: number; diskFreePercent: number | null } | null;
+  spark: Array<{ t: string; cpu: number; net: number }>;
+  pressure: boolean;
+  diskLow: boolean;
 }
 
 export interface AutoUpdateStatus {
@@ -1615,7 +1641,7 @@ function hostsQueryString(filters: HostFilters, page?: number, pageSize?: number
   if (filters.q) params.set("q", filters.q);
   // Included and excluded values share one parameter, minus-prefixed.
   const withNegated = (include: (string | number)[] = [], exclude: (string | number)[] = []) =>
-    [...include.map(String), ...exclude.map((v) => `-${v}`)].join(",");
+    joinFilterList([...include.map(String), ...exclude.map((v) => `-${v}`)]);
   const portParam = withNegated(filters.ports, filters.excludePorts);
   const serviceParam = withNegated(filters.services, filters.excludeServices);
   const tagParam = withNegated(filters.tags, filters.excludeTags);
@@ -1832,6 +1858,7 @@ export const api = {
   setScannerAutoUpdate: (id: string, change: { autoUpdate?: boolean | null; canary?: boolean }) =>
     request<void>(`/api/agents/${id}/auto-update`, { method: "PUT", body: JSON.stringify(change) }),
   autoUpdateStatus: () => request<AutoUpdateStatus>("/api/agents/auto-update-status"),
+  scannerMetricsSummary: () => request<Record<string, ScannerMetricsSummary>>("/api/agents/metrics-summary"),
   scannerMetrics: (id: string, range: ScannerMetricsRange) =>
     request<ScannerMetrics>(`/api/agents/${id}/metrics?range=${range}`),
   baselines: () => request<NetworkBaselineSummary[]>("/api/baselines"),

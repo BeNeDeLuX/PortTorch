@@ -289,14 +289,16 @@ scanStatsRouter.get("/", asyncHandler(async (req, res) => {
     `.execute(db),
 
     // nmap derives the manufacturer from the MAC's OUI, and only ever
-    // resolves a MAC via ARP - which stops at the first router. So this
+    // resolves a MAC via ARP - which stops at the first router. A MAC the
+    // scanner derived from SNMP or NetBIOS is named from the IEEE registry
+    // instead (macOui/sync.ts) and counts too. So this
     // is a chart of the hosts sharing an L2 segment with a scanner, and
     // nothing else. Hosts without one get their own slice for the same
     // reason os_family does: on a fleet scanned entirely across routers
     // that slice is the whole circle, which is the true answer and tells
     // you immediately why, where an empty chart would just look broken.
     sql<{ value: string | null; count: string | number }>`
-      SELECT h.mac_vendor AS value, count(*) AS count
+      SELECT coalesce(nullif(h.mac_vendor, ''), nullif(h.derived_mac_vendor, '')) AS value, count(*) AS count
       FROM hosts h
       WHERE true ${hostWhere}
       GROUP BY 1

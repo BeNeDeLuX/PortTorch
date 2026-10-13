@@ -121,3 +121,17 @@ func TestACounterThatWentBackwardsIsNotASpike(t *testing.T) {
 		t.Errorf("reset counters should read as 0, got %+v", got)
 	}
 }
+
+// The fullest filesystem is the one reported, and a path that does not
+// exist yet is measured where it will be created.
+func TestDiskUsageReportsAFilesystem(t *testing.T) {
+	dir := t.TempDir()
+	s := NewAt(dir).WithDiskPaths(filepath.Join(dir, "not", "created", "yet"))
+	free, total := s.diskUsage()
+	if total == 0 || free > total {
+		t.Errorf("free/total = %d/%d, want a real filesystem", free, total)
+	}
+	if free2, total2 := NewAt(dir).diskUsage(); free2 != 0 || total2 != 0 {
+		t.Errorf("no paths configured should report nothing, got %d/%d", free2, total2)
+	}
+}
