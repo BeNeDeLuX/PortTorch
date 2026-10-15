@@ -1,7 +1,8 @@
+import { computeWeeklyReport, formatWeeklyReport } from "./weeklyReport";
 import { Router } from "express";
 import { sql } from "kysely";
 import { db } from "../db";
-import { requireAuth } from "../auth/middleware";
+import { requireAdmin, requireAuth } from "../auth/middleware";
 import { getAllowedScannerAgentIds } from "../auth/scannerScope";
 import { asyncHandler } from "../lib/asyncHandler";
 
@@ -172,6 +173,19 @@ export async function computeDigest(from: Date, to: Date, allowedScannerAgentIds
 
   return { from: from.toISOString(), to: to.toISOString(), newHosts, changedHosts, generatedAt: new Date().toISOString() };
 }
+
+// The weekly report as it would be sent now - so it can be read before
+// subscribing a channel to report.weekly, and checked after changing it.
+digestRouter.get(
+  "/weekly-report",
+  // Admin-only: the report is fleet-wide by design (no session restricts
+  // a background job), so a scanner-restricted user must not read it.
+  requireAdmin,
+  asyncHandler(async (_req, res) => {
+    const report = await computeWeeklyReport();
+    res.json({ report, text: formatWeeklyReport(report) });
+  })
+);
 
 digestRouter.get(
   "/",

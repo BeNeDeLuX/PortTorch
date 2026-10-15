@@ -16,6 +16,7 @@ import AdhocScans from "./pages/AdhocScans";
 import Certificates from "./pages/Certificates";
 import SshKeys from "./pages/SshKeys";
 import Software from "./pages/Software";
+import PatchPriority from "./pages/PatchPriority";
 import Networks from "./pages/Networks";
 import Baselines from "./pages/Baselines";
 import PortPolicies from "./pages/PortPolicies";
@@ -158,6 +159,10 @@ export default function App() {
       <Route
         path="/software"
         element={routeElement(false, (m) => <Software me={m} onLogout={() => setMe(null)} />)}
+      />
+      <Route
+        path="/patch-priority"
+        element={routeElement(false, (m) => <PatchPriority me={m} onLogout={() => setMe(null)} />)}
       />
       <Route
         path="/networks"

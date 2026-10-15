@@ -22,6 +22,7 @@ import { scanEstimateRouter } from "./scanEstimate/routes";
 import { certificatesRouter } from "./certificates/routes";
 import { sshKeysRouter } from "./sshKeys/routes";
 import { softwareRouter } from "./software/routes";
+import { patchPriorityRouter } from "./patchPriority/routes";
 import { networksRouter } from "./networks/routes";
 import { importsRouter } from "./imports/routes";
 import { vulnerabilitiesRouter } from "./vulnerabilities/routes";
@@ -94,6 +95,7 @@ export function buildApp() {
   app.use("/api/certificates", certificatesRouter);
   app.use("/api/ssh-keys", sshKeysRouter);
   app.use("/api/software", softwareRouter);
+  app.use("/api/patch-priority", patchPriorityRouter);
   app.use("/api/networks", networksRouter);
   app.use("/api/imports", importsRouter);
   app.use("/api/vulnerabilities", vulnerabilitiesRouter);

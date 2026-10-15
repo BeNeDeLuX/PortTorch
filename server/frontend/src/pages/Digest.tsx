@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { api, DigestResult, Me } from "../api";
 import DigestExportModal from "../components/DigestExportModal";
 import PageHeader from "../components/PageHeader";
+import Modal from "../components/Modal";
 import { IconDownload } from "../components/icons";
 import { formatDateTime } from "../lib/formatDate";
 
@@ -38,6 +39,17 @@ export default function Digest({ me, onLogout }: { me: Me; onLogout: () => void 
   const [query, setQuery] = useState("");
   const [categories, setCategories] = useState<Set<Category>>(new Set(["new", "opened", "closed"]));
   const [showExportModal, setShowExportModal] = useState(false);
+  const [weekly, setWeekly] = useState<string | null>(null);
+  const [weeklyError, setWeeklyError] = useState<string | null>(null);
+
+  async function showWeekly() {
+    setWeeklyError(null);
+    try {
+      setWeekly((await api.weeklyReport()).text);
+    } catch (err) {
+      setWeeklyError(err instanceof Error ? err.message : "Could not build the report");
+    }
+  }
 
   useEffect(() => {
     load(fromInput, toInput);
@@ -94,6 +106,20 @@ export default function Digest({ me, onLogout }: { me: Me; onLogout: () => void 
       <PageHeader me={me} onLogout={onLogout} />
 
       <h2>Digest</h2>
+      {me.role === "admin" && (
+        <p className="host-meta">
+          A weekly summary goes out on Mondays to every alert channel subscribed to "Weekly fleet report"{" "}
+          <button type="button" className="link-button" onClick={showWeekly}>
+            preview this week's
+          </button>
+          {weeklyError && <span className="error"> {weeklyError}</span>}
+        </p>
+      )}
+      {weekly !== null && (
+        <Modal title="Weekly report preview" onClose={() => setWeekly(null)} wide>
+          <pre className="weekly-report">{weekly}</pre>
+        </Modal>
+      )}
 
       <p className="digest-print-range">
         {formatDateTime(new Date(fromInput).toISOString(), me.preferences)} –{" "}

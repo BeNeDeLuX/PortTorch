@@ -80,6 +80,8 @@ export const listHostsSchema = z.object({
   deviceType: z.string().min(1).optional(),
   scannerAgentId: z.string().min(1).optional(),
   hasStalePorts: z.enum(["true", "false"]).optional(),
+  // Up at least this many days by SNMP uptime - see search/routes.ts.
+  minUptimeDays: z.coerce.number().int().min(1).max(36500).optional(),
   lastSeenAfter: z.string().min(1).optional(),
   lastSeenBefore: z.string().min(1).optional(),
   page: z.coerce.number().int().min(1).optional(),

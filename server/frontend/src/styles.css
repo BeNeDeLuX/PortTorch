@@ -2838,6 +2838,21 @@ button.scan-part-badge:hover {
   pointer-events: none;
 }
 
+/* The weekly report preview: shown as the plain text it is sent as. */
+.weekly-report {
+  white-space: pre-wrap;
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+/* RunCompareModal.tsx: one line per host or port. */
+.compare-list {
+  margin: 0 0 1rem;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
 /* Scanner Agents' "Load (24h)" cell (LoadSparkline.tsx). */
 .load-sparkline {
   display: inline-flex;

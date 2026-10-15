@@ -1155,6 +1155,28 @@ The CPU and memory lines for `scanner.resource_pressure` and the free-disk line 
 
 The notice naming schedules without UDP probes carries a "+ 161" per schedule (admin), which appends 161 to that schedule's port spec through the ordinary `PATCH /api/schedules/:id` and leaves everything else as it was.
 
+### Patch status: uptime filter, SNMP firmware, and a priority list
+
+Three pieces that together answer "which devices are not patched, and which first".
+
+**`minUptimeDays`** is a host filter (`applyHostFilters`, so saved searches and the External API have it too): `hosts.boot_time` at least N days ago. A host with no SNMP uptime never matches - unknown is not "long". On the Dashboard it is an "Up longer than" select; a saved search on it alerts as each device crosses the line.
+
+**Firmware from SNMP** is a fourth Software source, `snmp` (`lib/firmware.ts`'s `parseSysDescr`, applied to the newest `snmp-sysdescr` answer per host). It reads Ubiquiti's "model version" and "model, version" (checked against the live fleet), Cisco IOS/NX-OS, Linux kernels and Windows, and **only a description that carries a version** - anything else is a free-text label unique to the device, and would turn the inventory into one row per device. A firmware row links to the host list by free-text search for the model, since the product filter matches only what nmap identified on a port. Every Software row now carries `newerInFleet`: the newest comparable version of the same product seen anywhere in scope, when this one is older (`compareVersions` compares digit and letter runs, so Cisco's `SE7` sorts before `SE12`). That answers "this firmware is behind" without an external version database - the fleet already shows the newer one exists. On the live fleet that is one switch model on two firmware levels.
+
+**`/patch-priority`** ranks every host with a reason to be patched. `GET /api/patch-priority` returns the raw signals per host - uptime, CVE count and worst CVSS, KEV ids, and the software and firmware it runs with `newerInFleet` - under the Software page's triage policy and scoped like every fleet-wide read. The ranking is `frontend/src/lib/patchPriority.ts`, beside `softwareLifecycle.ts` whose end-of-life dates it needs: KEV 100, CVSS x8, end of life 40 (soon: 10), uptime over a year 30 / over 180 days 20, behind the fleet 15. So exploitation outranks severity outranks age, and every reason is listed beside the score.
+
+### A scheduled run against the run before it
+
+`GET /api/scan-jobs/:id/compare-previous` finds the schedule's previous completed run (via `scan_requests.schedule_id`; for a split schedule, the same part) and compares what each run itself observed: hosts that answered only now, hosts that answered only last time, and ports opened or closed on hosts both reached. Like for like, since both scanned the same target and ports. Scan History offers it as "vs. previous run" on completed scheduled runs (`history` now carries `schedule_id`). 400 for a scan no schedule ran, 404 out of scope; each list is capped at 500 with the total.
+
+### Alert bundling
+
+A channel's `bundle_minutes` (0-60, default 0 = today's behaviour) collects its per-host events - `host.new`, `port.opened`, `port.closed`, `nuclei.finding`, `device.rebooted` - in `webhook_bundle_items` (migration `1748500000000`, durable across restarts) instead of sending each. `webhooks/bundle.ts`'s flusher, every 30 seconds, sends a channel's items as one `alerts.bundle` message once the oldest has waited the window: a count per event type, the first 40 lines, and every item (up to 500) in `data`. The window runs from the first event, so a long scan still reports every few minutes. A lone item goes out as the event it was. Items are claimed with `DELETE ... RETURNING`, so overlapping flushes cannot send one twice; a channel disabled meanwhile drops them, like the retry queue. Fleet-level events (`scanner.offline`, `backup.failed`, ...) are never held back. Collecting is awaited in `dispatchWebhook`, unlike a delivery: it is one local insert, and the integration test caught a flush running before an un-awaited insert had landed.
+
+### The weekly report
+
+`report.weekly` (`digest/weeklyReport.ts`) goes out on Mondays at the daily digest's hour to every channel subscribed to it, once per week (`weekly_report_state`, the `digest_email_state` idiom). Fleet size and new hosts against the week before, hosts with port changes, hosts with a KEV or critical CVE, devices up over 180 days, completed and failed scans against the week before, scanners offline / behind the latest release / without a completed scan this week, and the webserver's disk and database growth. Fleet-wide by design, so the preview (`GET /api/digest/weekly-report`, a link on the Digest page) is admin-only.
+
 ### SSH host keys, fleet-wide
 
 `ssh_host_keys` had been populated since the TLS/SSH fingerprint work but was only ever rendered on one host's detail page, which structurally cannot show the finding that matters: **a host key identifies one machine, so the same fingerprint on more than one address means a cloned VM, a golden image that shipped its keys, or a genuinely shared private key.** `GET /api/ssh-keys` (`sshKeys/routes.ts`) is the certificates router's counterpart - same `distinctOn` "newest per identity" shape, identity here being `(host_id, port, key_type)`.

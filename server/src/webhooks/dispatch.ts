@@ -1,3 +1,4 @@
+import { collectForBundle } from "./bundle";
 import { db } from "../db";
 import { logger } from "../logger";
 import { sendEmailAlert } from "./email";
@@ -77,12 +78,16 @@ export type WebhookEvent =
   | "scanner.resource_pressure"
   | "scanner.disk_low"
   | "webserver.disk_low"
-  | "device.rebooted";
+  | "device.rebooted"
+  | "report.weekly"
+  // Not subscribable on its own: what a bundling channel receives in place
+  // of the per-host events it collected (bundle.ts).
+  | "alerts.bundle";
 
 // Plain-English subject line for an email channel - a webhook channel has
 // no equivalent need, since "event"/"data" already ride along in the JSON
 // body itself.
-const EVENT_SUBJECTS: Record<WebhookEvent, string> = {
+export const EVENT_SUBJECTS: Record<WebhookEvent, string> = {
   "host.new": "New host discovered",
   "port.opened": "Port newly open",
   "certificate.expiring_soon": "Certificate expiring soon",
@@ -110,7 +115,20 @@ const EVENT_SUBJECTS: Record<WebhookEvent, string> = {
   "scanner.disk_low": "Scanner host running out of disk space",
   "webserver.disk_low": "PortTorch webserver running out of disk space",
   "device.rebooted": "Device rebooted",
+  "report.weekly": "Weekly fleet report",
+  "alerts.bundle": "Alerts",
 };
+
+// The per-host events a scan fires in numbers - one per host or port - and
+// so the ones worth bundling. Fleet-level events (a scanner offline, a
+// backup failed) stay immediate: there is one of them, and it is urgent.
+export const BUNDLEABLE_EVENTS: ReadonlySet<WebhookEvent> = new Set<WebhookEvent>([
+  "host.new",
+  "port.opened",
+  "port.closed",
+  "nuclei.finding",
+  "device.rebooted",
+]);
 
 // A Teams "Workflows" webhook (the current replacement for the classic,
 // now-deprecated "Incoming Webhook" connector - the classic connector
@@ -256,6 +274,7 @@ export async function dispatchWebhook(
     filter_tags: string[];
     min_severity: string | null;
     verify_tls: boolean;
+    bundle_minutes: number;
   }>;
   try {
     channels = await db
@@ -270,6 +289,7 @@ export async function dispatchWebhook(
         "filter_tags",
         "min_severity",
         "verify_tls",
+        "bundle_minutes",
       ])
       .where("enabled", "=", true)
       .execute();
@@ -279,6 +299,14 @@ export async function dispatchWebhook(
   }
 
   for (const channel of channels.filter((c) => c.events.includes(event) && shouldDeliver(c, context))) {
+    // A bundling channel collects the per-host events instead of sending
+    // each one; bundle.ts sends them together once the window is up.
+    if (channel.bundle_minutes > 0 && BUNDLEABLE_EVENTS.has(event)) {
+      // Awaited, unlike a delivery: it is one local insert, and not
+      // waiting let a flush run before the item had landed.
+      await collectForBundle(channel.id, event, message, data);
+      continue;
+    }
     // Still deliberately not awaited: a slow or dead alert target must
     // never hold up scanner ingest, which is what calls this.
     void attemptDelivery(channel, event, message, data).then(async (outcome) => {

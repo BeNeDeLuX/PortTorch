@@ -41,6 +41,7 @@ const EVENTS: WebhookEvent[] = [
   "scanner.disk_low",
   "webserver.disk_low",
   "device.rebooted",
+  "report.weekly",
 ];
 const uuidSchema = z.string().uuid();
 const WEBHOOK_COLUMNS = [
@@ -56,6 +57,7 @@ const WEBHOOK_COLUMNS = [
   "filter_tags",
   "min_severity",
   "verify_tls",
+  "bundle_minutes",
 ] as const;
 
 // The one list of event names, served rather than repeated. It had been
@@ -131,6 +133,9 @@ const createWebhookSchema = z
     filterTags: z.array(z.string().trim().min(1)).default([]),
     minSeverity: z.enum(["info", "low", "medium", "high", "critical"]).nullish(),
     verifyTls: z.boolean().default(true),
+    // Collect per-host events for this long and send them as one
+    // message; 0 sends each as it happens (see bundle.ts).
+    bundleMinutes: z.number().int().min(0).max(60).default(0),
   })
   .refine((data) => (data.channelType === "email" ? !!data.emailTo : !!data.url), {
     message: "url is required for a webhook/teams channel, emailTo is required for an email channel",
@@ -142,7 +147,7 @@ webhooksRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  const { name, channelType, url, emailTo, events, filterScannerAgentIds, filterTags, minSeverity, verifyTls } =
+  const { name, channelType, url, emailTo, events, filterScannerAgentIds, filterTags, minSeverity, verifyTls, bundleMinutes } =
     parsed.data;
 
   const webhook = await db
@@ -157,6 +162,7 @@ webhooksRouter.post("/", requireAdmin, asyncHandler(async (req, res) => {
       filter_tags: filterTags,
       min_severity: minSeverity ?? null,
       verify_tls: verifyTls,
+      bundle_minutes: bundleMinutes,
     })
     .returning(WEBHOOK_COLUMNS)
     .executeTakeFirstOrThrow();
@@ -198,6 +204,7 @@ const updateWebhookSchema = z.object({
   // never be removed once set.
   minSeverity: z.enum(["info", "low", "medium", "high", "critical"]).nullable().optional(),
   verifyTls: z.boolean().optional(),
+  bundleMinutes: z.number().int().min(0).max(60).optional(),
 });
 
 webhooksRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
@@ -222,6 +229,7 @@ webhooksRouter.patch("/:id", requireAdmin, asyncHandler(async (req, res) => {
     ...(d.filterTags !== undefined ? { filter_tags: d.filterTags } : {}),
     ...("minSeverity" in req.body ? { min_severity: d.minSeverity ?? null } : {}),
     ...(d.verifyTls !== undefined ? { verify_tls: d.verifyTls } : {}),
+    ...(d.bundleMinutes !== undefined ? { bundle_minutes: d.bundleMinutes } : {}),
   };
   if (Object.keys(patch).length === 0) {
     res.status(400).json({ error: "nothing to update" });

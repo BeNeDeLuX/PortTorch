@@ -47,6 +47,7 @@ export function navEntries(role: Me["role"]): NavEntry[] {
     link("/certificates", "Certificates", "tls ssl expiry"),
     link("/ssh-keys", "SSH Keys", "host keys fingerprints"),
     link("/software", "Software", "inventory versions products"),
+    link("/patch-priority", "Patch Priority", "patch first uptime eol kev firmware"),
     link("/vulnerabilities", "Vulnerabilities", "cve kev epss cvss"),
     link("/web-findings", "Web Findings", "nuclei"),
     link("/digest", "Digest", "changes new hosts"),

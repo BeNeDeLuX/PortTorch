@@ -16,12 +16,14 @@ const SOURCE_LABEL: Record<SoftwareSource, string> = {
   service: "service",
   web: "web app",
   title: "page title",
+  snmp: "firmware (SNMP)",
 };
 
 const SOURCE_TITLE: Record<SoftwareSource, string> = {
   service: "nmap identified this from the service running on the port",
   web: "gowitness fingerprinted this from the web page served",
   title: "taken verbatim from the page's HTML title - a label the page gave itself, not a fingerprint",
+  snmp: "the device's own SNMP system description - its model and firmware as it reports them",
 };
 type SortDirection = "asc" | "desc";
 
@@ -73,6 +75,7 @@ export default function Software({ me, onLogout }: { me: Me; onLogout: () => voi
   const [onlyVulnerable, setOnlyVulnerable] = useState(false);
   const [onlyUnknownVersion, setOnlyUnknownVersion] = useState(false);
   const [onlyEndOfLife, setOnlyEndOfLife] = useState(false);
+  const [onlyBehindFleet, setOnlyBehindFleet] = useState(false);
   const [sourceFilter, setSourceFilter] = useState<"all" | SoftwareSource>("all");
   const [page, setPage] = useState(1);
 
@@ -111,6 +114,7 @@ export default function Software({ me, onLogout }: { me: Me; onLogout: () => voi
   const distinctProducts = useMemo(() => new Set(rows.map((r) => r.product)).size, [rows]);
   const vulnerableCount = useMemo(() => rows.filter((r) => r.cveCount > 0).length, [rows]);
   const unknownVersionCount = useMemo(() => rows.filter((r) => r.version === null).length, [rows]);
+  const behindFleetCount = useMemo(() => rows.filter((r) => r.newerInFleet !== null).length, [rows]);
   const endOfLifeCount = useMemo(() => rows.filter((r) => lifecycleOf(r.product, r.version)?.status === "ended").length, [rows]);
 
   const trimmed = query.trim().toLowerCase();
@@ -118,6 +122,7 @@ export default function Software({ me, onLogout }: { me: Me; onLogout: () => voi
     if (onlyVulnerable && r.cveCount === 0) return false;
     if (onlyUnknownVersion && r.version !== null) return false;
     if (onlyEndOfLife && !lifecycleOf(r.product, r.version)) return false;
+    if (onlyBehindFleet && r.newerInFleet === null) return false;
     if (sourceFilter !== "all" && !r.sources.includes(sourceFilter)) return false;
     if (!trimmed) return true;
     return (
@@ -142,12 +147,16 @@ export default function Software({ me, onLogout }: { me: Me; onLogout: () => voi
         folded into a neighbouring one.
       </p>
       <p className="host-meta">
-        Rows come from three sources, and the Source column says which, because they are not equally reliable. A{" "}
+        Rows come from four sources, and the Source column says which, because they are not equally reliable. A{" "}
         <strong>service</strong> is what nmap's probe identified on the port - the strongest signal, and the only one
         carrying the CPE that CVEs are matched against. A <strong>web app</strong> is what gowitness fingerprinted in
         the page itself. A <strong>page title</strong> is taken verbatim from the page's HTML title: not an
         identifier at all, but the only place many self-hosted applications show up, so it finds things the other two
-        miss - at the cost of also listing generic titles like "Welcome to nginx!". A row seen by more than one
+        miss - at the cost of also listing generic titles like "Welcome to nginx!". <strong>Firmware (SNMP)</strong>{" "}
+        is the model and firmware a device reports in its SNMP system description - switches, access points and
+        appliances nmap cannot version, read only when the description carries a version. A version older than the
+        newest of the same product elsewhere in the fleet is marked, which needs no external version database: the
+        fleet already shows the newer one exists. A row seen by more than one
         source is merged rather than repeated. Everything here was reachable over the network; this is not an
         inventory of what is installed.
       </p>
@@ -170,6 +179,10 @@ export default function Software({ me, onLogout }: { me: Me; onLogout: () => voi
             <div className="summary-card">
               <span className="summary-card-value">{unknownVersionCount}</span>
               <span className="summary-card-label">version undetermined</span>
+            </div>
+            <div className={`summary-card${behindFleetCount > 0 ? " summary-card-warn" : ""}`}>
+              <span className="summary-card-value">{behindFleetCount}</span>
+              <span className="summary-card-label">older than the fleet's newest</span>
             </div>
             <div className={`summary-card${endOfLifeCount > 0 ? " summary-card-warn" : ""}`} title={LIFECYCLE_CAVEAT}>
               <span className="summary-card-value">{endOfLifeCount}</span>
@@ -223,6 +236,17 @@ export default function Software({ me, onLogout }: { me: Me; onLogout: () => voi
                 Only end of life or ending soon
               </label>
               <label className="hide-empty-toggle">
+                <input
+                  type="checkbox"
+                  checked={onlyBehindFleet}
+                  onChange={(e) => {
+                    setOnlyBehindFleet(e.target.checked);
+                    setPage(1);
+                  }}
+                />
+                Only older than the fleet's newest
+              </label>
+              <label className="hide-empty-toggle">
                 Source
                 <select
                   value={sourceFilter}
@@ -235,6 +259,7 @@ export default function Software({ me, onLogout }: { me: Me; onLogout: () => voi
                   <option value="service">Services</option>
                   <option value="web">Web applications</option>
                   <option value="title">Page titles</option>
+                  <option value="snmp">Firmware (SNMP)</option>
                 </select>
               </label>
             </div>
@@ -250,6 +275,7 @@ export default function Software({ me, onLogout }: { me: Me; onLogout: () => voi
                 { header: "max_cvss_score", value: (r) => r.maxCvssScore },
                 { header: "kev", value: (r) => (r.hasKev ? "yes" : "no") },
                 { header: "upstream_support_end", value: (r) => lifecycleOf(r.product, r.version)?.date ?? null },
+                { header: "newest_in_fleet", value: (r) => r.newerInFleet },
                 { header: "sources", value: (r) => r.sources.join(" ") },
                 { header: "scanners", value: (r) => r.scanners.join(" ") },
                 { header: "first_seen", value: (r) => r.firstSeen },
@@ -258,7 +284,7 @@ export default function Software({ me, onLogout }: { me: Me; onLogout: () => voi
             />
           </div>
           <p className="host-meta">
-            {trimmed || onlyVulnerable || onlyUnknownVersion || onlyEndOfLife || sourceFilter !== "all"
+            {trimmed || onlyVulnerable || onlyUnknownVersion || onlyEndOfLife || onlyBehindFleet || sourceFilter !== "all"
               ? `${sorted.length} of ${rows.length} shown`
               : `${rows.length} total`}
           </p>
@@ -298,11 +324,27 @@ export default function Software({ me, onLogout }: { me: Me; onLogout: () => voi
                           product - the whole point of the page is to get
                           from "this version is a problem" to "these are
                           the machines". */}
-                      <Link to={`/?product=${encodeURIComponent(r.product)}`}>{r.product}</Link>
+                      {/* A product filter matches what nmap identified on a
+                          port; firmware from SNMP is not one, so those rows
+                          search the host list for the model instead. */}
+                      <Link
+                        to={
+                          r.sources.includes("service")
+                            ? `/?product=${encodeURIComponent(r.product)}`
+                            : `/?q=${encodeURIComponent(r.product)}`
+                        }
+                      >
+                        {r.product}
+                      </Link>
                     </td>
                     <td>
                       {r.version ?? <span className="host-meta">undetermined</span>}{" "}
                       <LifecycleBadge product={r.product} version={r.version} />
+                      {r.newerInFleet && (
+                        <span className="stale-badge" title={`A newer version of ${r.product} already runs elsewhere in the fleet`}>
+                          {r.newerInFleet} elsewhere
+                        </span>
+                      )}
                     </td>
                     <td>{r.hosts}</td>
                     <td>{r.ports}</td>

@@ -116,6 +116,10 @@ export interface HostFilterParams {
   hideRetired: boolean;
   hasScreenshot: boolean;
   hasStalePorts: boolean;
+  // Hosts up at least this many days by their SNMP boot time - the "has
+  // this been patched" question. Null = no filter. A host with no SNMP
+  // uptime never matches: unknown is not "long".
+  minUptimeDays: number | null;
   lastSeenAfter: string;
   lastSeenBefore: string;
   scannerAgentIds: string[];
@@ -210,6 +214,10 @@ export function parseHostFilterParams(query: Record<string, unknown>): HostFilte
     hideRetired: query.hideRetired === "true" || query.hideRetired === "1",
     hasScreenshot: query.hasScreenshot === "true" || query.hasScreenshot === "1",
     hasStalePorts: query.hasStalePorts === "true" || query.hasStalePorts === "1",
+    minUptimeDays: (() => {
+      const n = typeof query.minUptimeDays === "string" ? parseInt(query.minUptimeDays, 10) : NaN;
+      return Number.isFinite(n) && n > 0 && n <= 36500 ? n : null;
+    })(),
     lastSeenAfter: typeof query.lastSeenAfter === "string" ? query.lastSeenAfter.trim() : "",
     lastSeenBefore: typeof query.lastSeenBefore === "string" ? query.lastSeenBefore.trim() : "",
     scannerAgentIds: parseCommaList(query.scannerAgentId),
@@ -246,6 +254,7 @@ export function applyHostFilters(
     hideRetired,
     hasScreenshot,
     hasStalePorts,
+    minUptimeDays,
     lastSeenAfter,
     lastSeenBefore,
     scannerAgentIds,
@@ -580,6 +589,10 @@ export function applyHostFilters(
   // within app_settings.unconfirmed_port_days - same definition as the
   // stale_port_count column below, expressed as an EXISTS so it stays a
   // plain AND-ed condition like every other filter here.
+  if (minUptimeDays !== null) {
+    query = query.where(sql<boolean>`hosts.boot_time <= now() - make_interval(days => ${minUptimeDays})`);
+  }
+
   if (hasStalePorts) {
     query = query.where((eb: any) =>
       eb.exists(
@@ -1057,6 +1070,7 @@ function hasActiveHostFilters(f: HostFilterParams): boolean {
       f.hideRetired ||
       f.hasScreenshot ||
       f.hasStalePorts ||
+      f.minUptimeDays !== null ||
       f.lastSeenAfter ||
       f.lastSeenBefore ||
       f.scannerAgentIds.length

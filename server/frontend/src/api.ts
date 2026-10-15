@@ -334,6 +334,8 @@ export interface HostFilters {
   hideRetired?: boolean;
   hasScreenshot?: boolean;
   hasStalePorts?: boolean;
+  // Up at least this many days, by SNMP uptime.
+  minUptimeDays?: number;
   // yyyy-mm-dd, matching <input type="date">
   lastSeenAfter?: string;
   lastSeenBefore?: string;
@@ -352,8 +354,9 @@ export interface HostListResult {
 // Where a row was seen. "service" is nmap's service probe (the only one
 // carrying a CPE, and so the only one with CVEs); "web" is gowitness's
 // technology fingerprint; "title" is the page's own <title>, which is not
-// an identifier but is the only place many self-hosted apps appear.
-export type SoftwareSource = "service" | "web" | "title";
+// an identifier but is the only place many self-hosted apps appear;
+// "snmp" is the device's own sysDescr firmware string.
+export type SoftwareSource = "service" | "web" | "title" | "snmp";
 
 export interface SoftwareRow {
   product: string;
@@ -368,6 +371,37 @@ export interface SoftwareRow {
   cveCount: number;
   maxCvssScore: number | null;
   hasKev: boolean;
+  // The newest version of the same product elsewhere in the fleet, when
+  // this one is older; null otherwise.
+  newerInFleet: string | null;
+}
+
+// One host on the Patch Priority page: the raw signals, ranked by
+// lib/patchPriority.ts.
+export interface PatchPriorityHost {
+  id: string;
+  ip: string;
+  hostname: string | null;
+  scanner: string | null;
+  bootTime: string | null;
+  uptimeSource: string | null;
+  uptimeObservedAt: string | null;
+  cveCount: number;
+  maxCvss: number | null;
+  kevIds: string[];
+  software: Array<{ product: string; version: string | null; source: "service" | "snmp"; newerInFleet: string | null }>;
+}
+
+type CompareList<T> = { items: T[]; total: number };
+type CompareHost = { hostId: string; ip: string; hostname: string | null };
+
+export interface RunComparison {
+  current: { id: string; startedAt: string };
+  previous: { id: string; startedAt: string; finishedAt: string | null } | null;
+  newHosts: CompareList<CompareHost>;
+  goneHosts: CompareList<CompareHost>;
+  opened: CompareList<CompareHost & { port: string; service: string | null }>;
+  closed: CompareList<CompareHost & { port: string; service: string | null }>;
 }
 
 export interface Facets {
@@ -540,6 +574,9 @@ export interface Webhook {
   // Off is the blunt fallback for an internal endpoint whose CA can't be
   // uploaded - see Trusted CA Certificates on the Settings page.
   verify_tls: boolean;
+  // Minutes to collect per-host events before sending them as one
+  // message; 0 sends each as it happens.
+  bundle_minutes: number;
 }
 
 export interface WebhookDelivery {
@@ -1374,6 +1411,8 @@ export interface ScanHistoryEntry {
   target_pattern: string | null;
   // One scanner's share of a split scan: which part of how many, and
   // the target of the scan as a whole.
+  // Set for a scheduled run, which can be compared with the run before.
+  schedule_id: string | null;
   scan_group_id: string | null;
   group_part: number | null;
   group_parts: number | null;
@@ -1693,6 +1732,7 @@ function hostsQueryString(filters: HostFilters, page?: number, pageSize?: number
   if (filters.hideRetired) params.set("hideRetired", "true");
   if (filters.hasScreenshot) params.set("hasScreenshot", "true");
   if (filters.hasStalePorts) params.set("hasStalePorts", "true");
+  if (filters.minUptimeDays) params.set("minUptimeDays", String(filters.minUptimeDays));
   if (filters.lastSeenAfter) params.set("lastSeenAfter", filters.lastSeenAfter);
   if (filters.lastSeenBefore) params.set("lastSeenBefore", filters.lastSeenBefore);
   if (filters.scannerAgentIds?.length) params.set("scannerAgentId", filters.scannerAgentIds.join(","));
@@ -1808,6 +1848,9 @@ export const api = {
   expiringCertificates: () => request<LimitedResult<ExpiringCertificate>>("/api/certificates"),
   sshHostKeys: () => request<LimitedResult<FleetSshHostKey>>("/api/ssh-keys"),
   software: () => request<LimitedResult<SoftwareRow>>("/api/software"),
+  compareWithPreviousRun: (jobId: string) => request<RunComparison>(`/api/scan-jobs/${jobId}/compare-previous`),
+  weeklyReport: () => request<{ report: unknown; text: string }>("/api/digest/weekly-report"),
+  patchPriority: () => request<{ items: PatchPriorityHost[] }>("/api/patch-priority"),
   screenshots: (query: ScreenshotQuery) => {
     const params = new URLSearchParams({ page: String(query.page), pageSize: String(query.pageSize) });
     if (query.q) params.set("q", query.q);
@@ -2275,6 +2318,7 @@ export const api = {
     filterTags?: string[];
     minSeverity?: string | null;
     verifyTls?: boolean;
+    bundleMinutes?: number;
   }) =>
     request<Webhook>("/api/webhooks", { method: "POST", body: JSON.stringify(input) }),
   // Partial update: only the fields present are written. minSeverity sent
@@ -2290,6 +2334,7 @@ export const api = {
       filterTags?: string[];
       minSeverity?: string | null;
       verifyTls?: boolean;
+      bundleMinutes?: number;
       enabled?: boolean;
     }
   ) => request<Webhook>(`/api/webhooks/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),

@@ -105,6 +105,7 @@ function filtersFromSearchParams(searchParams: URLSearchParams): HostFilters {
     hideRetired: searchParams.get("hideRetired") === "true" || undefined,
     hasScreenshot: searchParams.get("hasScreenshot") === "true" || undefined,
     hasStalePorts: searchParams.get("hasStalePorts") === "true" || undefined,
+    minUptimeDays: Number(searchParams.get("minUptimeDays")) > 0 ? Number(searchParams.get("minUptimeDays")) : undefined,
     lastSeenAfter: searchParams.get("lastSeenAfter") ?? undefined,
     lastSeenBefore: searchParams.get("lastSeenBefore") ?? undefined,
     scannerAgentIds: scannerAgentIds.length ? scannerAgentIds : undefined,
@@ -590,6 +591,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
     if (merged.hideRetired) next.set("hideRetired", "true");
     if (merged.hasScreenshot) next.set("hasScreenshot", "true");
     if (merged.hasStalePorts) next.set("hasStalePorts", "true");
+    if (merged.minUptimeDays) next.set("minUptimeDays", String(merged.minUptimeDays));
     if (merged.lastSeenAfter) next.set("lastSeenAfter", merged.lastSeenAfter);
     if (merged.lastSeenBefore) next.set("lastSeenBefore", merged.lastSeenBefore);
     if (merged.scannerAgentIds?.length) next.set("scannerAgentId", merged.scannerAgentIds.join(","));
@@ -981,6 +983,24 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
               onChange={(e) => updateFilters({ hasStalePorts: e.target.checked || undefined })}
             />
             Only hosts with unconfirmed ports
+          </label>
+          <label
+            className="hide-empty-toggle"
+            title="By how long the device has been up, from SNMP. A device up for months has most likely missed patches that need a reboot. Hosts without SNMP uptime never match."
+          >
+            Up longer than
+            <select
+              value={filters.minUptimeDays ?? ""}
+              onChange={(e) => updateFilters({ minUptimeDays: e.target.value ? Number(e.target.value) : undefined })}
+              aria-label="Minimum uptime"
+            >
+              <option value="">any</option>
+              {[30, 90, LONG_UPTIME_DAYS, 365].map((d) => (
+                <option key={d} value={d}>
+                  {d} days
+                </option>
+              ))}
+            </select>
           </label>
           <div className="last-seen-range">
             <label className="date-range-filter">

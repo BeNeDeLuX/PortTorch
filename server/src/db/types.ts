@@ -805,6 +805,20 @@ export interface WebserverStorageSamplesTable {
   disk_total_bytes: ColumnType<string | number | null, number | null, number | null>;
 }
 
+export interface WebhookBundleItemsTable {
+  id: Generated<string>;
+  webhook_id: string;
+  event: string;
+  message: string;
+  data: ColumnType<Record<string, unknown>, string, string>;
+  created_at: ColumnType<Date, string | undefined, never>;
+}
+
+export interface WeeklyReportStateTable {
+  id: number;
+  last_sent_week: ColumnType<Date | string | null, string | null, string | null>;
+}
+
 export interface MacOuiTable {
   prefix: string;
   vendor: string;
@@ -860,6 +874,8 @@ export interface WebhooksTable {
   // an internal endpoint whose CA can't be uploaded - see
   // settings/caCertificates.ts for the better one.
   verify_tls: ColumnType<boolean, boolean | undefined, boolean>;
+  // Minutes to collect per-host events before sending them as one message; 0 = off.
+  bundle_minutes: ColumnType<number, number | undefined, number>;
 }
 
 // One row per actual delivery attempt (webhooks/dispatch.ts) - trimmed to
@@ -1122,6 +1138,8 @@ export interface Database {
   host_comments: HostCommentsTable;
   scan_excludes: ScanExcludesTable;
   mac_oui: MacOuiTable;
+  webhook_bundle_items: WebhookBundleItemsTable;
+  weekly_report_state: WeeklyReportStateTable;
   webserver_storage_samples: WebserverStorageSamplesTable;
   mac_oui_state: MacOuiStateTable;
   trusted_ca_certificates: TrustedCaCertificatesTable;

@@ -50,6 +50,7 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
   const [agents, setAgents] = useState<ScannerAgent[]>([]);
   const [allEvents, setAllEvents] = useState<WebhookEvent[]>([]);
   const [verifyTls, setVerifyTls] = useState(true);
+  const [bundleMinutes, setBundleMinutes] = useState("0");
   // Non-null puts the form into edit mode for that channel - deliberately
   // the same form rather than a second one, so the two can't drift on
   // which fields exist or how they validate.
@@ -94,6 +95,7 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
     setFilterTags(w.filter_tags.join(", "));
     setMinSeverity(w.min_severity ?? "");
     setVerifyTls(w.verify_tls);
+    setBundleMinutes(String(w.bundle_minutes));
     setError(null);
   }
 
@@ -107,6 +109,7 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
     setFilterTags("");
     setMinSeverity("");
     setVerifyTls(true);
+    setBundleMinutes("0");
   }
 
   async function handleCreate(e: FormEvent) {
@@ -133,6 +136,7 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
           // actually removes the floor instead of silently keeping it.
           minSeverity: minSeverity || null,
           verifyTls,
+          bundleMinutes: Number(bundleMinutes) || 0,
         });
         resetForm();
         await load();
@@ -155,6 +159,7 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
         filterTags: tags,
         minSeverity: minSeverity || null,
         verifyTls,
+        bundleMinutes: Number(bundleMinutes) || 0,
       });
       resetForm();
       await load();
@@ -261,6 +266,19 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
                   <option value="critical">critical</option>
                 </select>
               </label>
+              <label
+                className="hide-empty-toggle"
+                title="New hosts, opened and closed ports, web findings and reboots are collected for this long, from the first one, and sent as one message. Other alerts are always sent immediately."
+              >
+                Bundle host alerts
+                <select value={bundleMinutes} onChange={(e) => setBundleMinutes(e.target.value)}>
+                  <option value="0">off - send each one</option>
+                  <option value="2">over 2 minutes</option>
+                  <option value="5">over 5 minutes</option>
+                  <option value="15">over 15 minutes</option>
+                  <option value="60">over 60 minutes</option>
+                </select>
+              </label>
             </div>
             <label className="hide-empty-toggle">
               <input type="checkbox" checked={verifyTls} onChange={(e) => setVerifyTls(e.target.checked)} />
@@ -327,6 +345,7 @@ export default function Webhooks({ me, onLogout }: { me: Me; onLogout: () => voi
                       if (w.filter_tags.length > 0) parts.push(`tags: ${w.filter_tags.join(", ")}`);
                       if (w.min_severity) parts.push(`min ${w.min_severity}`);
                       if (!w.verify_tls) parts.push("TLS unverified");
+                      if (w.bundle_minutes > 0) parts.push(`bundled over ${w.bundle_minutes} min`);
                       return parts.length > 0 ? parts.join(" · ") : "none";
                     })()}
                   </td>

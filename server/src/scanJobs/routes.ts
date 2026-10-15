@@ -136,6 +136,9 @@ scanJobsRouter.get("/history", asyncHandler(async (req, res) => {
       // The pattern this job's target was expanded from, when it was one -
       // what was asked for, rather than the list of addresses it became.
       sql<string | null>`(select sr.target_pattern from scan_requests sr where sr.scan_job_id = scan_jobs.id limit 1)`.as("target_pattern"),
+      // Set for a scheduled run - what makes "compare with the previous
+      // run" possible (GET /:id/compare-previous).
+      sql<string | null>`(select sr.schedule_id from scan_requests sr where sr.scan_job_id = scan_jobs.id limit 1)`.as("schedule_id"),
       sql<number | null>`(select sr.group_part from scan_requests sr where sr.scan_job_id = scan_jobs.id limit 1)`.as("group_part"),
       sql<number | null>`(select sr.group_parts from scan_requests sr where sr.scan_job_id = scan_jobs.id limit 1)`.as("group_parts"),
       sql<string | null>`(
@@ -285,6 +288,103 @@ scanJobsRouter.get("/active", asyncHandler(async (req, res) => {
 // as /active (any authenticated role, not operator-gated) since this is
 // just a more detailed view of the same already-visible data, not a new
 // capability.
+// A scheduled run against the run of the same schedule before it: what
+// this run found that the previous did not, and the reverse. The Digest
+// answers "what changed across the fleet in a window"; this answers "what
+// did tonight's sweep of network X find differently from yesterday's",
+// which is the question a schedule exists for.
+//
+// Compared on what each run itself observed - both runs scanned the same
+// target and ports, so that is like for like:
+//   - new hosts: answered this run, not the previous;
+//   - gone hosts: answered the previous run, not this one (or gone dark);
+//   - opened/closed ports: on hosts both runs reached.
+// A split schedule compares a part with the same part of the run before.
+const COMPARE_LIST_CAP = 500;
+
+scanJobsRouter.get("/:id/compare-previous", asyncHandler(async (req, res) => {
+  if (!z.string().uuid().safeParse(req.params.id).success) {
+    res.status(400).json({ error: "invalid scan job id" });
+    return;
+  }
+  const job = await db
+    .selectFrom("scan_jobs")
+    .select(["id", "scanner_agent_id", "started_at", "target_spec", "port_spec"])
+    .where("id", "=", req.params.id)
+    .executeTakeFirst();
+  const allowed = getAllowedScannerAgentIds(req);
+  if (!job || (allowed && (!job.scanner_agent_id || !allowed.includes(job.scanner_agent_id)))) {
+    res.status(404).json({ error: "scan job not found" });
+    return;
+  }
+  const request = await db
+    .selectFrom("scan_requests")
+    .select(["schedule_id", "group_part"])
+    .where("scan_job_id", "=", job.id)
+    .executeTakeFirst();
+  if (!request?.schedule_id) {
+    res.status(400).json({ error: "this scan was not run by a schedule, so it has no previous run to compare with" });
+    return;
+  }
+  const previous = await db
+    .selectFrom("scan_requests as sr")
+    .innerJoin("scan_jobs as sj", "sj.id", "sr.scan_job_id")
+    .select(["sj.id", "sj.started_at", "sj.finished_at"])
+    .where("sr.schedule_id", "=", request.schedule_id)
+    .where(sql<boolean>`coalesce(sr.group_part, 0) = ${request.group_part ?? 0}`)
+    .where("sj.status", "=", "completed")
+    .where("sj.started_at", "<", job.started_at)
+    .orderBy("sj.started_at", "desc")
+    .limit(1)
+    .executeTakeFirst();
+  if (!previous) {
+    const none = { items: [], total: 0 };
+    res.json({ current: { id: job.id, startedAt: job.started_at }, previous: null, newHosts: none, goneHosts: none, opened: none, closed: none });
+    return;
+  }
+
+  const rows = await db
+    .selectFrom("host_port_observations as o")
+    .innerJoin("hosts as h", "h.id", "o.host_id")
+    .select(["o.scan_job_id", "o.host_id", sql<string>`host(h.ip)`.as("ip"), "h.hostname", "o.port", "o.protocol", "o.state", "o.service_name"])
+    .where("o.scan_job_id", "in", [job.id, previous.id])
+    .execute();
+
+  type HostInfo = { hostId: string; ip: string; hostname: string | null };
+  const seen = { cur: new Map<string, HostInfo>(), prev: new Map<string, HostInfo>() };
+  const open = { cur: new Map<string, Map<string, string | null>>(), prev: new Map<string, Map<string, string | null>>() };
+  for (const r of rows) {
+    const side = r.scan_job_id === job.id ? "cur" : "prev";
+    seen[side].set(r.host_id, { hostId: r.host_id, ip: r.ip, hostname: r.hostname });
+    if (r.state === "open") {
+      const ports = open[side].get(r.host_id) ?? new Map<string, string | null>();
+      ports.set(`${r.port}/${r.protocol}`, r.service_name);
+      open[side].set(r.host_id, ports);
+    }
+  }
+  const newHosts = [...seen.cur.values()].filter((h) => !seen.prev.has(h.hostId) && open.cur.has(h.hostId));
+  const goneHosts = [...seen.prev.values()].filter((h) => !seen.cur.has(h.hostId) && open.prev.has(h.hostId));
+  const opened: Array<HostInfo & { port: string; service: string | null }> = [];
+  const closed: Array<HostInfo & { port: string; service: string | null }> = [];
+  for (const [hostId, info] of seen.cur) {
+    if (!seen.prev.has(hostId)) continue;
+    const now = open.cur.get(hostId) ?? new Map();
+    const before = open.prev.get(hostId) ?? new Map();
+    for (const [port, service] of now) if (!before.has(port)) opened.push({ ...info, port, service });
+    for (const [port, service] of before) if (!now.has(port)) closed.push({ ...info, port, service });
+  }
+  const byIp = (a: HostInfo, b: HostInfo) => a.ip.localeCompare(b.ip, undefined, { numeric: true });
+  const cap = <T,>(list: T[]) => ({ items: list.slice(0, COMPARE_LIST_CAP), total: list.length });
+  res.json({
+    current: { id: job.id, startedAt: job.started_at },
+    previous: { id: previous.id, startedAt: previous.started_at, finishedAt: previous.finished_at },
+    newHosts: cap(newHosts.sort(byIp)),
+    goneHosts: cap(goneHosts.sort(byIp)),
+    opened: cap(opened.sort(byIp)),
+    closed: cap(closed.sort(byIp)),
+  });
+}));
+
 scanJobsRouter.get("/:id/progress", asyncHandler(async (req, res) => {
   if (!z.string().uuid().safeParse(req.params.id).success) {
     res.status(400).json({ error: "invalid scan job id" });

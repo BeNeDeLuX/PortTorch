@@ -5,6 +5,7 @@ import { api, Me, ScanHistoryEntry, ScanHistoryResult } from "../api";
 import { IconInfo, IconWarning, IconSearch, IconRefresh, IconPlay } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScanProgressModal from "../components/ScanProgressModal";
+import RunCompareModal from "../components/RunCompareModal";
 import ScanGroupModal from "../components/ScanGroupModal";
 import { formatDateTime } from "../lib/formatDate";
 import { durationLabel } from "../lib/elapsed";
@@ -41,6 +42,7 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
   const [result, setResult] = useState<ScanHistoryResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailsJobId, setDetailsJobId] = useState<string | null>(null);
+  const [compareJobId, setCompareJobId] = useState<string | null>(null);
   const [groupId, setGroupId] = useState<string | null>(null);
   const [resumeNotice, setResumeNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [resumingId, setResumingId] = useState<string | null>(null);
@@ -255,6 +257,15 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
                       <button className="btn-icon-label" onClick={() => setDetailsJobId(s.id)}>
                         <IconInfo /> Details
                       </button>
+                      {s.schedule_id && s.status === "completed" && (
+                        <button
+                          className="btn-icon-label"
+                          title="What this scheduled run found differently from the schedule's run before it"
+                          onClick={() => setCompareJobId(s.id)}
+                        >
+                          <IconInfo /> vs. previous run
+                        </button>
+                      )}
                       {canRescan && (
                         <button
                           className="btn-icon-label"
@@ -319,6 +330,7 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
         </div>
       )}
 
+      {compareJobId && <RunCompareModal jobId={compareJobId} me={me} onClose={() => setCompareJobId(null)} />}
       {groupId && <ScanGroupModal groupId={groupId} me={me} onClose={() => setGroupId(null)} onChanged={load} />}
       {detailsJobId && (
         <ScanProgressModal

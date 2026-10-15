@@ -1,3 +1,4 @@
+import { compareVersions, isComparableVersion, parseSysDescr } from "../lib/firmware";
 import { Router } from "express";
 import { sql } from "kysely";
 import { db } from "../db";
@@ -23,8 +24,12 @@ softwareRouter.use(requireAuth);
  *    all - but it is the only place many self-hosted applications
  *    (Grafana, Portainer, Home Assistant) appear at all, so leaving it
  *    out would hide exactly the software people go looking for.
+ *  - "snmp": the device's own SNMP sysDescr ("USW-Enterprise-8-PoE,
+ *    7.5.15.17146"), parsed by lib/firmware.ts. The firmware of switches,
+ *    access points and appliances nmap cannot version - only read when
+ *    the string carries a version, see parseSysDescr.
  */
-export type SoftwareSource = "service" | "web" | "title";
+export type SoftwareSource = "service" | "web" | "title" | "snmp";
 
 export interface SoftwareRow {
   product: string;
@@ -41,6 +46,10 @@ export interface SoftwareRow {
   cveCount: number;
   maxCvssScore: number | null;
   hasKev: boolean;
+  /** The newest version of the same product seen anywhere in the fleet,
+   * when this row's is older - "this firmware is behind what we already
+   * run elsewhere", with no external version database. Null otherwise. */
+  newerInFleet: string | null;
 }
 
 interface CountRow {
@@ -122,7 +131,7 @@ softwareRouter.get(
     // rather than joined" reasoning Scan History documents for its
     // screenshot counts. The two web halves are separate for the plainer
     // reason that they read a different table.
-    const [counts, technologies, titles, cves] = await Promise.all([
+    const [counts, technologies, titles, cves, snmp] = await Promise.all([
       sql<CountRow>`
         SELECT
           chp.service_product AS product,
@@ -218,6 +227,20 @@ softwareRouter.get(
           AND ${cveRuleNotTriaged("cve_elem->>'id'", NOT_A_LIVE_RISK_STATES)}
         GROUP BY 1, 2
       `.execute(db),
+
+      // The newest SNMP answer per host: current_host_ports' row for the
+      // UDP/161 the probe reports, and the sysDescr script on it. Parsed
+      // and grouped below in JS, since the parsing is not SQL's to do.
+      sql<{ host_id: string; output: string; observed_at: Date; scanner: string | null }>`
+        SELECT chp.host_id, e->>'output' AS output, chp.observed_at, sa.name AS scanner
+        FROM current_host_ports chp
+        JOIN hosts h ON h.id = chp.host_id
+        LEFT JOIN scanner_agents sa ON sa.id = h.scanner_agent_id
+        CROSS JOIN LATERAL jsonb_array_elements(chp.nse_extra) AS e
+        WHERE chp.port = 161 AND chp.protocol = 'udp' AND chp.state = 'open'
+          AND chp.nse_extra IS NOT NULL AND e->>'id' = 'snmp-sysdescr'
+          ${restriction}
+      `.execute(db),
     ]);
 
     // Merged rather than concatenated: nmap and gowitness both see nginx
@@ -258,6 +281,7 @@ softwareRouter.get(
           cveCount: 0,
           maxCvssScore: null,
           hasKev: false,
+          newerInFleet: null,
         });
         return;
       }
@@ -283,6 +307,29 @@ softwareRouter.get(
     // reading as data.
     for (const row of titles.rows) add("title", row.value, null, row);
 
+    // One device answers once, so hosts and ports are the same count.
+    const firmware = new Map<string, { product: string; version: string; hosts: Set<string>; scanners: Set<string>; first: Date; last: Date }>();
+    for (const row of snmp.rows) {
+      const fw = parseSysDescr(row.output ?? "");
+      if (!fw) continue;
+      const k = key(fw.product, fw.version);
+      const entry = firmware.get(k) ?? { ...fw, hosts: new Set<string>(), scanners: new Set<string>(), first: row.observed_at, last: row.observed_at };
+      entry.hosts.add(row.host_id);
+      if (row.scanner) entry.scanners.add(row.scanner);
+      if (row.observed_at < entry.first) entry.first = row.observed_at;
+      if (row.observed_at > entry.last) entry.last = row.observed_at;
+      firmware.set(k, entry);
+    }
+    for (const fw of firmware.values()) {
+      add("snmp", fw.product, fw.version, {
+        hosts: fw.hosts.size,
+        ports: fw.hosts.size,
+        scanners: [...fw.scanners].sort(),
+        first_seen: fw.first,
+        last_seen: fw.last,
+      });
+    }
+
     // CVEs attach to service rows only - a CPE lives on a port, and
     // neither a technology fingerprint nor a page title carries one. A
     // web-only row therefore reports no CVEs, which is a statement about
@@ -296,6 +343,20 @@ softwareRouter.get(
     }
 
     const items = [...merged.values()];
+
+    // Newest comparable version per product, then every older row of the
+    // same product points at it.
+    const newest = new Map<string, string>();
+    for (const row of items) {
+      if (!row.version || !isComparableVersion(row.version)) continue;
+      const p = row.product.toLowerCase();
+      const current = newest.get(p);
+      if (!current || compareVersions(row.version, current) > 0) newest.set(p, row.version);
+    }
+    for (const row of items) {
+      const top = newest.get(row.product.toLowerCase());
+      if (top && row.version && isComparableVersion(row.version) && compareVersions(row.version, top) < 0) row.newerInFleet = top;
+    }
 
     // Worst first, so a truncated response keeps the rows that matter:
     // confirmed-exploited, then highest CVSS, then most widespread. Same
