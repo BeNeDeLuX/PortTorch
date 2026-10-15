@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countAddresses, countPorts, estimateScan } from "./estimate";
+import { countAddresses, countPorts, estimateScan, projectEnrichment } from "./estimate";
 
 // The numbers here are the whole reason the feature exists - a /16 across
 // every port has to come out as days, not as a shrug - so each target and
@@ -75,5 +75,29 @@ describe("estimateScan", () => {
     expect(e.masscanSeconds).toBeNull();
     // The port count is still known and still worth showing.
     expect(e.ports).toBe(1000);
+  });
+});
+
+describe("projectEnrichment", () => {
+  // Three /24 scans of one port at 1000 pps (0.256 s of discovery each),
+  // each confirming 16 hosts in 160 s.
+  const history = [1, 2, 3].map((n) => ({ targetSpec: `10.0.${n}.0/24`, portSpec: "22", durationSeconds: 160.256, hostsScanned: 16 }));
+
+  it("projects hosts and time from the pooled ratios", () => {
+    const p = projectEnrichment(history, 1024, 1000)!;
+    expect(p.basedOnScans).toBe(3);
+    expect(p.hitRate).toBeCloseTo(16 / 256, 6);
+    expect(p.secondsPerHost).toBeCloseTo(10, 3);
+    expect(p.expectedHosts).toBeCloseTo(64, 6);
+    expect(p.enrichmentSeconds).toBeCloseTo(640, 1);
+  });
+
+  it("refuses to project from too little history", () => {
+    expect(projectEnrichment(history.slice(0, 2), 1024, 1000)).toBeNull();
+  });
+
+  it("skips scans it cannot count, and a history that never found anything", () => {
+    expect(projectEnrichment([...history.slice(0, 2), { targetSpec: "web.internal", portSpec: "22", durationSeconds: 99, hostsScanned: 1 }], 256, 1000)).toBeNull();
+    expect(projectEnrichment(history.map((h) => ({ ...h, hostsScanned: 0 })), 256, 1000)).toBeNull();
   });
 });

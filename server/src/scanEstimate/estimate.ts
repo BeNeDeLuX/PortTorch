@@ -77,3 +77,52 @@ export function estimateScan(
     masscanSeconds: probes !== null && rate > 0 ? probes / rate : null,
   };
 }
+
+// Everything after discovery, projected from this scanner's own past
+// scans rather than guessed. Each completed scan says how many addresses
+// it covered, how many hosts it confirmed and how long it took; taking its
+// estimated discovery pass off the duration leaves what enrichment (nmap,
+// screenshots, nuclei, submission) cost per confirmed host. Two pooled
+// ratios come out of that - hosts found per address, seconds per host -
+// and the projection is addresses x hit rate x seconds per host.
+//
+// Honest rather than precise: a /24 of servers and a /24 of printers hit
+// at very different rates, and a scan with nuclei on costs more per host
+// than one without. So it is reported with how many scans it rests on,
+// and not at all below MIN_HISTORY_SCANS.
+export const MIN_HISTORY_SCANS = 3;
+
+export interface PastScan {
+  targetSpec: string;
+  portSpec: string;
+  durationSeconds: number;
+  hostsScanned: number;
+}
+
+export interface EnrichmentProjection {
+  basedOnScans: number;
+  hitRate: number;
+  secondsPerHost: number;
+  expectedHosts: number;
+  enrichmentSeconds: number;
+}
+
+export function projectEnrichment(history: PastScan[], addresses: number, rate: number): EnrichmentProjection | null {
+  let scans = 0;
+  let totalAddresses = 0;
+  let totalHosts = 0;
+  let enrichSeconds = 0;
+  for (const h of history) {
+    const est = estimateScan(h.targetSpec, h.portSpec, rate, "scanner");
+    if (est.addresses === null || est.masscanSeconds === null || est.addresses === 0) continue;
+    scans++;
+    totalAddresses += est.addresses;
+    totalHosts += h.hostsScanned;
+    enrichSeconds += Math.max(0, h.durationSeconds - est.masscanSeconds);
+  }
+  if (scans < MIN_HISTORY_SCANS || totalAddresses === 0 || totalHosts === 0) return null;
+  const hitRate = totalHosts / totalAddresses;
+  const secondsPerHost = enrichSeconds / totalHosts;
+  const expectedHosts = addresses * hitRate;
+  return { basedOnScans: scans, hitRate, secondsPerHost, expectedHosts, enrichmentSeconds: expectedHosts * secondsPerHost };
+}

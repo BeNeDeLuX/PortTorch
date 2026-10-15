@@ -64,6 +64,39 @@ pull_with_retries() {
   return 1
 }
 
+# Every deploy leaves the previous webserver image behind, untagged - on
+# one host ten of them held 4 GB on a disk with 7 GB free. Once the new
+# image is serving, the old ones go, except the one it replaced, kept so a
+# bad release can be rolled back without a download.
+#
+# Only images built from this repository are touched: they carry the
+# org.opencontainers.image.source label server/Dockerfile sets. Nothing
+# else on the host - other projects' images, base images, build cache - is
+# this script's to delete. An image a container still uses is skipped
+# (docker refuses to remove it anyway). KEEP_OLD_IMAGES=1 turns it off.
+IMAGE_SOURCE_LABEL="org.opencontainers.image.source=https://github.com/BeNeDeLuX/PortTorch"
+
+prune_old_images() {
+  [ "${KEEP_OLD_IMAGES:-0}" = "1" ] && return 0
+  local in_use id freed=0 removed=0 size
+  in_use="$(docker ps -aq | xargs -r docker inspect --format '{{.Image}}' 2>/dev/null | sort -u)"
+  # -a: Docker 29 leaves untagged images out of a filtered listing
+  # without it, and untagged is exactly what an old deploy leaves.
+  for id in $(docker images -a -q --no-trunc --filter "label=$IMAGE_SOURCE_LABEL" | sort -u); do
+    [ "$id" = "$AFTER" ] && continue
+    [ -n "$BEFORE" ] && [ "$id" = "$BEFORE" ] && continue
+    printf '%s\n' "$in_use" | grep -qx "$id" && continue
+    size="$(docker image inspect --format '{{.Size}}' "$id" 2>/dev/null || echo 0)"
+    if docker rmi "$id" >/dev/null 2>&1; then
+      removed=$((removed + 1))
+      freed=$((freed + size))
+    fi
+  done
+  if [ "$removed" -gt 0 ]; then
+    log "removed $removed old webserver image(s), about $((freed / 1024 / 1024)) MB (kept the previous one for rollback)"
+  fi
+}
+
 BEFORE="$(docker image inspect --format '{{.Id}}' "$COMPOSE_IMAGE" 2>/dev/null || true)"
 
 if pull_with_retries "$WANT"; then
@@ -103,6 +136,7 @@ for _ in $(seq 1 60); do
     running="$(printf '%s' "$body" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
     if [ "$NEW_VERSION" = "?" ] || [ "$running" = "$NEW_VERSION" ]; then
       log "webserver is healthy, running version ${running:-$NEW_VERSION}"
+      prune_old_images
       exit 0
     fi
   fi

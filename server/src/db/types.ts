@@ -301,6 +301,12 @@ export interface HostsTable {
   // legitimately disagree, and "in DNS" is a different kind of fact from
   // "the machine says so". *_source names which piece of evidence it was.
   derived_hostname: ColumnType<string | null, string | null | undefined, string | null>;
+  // From SNMP (lib/snmpUptime.ts): when the device last booted, which
+  // reading said so, and the SNMPv3 boot counter.
+  boot_time: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
+  uptime_source: ColumnType<string | null, string | null | undefined, string | null>;
+  uptime_observed_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
+  snmp_engine_boots: ColumnType<number | null, number | null | undefined, number | null>;
   derived_hostname_source: ColumnType<string | null, string | null | undefined, string | null>;
   derived_mac_address: ColumnType<string | null, string | null | undefined, string | null>;
   derived_mac_vendor: ColumnType<string | null, string | null | undefined, string | null>;
@@ -791,6 +797,14 @@ export interface TrustedCaCertificatesTable {
   expiry_alert_sent_at: ColumnType<Date | null, string | null | undefined, string | null>;
 }
 
+export interface WebserverStorageSamplesTable {
+  day: ColumnType<Date | string, string, string>;
+  measured_at: ColumnType<Date, string | Date, string | Date>;
+  db_bytes: ColumnType<string | number, number, number>;
+  disk_free_bytes: ColumnType<string | number | null, number | null, number | null>;
+  disk_total_bytes: ColumnType<string | number | null, number | null, number | null>;
+}
+
 export interface MacOuiTable {
   prefix: string;
   vendor: string;
@@ -971,6 +985,10 @@ export interface AppSettingsTable {
   // Retention of scanner host metrics - raw minute samples, and hourly
   // roll-ups. See scannerMetrics/.
   scanner_metrics_raw_days: ColumnType<number, number | undefined, number>;
+  cpu_alert_percent: ColumnType<number, number | undefined, number>;
+  mem_alert_percent: ColumnType<number, number | undefined, number>;
+  disk_low_percent: ColumnType<number, number | undefined, number>;
+  webserver_disk_alert_sent_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
   scanner_metrics_hourly_days: ColumnType<number, number | undefined, number>;
   // Single sign-on (auth/oidc.ts). The client secret is withheld from the
   // settings API like smtp_password.
@@ -1104,6 +1122,7 @@ export interface Database {
   host_comments: HostCommentsTable;
   scan_excludes: ScanExcludesTable;
   mac_oui: MacOuiTable;
+  webserver_storage_samples: WebserverStorageSamplesTable;
   mac_oui_state: MacOuiStateTable;
   trusted_ca_certificates: TrustedCaCertificatesTable;
   finding_triage_rules: FindingTriageRulesTable;

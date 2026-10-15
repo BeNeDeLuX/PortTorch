@@ -128,6 +128,8 @@ integrationsRouter.get("/hosts", asyncHandler(async (req, res) => {
     ])
     .groupBy(["hosts.id", "scanner_agents.name"])
     .orderBy("hosts.last_seen_at", "desc")
+    // Unique tiebreak, so pages never overlap - see search/routes.ts.
+    .orderBy("hosts.id")
     .limit(pageSize)
     .offset((page - 1) * pageSize)
     .execute();
@@ -827,6 +829,8 @@ async function buildEnrichment(hostId: string) {
       "derived_mac_source",
       "windows_build",
       "windows_build_source",
+      "boot_time",
+      "uptime_source",
       "first_seen_at",
       "last_seen_at",
     ])
@@ -898,6 +902,11 @@ async function buildEnrichment(hostId: string) {
       windowsBuild: host.windows_build,
       windowsBuildSource: host.windows_build_source,
     },
+    // When the device last booted, from SNMP - a long uptime usually means
+    // no patch has been applied since. Null without SNMP data.
+    uptime: host.boot_time
+      ? { bootTime: host.boot_time, uptimeDays: Math.floor((Date.now() - new Date(host.boot_time).getTime()) / 86_400_000), source: host.uptime_source }
+      : null,
     mac: { address: host.mac_address, vendor: host.mac_vendor },
     os: {
       name: host.os_name,

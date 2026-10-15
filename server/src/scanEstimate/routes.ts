@@ -1,3 +1,4 @@
+import { sql } from "kysely";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { targetSpecSchema } from "../lib/targetSpec";
@@ -6,7 +7,7 @@ import { requireAuth } from "../auth/middleware";
 import { getAllowedScannerAgentIds } from "../auth/scannerScope";
 import { asyncHandler } from "../lib/asyncHandler";
 import { MAX_SPLIT_SCANNERS, partRate, splitTargetSpec } from "../lib/scanSplit";
-import { DEFAULT_MASSCAN_RATE, estimateScan, type ScanEstimate } from "./estimate";
+import { DEFAULT_MASSCAN_RATE, estimateScan, projectEnrichment, type EnrichmentProjection, type ScanEstimate } from "./estimate";
 import { expandTargetPattern } from "../lib/targetPattern";
 import { udpProbesInScope } from "../lib/udpProbes";
 
@@ -49,6 +50,33 @@ function rateFor(id: string | undefined, override: number | undefined, configure
   if (override) return { rate: override, rateSource: "override" as const };
   const c = id ? configured.get(id) : undefined;
   return c ? { rate: c, rateSource: "scanner" as const } : { rate: DEFAULT_MASSCAN_RATE, rateSource: "default" as const };
+}
+
+// The scanner's completed scans of the last 30 days, newest first, for
+// projectEnrichment. Capped: a projection needs a sample, not every scan.
+async function pastScans(scannerAgentId: string) {
+  const rows = await db
+    .selectFrom("scan_jobs")
+    .select([
+      "target_spec",
+      "port_spec",
+      "started_at",
+      "finished_at",
+      sql<string>`(select count(distinct host_id) from host_port_observations where scan_job_id = scan_jobs.id)`.as("hosts"),
+    ])
+    .where("scanner_agent_id", "=", scannerAgentId)
+    .where("status", "=", "completed")
+    .where("finished_at", "is not", null)
+    .where("started_at", ">=", new Date(Date.now() - 30 * 86_400_000))
+    .orderBy("started_at", "desc")
+    .limit(100)
+    .execute();
+  return rows.map((r) => ({
+    targetSpec: r.target_spec,
+    portSpec: r.port_spec,
+    durationSeconds: (r.finished_at!.getTime() - r.started_at.getTime()) / 1000,
+    hostsScanned: Number(r.hosts),
+  }));
 }
 
 interface ExcludeSummary {
@@ -106,6 +134,7 @@ scanEstimateRouter.post("/", asyncHandler(async (req, res) => {
     expandedFrom?: string;
     udpProbes?: Array<{ port: number; label: string }>;
     excludes?: ExcludeSummary;
+    enrichment?: EnrichmentProjection | null;
   } = estimateScan(targetSpec, parsed.data.portSpec, whole.rate, whole.rateSource);
 
   if (ids.length > 1) {
@@ -130,5 +159,12 @@ scanEstimateRouter.post("/", asyncHandler(async (req, res) => {
   const allowed = getAllowedScannerAgentIds(req);
   const visibleIds = allowed ? ids.filter((id) => allowed.includes(id)) : ids;
   estimate.excludes = await excludeSummary(visibleIds, req.session.role === "admin");
+  // The rest of the scan, from this scanner's own history. For a split
+  // scan, the first scanner's history stands for all - the parts run in
+  // parallel on similar hardware, and the table above already shows how
+  // the addresses divide.
+  if (estimate.addresses !== null && visibleIds.length > 0) {
+    estimate.enrichment = projectEnrichment(await pastScans(visibleIds[0]), estimate.addresses, whole.rate);
+  }
   res.json(estimate);
 }));

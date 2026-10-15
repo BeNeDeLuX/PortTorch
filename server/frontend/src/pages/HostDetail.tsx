@@ -14,6 +14,7 @@ import Lightbox, { LightboxItem } from "../components/Lightbox";
 import HostExportModal from "../components/HostExportModal";
 import RescanModal from "../components/RescanModal";
 import WindowsBuildBadge from "../components/WindowsBuildBadge";
+import { LONG_UPTIME_DAYS, UPTIME_SOURCE_LABEL, uptimeDays, uptimeLabel } from "../lib/uptime";
 import LifecycleBadge from "../components/LifecycleBadge";
 import { IconDownload, IconPlus, IconRefresh, IconSave, IconTrash, IconX } from "../components/icons";
 
@@ -595,6 +596,31 @@ export default function HostDetail({ me, onLogout }: { me: Me; onLogout: () => v
         <p className="host-meta host-windows-build">
           <WindowsBuildBadge build={data.host.windows_build} source={data.host.windows_build_source} />
           <span className="fingerprint">{data.host.windows_build}</span>
+        </p>
+      )}
+      {/* Uptime from SNMP: how long since the device last booted - past
+          LONG_UPTIME_DAYS it has almost certainly missed patches that need
+          a reboot, which is the reason to show it at all. */}
+      {data.host.boot_time && (
+        <p className="host-meta">
+          Up since {formatDateTime(data.host.boot_time, me.preferences)} ·{" "}
+          {(uptimeDays(data.host.boot_time) ?? 0) >= LONG_UPTIME_DAYS ? (
+            <span className="stale-badge" title="Up this long, it has most likely missed patches that need a reboot">
+              {uptimeLabel(data.host.boot_time)}
+            </span>
+          ) : (
+            uptimeLabel(data.host.boot_time)
+          )}{" "}
+          <span className="derived-marker" title={(data.host.uptime_source && UPTIME_SOURCE_LABEL[data.host.uptime_source]) ?? "from SNMP"}>
+            SNMP
+          </span>
+          {data.host.uptime_observed_at && (
+            <span className="host-meta">
+              {" "}
+              · last read {formatDateTime(data.host.uptime_observed_at, me.preferences)} - a reboot since then is only
+              seen on the next scan
+            </span>
+          )}
         </p>
       )}
       <details className="advanced-options">

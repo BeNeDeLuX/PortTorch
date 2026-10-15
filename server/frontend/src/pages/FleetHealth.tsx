@@ -7,6 +7,7 @@ import { certExpiryDaysLeft, certExpiryLabel } from "../lib/certExpiry";
 import { elapsedLabel } from "../lib/elapsed";
 import { formatDateOnly } from "../lib/formatDate";
 import { FAR_BEHIND_MINOR_RELEASES } from "../lib/semver";
+import { formatBytes } from "../lib/units";
 import {
   HealthStatus,
   NUCLEI_TEMPLATES_WARN_DAYS,
@@ -265,6 +266,28 @@ export default function FleetHealth({ me, onLogout }: { me: Me; onLogout: () => 
             </>
           )}
         </HealthCard>
+
+        {health.webserverStorage && (
+          <HealthCard to="/settings" title="Webserver Storage" status={health.webserverStorageStatus}>
+            {health.webserverStorage.diskFreePercent !== null
+              ? `${health.webserverStorage.diskFreePercent.toFixed(0)}% disk free (${formatBytes(health.webserverStorage.diskFreeBytes!)} of ${formatBytes(health.webserverStorage.diskTotalBytes!)})`
+              : "Disk usage could not be read"}
+            <br />
+            Database {formatBytes(health.webserverStorage.dbBytes)}
+            {health.webserverStorage.dbGrowthPerDay !== null &&
+              health.webserverStorage.dbGrowthPerDay > 0 &&
+              `, growing ${formatBytes(health.webserverStorage.dbGrowthPerDay)}/day`}
+            <br />
+            <span className="host-meta">
+              {health.webserverStorage.daysUntilFull !== null
+                ? `Full in about ${Math.round(health.webserverStorage.daysUntilFull)} days at the last two weeks' pace`
+                : health.webserverStorage.history.length < 2
+                  ? "Growth is shown once two days have been measured"
+                  : "Free space is not shrinking"}
+              {` · alerts below ${health.webserverStorage.diskLowPercent}% free`}
+            </span>
+          </HealthCard>
+        )}
 
         <HealthCard to="/scan-history" title="Scanner Activity" status={health.activityStatus}>
           {health.idleAgents.length === 0 ? (

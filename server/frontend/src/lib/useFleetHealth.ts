@@ -12,6 +12,7 @@ import {
   ScannerReleaseInfo,
   TlsCertificateInfo,
   WebserverReleaseStatus,
+  WebserverStorage,
 } from "../api";
 import { certExpiryStatus } from "./certExpiry";
 import { FAR_BEHIND_MINOR_RELEASES, isVersionBehind, minorReleasesBehind } from "./semver";
@@ -46,10 +47,6 @@ export const NUCLEI_TEMPLATES_CRITICAL_DAYS = 90;
 // forgotten or broken - polling happily with nothing scheduled on it, or
 // failing every scan it starts. Display-only heuristic, like the others.
 export const IDLE_SCANNER_DAYS = 7;
-
-// Below this share free, a scanner's disk is "running out" - the same line
-// the server's scanner.disk_low alert uses (scannerMetrics/metrics.ts).
-export const DISK_LOW_PERCENT = 10;
 
 export interface FleetHealthData {
   loading: boolean;
@@ -107,6 +104,9 @@ export interface FleetHealthData {
   metricsSummary: Record<string, ScannerMetricsSummary> | null;
   pressuredAgents: ScannerAgent[];
   diskLowAgents: ScannerAgent[];
+  // Admin-only: the webserver host's own disk and database.
+  webserverStorage: WebserverStorage | null;
+  webserverStorageStatus: HealthStatus;
 }
 
 // Shared by the Fleet Health page itself and the Dashboard's own small
@@ -131,6 +131,7 @@ export function useFleetHealth(me: Me): FleetHealthData {
   const [autoUpdate, setAutoUpdate] = useState<AutoUpdateStatus | null>(null);
   const [backup, setBackup] = useState<BackupSchedule | null>(null);
   const [metricsSummary, setMetricsSummary] = useState<Record<string, ScannerMetricsSummary> | null>(null);
+  const [webserverStorage, setWebserverStorage] = useState<WebserverStorage | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -151,8 +152,10 @@ export function useFleetHealth(me: Me): FleetHealthData {
       api.autoUpdateStatus().catch(() => null),
       me.role === "admin" ? api.backupSchedule().catch(() => null) : Promise.resolve(null),
       api.scannerMetricsSummary().catch(() => null),
+      me.role === "admin" ? api.webserverStorage().catch(() => null) : Promise.resolve(null),
     ])
-      .then(([a, release, ws, threshold, serverRelease, dup, auto, schedule, summary]) => {
+      .then(([a, release, ws, threshold, serverRelease, dup, auto, schedule, summary, storage]) => {
+        setWebserverStorage(storage);
         setMetricsSummary(summary);
         setAutoUpdate(auto);
         setBackup(schedule);
@@ -229,13 +232,9 @@ export function useFleetHealth(me: Me): FleetHealthData {
   // webserver's own alert state (scannerMetrics/metrics.ts), so this card
   // and the webhooks agree about what counts.
   const pressuredAgents = liveAgents.filter((a) => metricsSummary?.[a.id]?.pressure);
-  // The latest sample decides as well as the alert flag: the server checks
-  // every five minutes, and a disk that is nearly full now should not read
-  // "OK" until then. Same 10% line as scannerMetrics/metrics.ts.
-  const diskLowAgents = liveAgents.filter((a) => {
-    const m = metricsSummary?.[a.id];
-    return m?.diskLow || (m?.latest?.diskFreePercent !== null && m?.latest?.diskFreePercent !== undefined && m.latest.diskFreePercent < DISK_LOW_PERCENT);
-  });
+  // diskLow already folds in the latest sample against the admin's
+  // threshold (server-side, scannerMetrics/metrics.ts).
+  const diskLowAgents = liveAgents.filter((a) => metricsSummary?.[a.id]?.diskLow);
   const loadStatus: HealthStatus = diskLowAgents.length > 0 ? "critical" : pressuredAgents.length > 0 ? "warning" : "ok";
 
   const oldestQueuedMs =
@@ -366,7 +365,19 @@ export function useFleetHealth(me: Me): FleetHealthData {
           ? "warning"
           : "ok";
 
+  // Below the admin's disk line is critical - Postgres stops at full. Full
+  // within a month at the recent pace is a warning: time to act, before
+  // the line is crossed.
+  const webserverStorageStatus: HealthStatus = !webserverStorage
+    ? "ok"
+    : webserverStorage.diskLow
+      ? "critical"
+      : webserverStorage.daysUntilFull !== null && webserverStorage.daysUntilFull < 30
+        ? "warning"
+        : "ok";
+
   const overall = worstOf(
+    webserverStorageStatus,
     scannerStatus,
     updatesStatus,
     queueStatus,
@@ -427,5 +438,7 @@ export function useFleetHealth(me: Me): FleetHealthData {
     metricsSummary,
     pressuredAgents,
     diskLowAgents,
+    webserverStorage,
+    webserverStorageStatus,
   };
 }

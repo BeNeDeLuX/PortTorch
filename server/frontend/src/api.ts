@@ -108,6 +108,11 @@ export interface AppSettings {
   unconfirmedPortDays: number;
   scannerMetricsRawDays: number;
   scannerMetricsHourlyDays: number;
+  // Load alert lines: scanner.resource_pressure (CPU/memory), and
+  // scanner.disk_low / webserver.disk_low (percent free).
+  cpuAlertPercent: number;
+  memAlertPercent: number;
+  diskLowPercent: number;
   hostRetentionDays: number;
   staleScanThresholdMinutes: number;
   scanQueueWarningThreshold: number;
@@ -276,6 +281,9 @@ export interface HostSummary {
   // supported is derived on read - see lib/windowsBuilds.ts.
   windows_build: string | null;
   windows_build_source: string | null;
+  // When the device last booted, from SNMP; null without SNMP data.
+  boot_time: string | null;
+  uptime_source: string | null;
   mac_address: string | null;
   mac_vendor: string | null;
   retired_at: string | null;
@@ -404,6 +412,11 @@ export interface HostDetail {
     // is supported is derived on read - see lib/windowsBuilds.ts.
     windows_build: string | null;
     windows_build_source: string | null;
+    // When the device last booted, from SNMP; null without SNMP data.
+    boot_time: string | null;
+    uptime_source: string | null;
+    // When that SNMP reading was taken - the uptime is extrapolated from it.
+    uptime_observed_at: string | null;
     retired_at: string | null;
     scanner_agent_name: string | null;
     // Manual override - see api.setHostProbeHostname. Used by the scanner
@@ -1037,6 +1050,27 @@ export interface ScanEstimate {
   // The excludes the scanner will apply (global plus scanner-scoped);
   // the excluded ports themselves only for an admin.
   excludes?: { ips: number; ipPatterns: number; ipPorts: number; ports: number; portValues?: string[] };
+  // Enrichment projected from this scanner's past scans; null when there
+  // is too little history, absent when the target cannot be counted.
+  enrichment?: { basedOnScans: number; hitRate: number; secondsPerHost: number; expectedHosts: number; enrichmentSeconds: number } | null;
+}
+
+// The webserver host's own disk and database (admin-only).
+export interface WebserverStorage {
+  measuredAt: string;
+  path: string;
+  diskFreeBytes: number | null;
+  diskTotalBytes: number | null;
+  diskFreePercent: number | null;
+  diskLowPercent: number;
+  diskLow: boolean;
+  dbBytes: number;
+  // Average daily loss of free space / growth of the database over the
+  // last two weeks; null with less than two days of history.
+  freeLossPerDay: number | null;
+  dbGrowthPerDay: number | null;
+  daysUntilFull: number | null;
+  history: Array<{ day: string; dbBytes: number; diskFreeBytes: number | null }>;
 }
 
 export interface WebserverReleaseStatus {
@@ -1601,7 +1635,8 @@ export type ScanAnomaly =
       hosts: number;
       totalHosts: number;
     }
-  | { kind: "unconfirmed_discovery"; discovered: number; confirmed: number };
+  | { kind: "unconfirmed_discovery"; discovered: number; confirmed: number }
+  | { kind: "host_saturated"; share: number; samples: number; peakCpu: number; peakMemPercent: number | null };
 
 export interface DuplicateHolder {
   scanner: string;
@@ -2112,6 +2147,7 @@ export const api = {
     request<ScanEstimate>("/api/scan-estimate", { method: "POST", body: JSON.stringify(body) }),
 
   webserverRelease: () => request<WebserverReleaseStatus>("/api/settings/webserver-release"),
+  webserverStorage: () => request<WebserverStorage>("/api/settings/webserver-storage"),
 
   refreshWebserverRelease: () =>
     request<WebserverReleaseStatus>("/api/settings/webserver-release/refresh", { method: "POST" }),

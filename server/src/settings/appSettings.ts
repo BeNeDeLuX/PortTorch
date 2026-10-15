@@ -6,6 +6,11 @@ export interface AppSettings {
   unconfirmedPortDays: number;
   scannerMetricsRawDays: number;
   scannerMetricsHourlyDays: number;
+  // Load alert thresholds (scanner.resource_pressure, scanner.disk_low,
+  // webserver.disk_low) - see scannerMetrics/metrics.ts.
+  cpuAlertPercent: number;
+  memAlertPercent: number;
+  diskLowPercent: number;
   hostRetentionDays: number;
   staleScanThresholdMinutes: number;
   scanQueueWarningThreshold: number;
@@ -103,6 +108,9 @@ export async function getAppSettings(): Promise<AppSettings> {
       "unconfirmed_port_days",
       "scanner_metrics_raw_days",
       "scanner_metrics_hourly_days",
+      "cpu_alert_percent",
+      "mem_alert_percent",
+      "disk_low_percent",
       "host_retention_days",
       "stale_scan_threshold_minutes",
       "scan_queue_warning_threshold",
@@ -143,6 +151,9 @@ export async function getAppSettings(): Promise<AppSettings> {
     unconfirmedPortDays: row.unconfirmed_port_days,
     scannerMetricsRawDays: row.scanner_metrics_raw_days,
     scannerMetricsHourlyDays: row.scanner_metrics_hourly_days,
+    cpuAlertPercent: row.cpu_alert_percent,
+    memAlertPercent: row.mem_alert_percent,
+    diskLowPercent: row.disk_low_percent,
     hostRetentionDays: row.host_retention_days,
     staleScanThresholdMinutes: row.stale_scan_threshold_minutes,
     scanQueueWarningThreshold: row.scan_queue_warning_threshold,
@@ -272,6 +283,18 @@ export async function setScannerMetricsRetention(rawDays: number | undefined, ho
     .set({
       ...(rawDays !== undefined ? { scanner_metrics_raw_days: rawDays } : {}),
       ...(hourlyDays !== undefined ? { scanner_metrics_hourly_days: hourlyDays } : {}),
+    })
+    .where("id", "=", 1)
+    .execute();
+}
+
+export async function setLoadAlertThresholds(t: { cpu?: number; mem?: number; disk?: number }): Promise<void> {
+  await db
+    .updateTable("app_settings")
+    .set({
+      ...(t.cpu !== undefined ? { cpu_alert_percent: t.cpu } : {}),
+      ...(t.mem !== undefined ? { mem_alert_percent: t.mem } : {}),
+      ...(t.disk !== undefined ? { disk_low_percent: t.disk } : {}),
     })
     .where("id", "=", 1)
     .execute();

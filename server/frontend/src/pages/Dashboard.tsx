@@ -39,6 +39,7 @@ import ActiveScanTarget from "../components/ActiveScanTarget";
 import ScanGroupModal from "../components/ScanGroupModal";
 import { elapsedLabel } from "../lib/elapsed";
 import { joinFilterList, parseFilterList } from "../lib/filterList";
+import { LONG_UPTIME_DAYS, UPTIME_SOURCE_LABEL, uptimeDays, uptimeLabel } from "../lib/uptime";
 import { formatDateTime } from "../lib/formatDate";
 import { cveSeverityClass } from "../lib/cveSeverity";
 import { STATUS_LABEL, useFleetHealth } from "../lib/useFleetHealth";
@@ -111,7 +112,7 @@ function filtersFromSearchParams(searchParams: URLSearchParams): HostFilters {
 }
 
 type ViewMode = "grid" | "table";
-type ColumnKey = "hostname" | "open_port_count" | "last_seen_at" | "screenshot" | "device" | "mac" | "scanner" | "risk";
+type ColumnKey = "hostname" | "open_port_count" | "last_seen_at" | "screenshot" | "device" | "mac" | "scanner" | "risk" | "uptime";
 type SortKey = "ip" | ColumnKey;
 type SortDirection = "asc" | "desc";
 
@@ -124,13 +125,21 @@ const TOGGLEABLE_COLUMNS: Array<{ key: ColumnKey; label: string }> = [
   { key: "mac", label: "MAC" },
   { key: "scanner", label: "Scanner" },
   { key: "risk", label: "Risk (CVEs)" },
+  { key: "uptime", label: "Uptime" },
 ];
+
+// The columns that existed before "uptime" was added. Saved preferences
+// from then carry no knownColumns, and without this a column added later
+// would stay hidden for everyone who ever toggled one - the opposite of
+// a new column. Any column not yet known to a browser is switched on.
+const COLUMNS_BEFORE_KNOWN_TRACKING: ColumnKey[] = ["hostname", "open_port_count", "last_seen_at", "screenshot", "device", "mac", "scanner", "risk"];
 
 interface TablePrefs {
   view: ViewMode;
   columns: ColumnKey[];
   sortKey: SortKey;
   sortDirection: SortDirection;
+  knownColumns?: ColumnKey[];
 }
 
 const TABLE_PREFS_KEY = "porttorch.dashboard.tablePrefs";
@@ -146,7 +155,10 @@ function loadTablePrefs(): TablePrefs {
   try {
     const raw = localStorage.getItem(TABLE_PREFS_KEY);
     if (!raw) return DEFAULT_TABLE_PREFS;
-    return { ...DEFAULT_TABLE_PREFS, ...JSON.parse(raw) };
+    const stored = { ...DEFAULT_TABLE_PREFS, ...JSON.parse(raw) } as TablePrefs;
+    const known = stored.knownColumns ?? COLUMNS_BEFORE_KNOWN_TRACKING;
+    const added = TOGGLEABLE_COLUMNS.map((c) => c.key).filter((k) => !known.includes(k));
+    return { ...stored, columns: [...stored.columns, ...added], knownColumns: TOGGLEABLE_COLUMNS.map((c) => c.key) };
   } catch {
     return DEFAULT_TABLE_PREFS;
   }
@@ -216,6 +228,11 @@ function sortHosts(hosts: HostSummary[], sortKey: SortKey, direction: SortDirect
         return sign * (a.mac_address ?? a.derived_mac_address ?? "").localeCompare(b.mac_address ?? b.derived_mac_address ?? "");
       case "scanner":
         return sign * (a.scanner_agent_name ?? "").localeCompare(b.scanner_agent_name ?? "");
+      case "uptime":
+        // Longest-running first when ascending is "oldest boot first";
+        // unknown sorts last either way.
+        if (!a.boot_time || !b.boot_time) return a.boot_time ? -1 : b.boot_time ? 1 : 0;
+        return sign * (new Date(b.boot_time).getTime() - new Date(a.boot_time).getTime());
       case "risk":
         // KEV outranks raw CVE count/severity, same ordering priority as
         // the Vulnerabilities page's own fleet-wide sort.
@@ -310,7 +327,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
   const [, setClockTick] = useState(0);
 
   useEffect(() => {
-    localStorage.setItem(TABLE_PREFS_KEY, JSON.stringify(tablePrefs));
+    localStorage.setItem(TABLE_PREFS_KEY, JSON.stringify({ ...tablePrefs, knownColumns: TOGGLEABLE_COLUMNS.map((c) => c.key) }));
   }, [tablePrefs]);
 
   useEffect(() => {
@@ -911,7 +928,7 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
         }}
       >
         <input
-          placeholder="Search by IP, CIDR range, hostname, service, banner, CVE... - ip:10.20 for addresses only"
+          placeholder="Search by IP, CIDR, hostname, service, banner, page title, OS, tag, CVE... - ip:10.20 for addresses only"
           value={queryInput}
           onChange={(e) => setQueryInput(e.target.value)}
         />
@@ -1298,6 +1315,11 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                     {tablePrefs.columns.includes("scanner") && (
                       <th onClick={() => setSort("scanner")}>Scanner{sortIndicator("scanner")}</th>
                     )}
+                    {tablePrefs.columns.includes("uptime") && (
+                      <th onClick={() => setSort("uptime")} title="How long the device has been up, from SNMP">
+                        Uptime{sortIndicator("uptime")}
+                      </th>
+                    )}
                     {tablePrefs.columns.includes("risk") && (
                       <th onClick={() => setSort("risk")}>Risk{sortIndicator("risk")}</th>
                     )}
@@ -1400,6 +1422,11 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
                           ) : (
                             "-"
                           )}
+                        </td>
+                      )}
+                      {tablePrefs.columns.includes("uptime") && (
+                        <td>
+                          <UptimeCell bootTime={h.boot_time} source={h.uptime_source} />
                         </td>
                       )}
                       {tablePrefs.columns.includes("risk") && <td><RiskBadge host={h} /></td>}
@@ -1550,5 +1577,20 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
         />
       )}
     </div>
+  );
+}
+
+// Uptime in the host table: plain under LONG_UPTIME_DAYS, a warning badge
+// past it - a device up that long has most likely not been patched.
+function UptimeCell({ bootTime, source }: { bootTime: string | null; source: string | null }) {
+  const days = uptimeDays(bootTime);
+  if (days === null) return <span className="host-meta">-</span>;
+  const title = `Up since ${new Date(bootTime!).toLocaleString()}, ${(source && UPTIME_SOURCE_LABEL[source]) ?? "from SNMP"}`;
+  return days >= LONG_UPTIME_DAYS ? (
+    <span className="stale-badge" title={`${title}. Up this long, it has most likely missed patches that need a reboot.`}>
+      {uptimeLabel(bootTime)}
+    </span>
+  ) : (
+    <span title={title}>{uptimeLabel(bootTime)}</span>
   );
 }

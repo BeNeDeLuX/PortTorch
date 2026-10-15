@@ -264,14 +264,15 @@ export async function metricsSeries(scannerAgentId: string, range: MetricsRange,
 // and only with enough samples in that window to call it an average.
 const PRESSURE_WINDOW_MINUTES = 15;
 const PRESSURE_MIN_SAMPLES = 10;
-export const PRESSURE_CPU_PERCENT = 90;
-export const PRESSURE_MEM_PERCENT = 90;
+// The CPU and memory lines are admin settings (app_settings.cpu_alert_percent
+// / mem_alert_percent, default 90), read on every check.
 
 // scanner.resource_pressure - come-and-go, like scanner.offline: it fires
 // once when a scanner's host has run at its limit for a sustained period,
 // and is armed again once the pressure is gone, so the next episode alerts
 // rather than being silenced by this one.
 export async function checkResourcePressure(now = new Date()): Promise<number> {
+  const { cpuAlertPercent: cpuLine, memAlertPercent: memLine } = await getAppSettings();
   const since = new Date(now.getTime() - PRESSURE_WINDOW_MINUTES * 60_000);
   const { rows } = await sql<{ id: string; name: string; sent: Date | null; samples: string; cpu: number | null; mem_pct: number | null }>`
     SELECT sa.id, sa.name, sa.resource_alert_sent_at AS sent, count(m.at) AS samples,
@@ -288,9 +289,9 @@ export async function checkResourcePressure(now = new Date()): Promise<number> {
     const enough = Number(r.samples) >= PRESSURE_MIN_SAMPLES;
     const cpu = r.cpu === null ? 0 : Number(r.cpu);
     const mem = r.mem_pct === null ? 0 : Number(r.mem_pct);
-    const pressured = enough && (cpu >= PRESSURE_CPU_PERCENT || mem >= PRESSURE_MEM_PERCENT);
+    const pressured = enough && (cpu >= cpuLine || mem >= memLine);
     if (pressured && !r.sent) {
-      const what = [cpu >= PRESSURE_CPU_PERCENT ? `CPU ${cpu.toFixed(0)}%` : null, mem >= PRESSURE_MEM_PERCENT ? `memory ${mem.toFixed(0)}%` : null]
+      const what = [cpu >= cpuLine ? `CPU ${cpu.toFixed(0)}%` : null, mem >= memLine ? `memory ${mem.toFixed(0)}%` : null]
         .filter(Boolean)
         .join(" and ");
       await dispatchWebhook(
@@ -311,15 +312,16 @@ export async function checkResourcePressure(now = new Date()): Promise<number> {
 }
 
 // scanner.disk_low - when the fullest filesystem the scanner writes to has
-// less than DISK_LOW_PERCENT free. A single sample is enough, unlike CPU:
+// less than app_settings.disk_low_percent free (default 10). A single sample is enough, unlike CPU:
 // free space does not spike, it runs out. Re-armed only once it is back
-// above DISK_CLEAR_PERCENT, so a disk hovering at the line alerts once
-// rather than every five minutes. Read from the latest sample, and only a
-// recent one - a scanner that stopped reporting is scanner.offline's.
-export const DISK_LOW_PERCENT = 10;
-const DISK_CLEAR_PERCENT = 15;
+// five points above it, so a disk hovering at the line alerts once rather
+// than every five minutes. Read from the latest sample, and only a recent
+// one - a scanner that stopped reporting is scanner.offline's.
+export const DISK_CLEAR_MARGIN = 5;
 
 export async function checkDiskLow(now = new Date()): Promise<number> {
+  const { diskLowPercent: diskLine } = await getAppSettings();
+  const diskClear = diskLine + DISK_CLEAR_MARGIN;
   const since = new Date(now.getTime() - 15 * 60_000);
   const { rows } = await sql<{ id: string; name: string; sent: Date | null; free: string; total: string }>`
     SELECT DISTINCT ON (sa.id) sa.id, sa.name, sa.disk_alert_sent_at AS sent, m.disk_free_bytes AS free, m.disk_total_bytes AS total
@@ -331,7 +333,7 @@ export async function checkDiskLow(now = new Date()): Promise<number> {
   let fired = 0;
   for (const r of rows) {
     const pct = (100 * Number(r.free)) / Number(r.total);
-    if (pct < DISK_LOW_PERCENT && !r.sent) {
+    if (pct < diskLine && !r.sent) {
       await dispatchWebhook(
         "scanner.disk_low",
         `Scanner "${r.name}" has ${pct.toFixed(1)}% disk space left (${(Number(r.free) / 1024 ** 3).toFixed(1)} GB). Screenshots and queued results are staged there, and scans start failing once it is full.`,
@@ -340,7 +342,7 @@ export async function checkDiskLow(now = new Date()): Promise<number> {
       );
       await db.updateTable("scanner_agents").set({ disk_alert_sent_at: now }).where("id", "=", r.id).execute();
       fired++;
-    } else if (pct >= DISK_CLEAR_PERCENT && r.sent) {
+    } else if (pct >= diskClear && r.sent) {
       await db.updateTable("scanner_agents").set({ disk_alert_sent_at: null }).where("id", "=", r.id).execute();
     }
   }
@@ -369,6 +371,7 @@ export interface MetricsSummary {
 
 export async function metricsSummary(allowed: string[] | null, now = new Date()): Promise<Record<string, MetricsSummary>> {
   const since = new Date(now.getTime() - 24 * 3600_000);
+  const { diskLowPercent } = await getAppSettings();
   const scope = allowed ? sql`AND scanner_agent_id = ANY(${allowed}::uuid[])` : sql``;
   const [latestRows, sparkRows, flags] = await Promise.all([
     sql<{ scanner_agent_id: string; at: Date; cpu_percent: number; mem_used_bytes: string; mem_total_bytes: string; net_rx_bps: number; net_tx_bps: number; disk_free_bytes: string | null; disk_total_bytes: string | null }>`
@@ -408,6 +411,12 @@ export async function metricsSummary(allowed: string[] | null, now = new Date())
     const e = entry(f.id);
     e.pressure = f.resource_alert_sent_at !== null;
     e.diskLow = f.disk_alert_sent_at !== null;
+  }
+  // The latest sample decides as well as the alert flag: the check runs
+  // every five minutes, and a disk that is nearly full now should not read
+  // as fine until then.
+  for (const e of Object.values(out)) {
+    if (e.latest?.diskFreePercent !== null && e.latest?.diskFreePercent !== undefined && e.latest.diskFreePercent < diskLowPercent) e.diskLow = true;
   }
   return out;
 }

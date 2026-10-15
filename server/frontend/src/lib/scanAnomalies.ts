@@ -18,6 +18,14 @@ export function describeScanAnomaly(anomaly: ScanAnomaly): string {
       `${anomaly.hosts} separate hosts.`
     );
   }
+  if (anomaly.kind === "host_saturated") {
+    return (
+      `The scanner's host was at its CPU or memory limit for ${Math.round(anomaly.share * 100)}% of this scan ` +
+      `(peak CPU ${anomaly.peakCpu}%${anomaly.peakMemPercent !== null ? `, memory ${anomaly.peakMemPercent}%` : ""}). ` +
+      `An overloaded host drops replies it never gets to read, so ports can be missing from the results - lower ` +
+      `the scan rate or the number of scans it runs at once.`
+    );
+  }
   return (
     `Discovery found ${anomaly.discovered} hosts; only ${anomaly.confirmed} could be confirmed to have an open port. ` +
     `The other ${anomaly.discovered - anomaly.confirmed} answered the discovery probe and nothing else.`
@@ -25,5 +33,9 @@ export function describeScanAnomaly(anomaly: ScanAnomaly): string {
 }
 
 export function anomalyLabel(anomaly: ScanAnomaly): string {
-  return anomaly.kind === "dominant_service" ? "one service everywhere" : "mostly unconfirmed";
+  return anomaly.kind === "dominant_service"
+    ? "one service everywhere"
+    : anomaly.kind === "host_saturated"
+      ? "scanner overloaded"
+      : "mostly unconfirmed";
 }

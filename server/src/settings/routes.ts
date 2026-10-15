@@ -1,3 +1,4 @@
+import { storageStatus } from "../webserverStorage/storage";
 import { Router } from "express";
 import fs from "fs";
 import path from "path";
@@ -20,6 +21,7 @@ import {
   setScannerAutoUpdate,
   setUnconfirmedPortDays,
   setScannerMetricsRetention,
+  setLoadAlertThresholds,
   setDigestEmailHourUtc,
   setEpssAlertThreshold,
   setQueueBacklogThresholdMinutes,
@@ -155,6 +157,9 @@ const appSettingsSchema = z.object({
   unconfirmedPortDays: z.number().int().min(1).max(3650).optional(),
   scannerMetricsRawDays: z.number().int().min(1).max(90).optional(),
   scannerMetricsHourlyDays: z.number().int().min(7).max(1825).optional(),
+  cpuAlertPercent: z.number().int().min(50).max(100).optional(),
+  memAlertPercent: z.number().int().min(50).max(100).optional(),
+  diskLowPercent: z.number().int().min(1).max(50).optional(),
   hostRetentionDays: z.number().int().min(0).optional(),
   staleScanThresholdMinutes: z.number().int().min(1).optional(),
   scanQueueWarningThreshold: z.number().int().min(1).optional(),
@@ -275,6 +280,13 @@ settingsRouter.patch("/app", asyncHandler(async (req, res) => {
       raw_days: parsed.data.scannerMetricsRawDays,
       hourly_days: parsed.data.scannerMetricsHourlyDays,
     });
+  }
+
+  if (parsed.data.cpuAlertPercent !== undefined || parsed.data.memAlertPercent !== undefined || parsed.data.diskLowPercent !== undefined) {
+    const thresholds = { cpu: parsed.data.cpuAlertPercent, mem: parsed.data.memAlertPercent, disk: parsed.data.diskLowPercent };
+    await setLoadAlertThresholds(thresholds);
+    logger.info({ event: "settings.load_alert_thresholds_updated", ...thresholds, updated_by: req.session.username, source_ip: req.ip });
+    recordAudit("settings.load_alert_thresholds_updated", req.session.username, req.ip, thresholds);
   }
 
   if ("unconfirmedPortDays" in req.body && parsed.data.unconfirmedPortDays !== undefined) {
@@ -730,6 +742,12 @@ settingsRouter.delete("/ca-certificates/:id", asyncHandler(async (req, res) => {
 // dashboard action. Unlike the scanner, the webserver cannot update
 // itself - it runs in the container it would have to replace - so this
 // reports and links, it never offers a button.
+// The webserver's own disk and database growth, for Fleet Health. Admin
+// like the rest of this router: it describes the host, not the fleet.
+settingsRouter.get("/webserver-storage", asyncHandler(async (_req, res) => {
+  res.json(await storageStatus());
+}));
+
 settingsRouter.get("/webserver-release", asyncHandler(async (_req, res) => {
   res.json(await getWebserverReleaseStatus());
 }));

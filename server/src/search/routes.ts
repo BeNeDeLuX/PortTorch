@@ -294,6 +294,16 @@ export function applyHostFilters(
         eb("hosts.mac_vendor", "ilike", `%${q}%`),
         eb("hosts.derived_mac_vendor", "ilike", `%${q}%`),
         eb("hosts.mac_address", "ilike", `%${q}%`),
+        // What the host is and calls itself - the fields the screenshot
+        // gallery's keyword search always matched and this one did not,
+        // so the same word found a host there and nothing here.
+        eb("hosts.derived_hostname", "ilike", `%${q}%`),
+        eb("hosts.os_name", "ilike", `%${q}%`),
+        eb("hosts.os_family", "ilike", `%${q}%`),
+        eb("hosts.device_type", "ilike", `%${q}%`),
+        eb.exists(
+          eb.selectFrom("host_tags as ht").select("ht.host_id").whereRef("ht.host_id", "=", "hosts.id").where("ht.tag", "ilike", `%${q}%`)
+        ),
         eb.exists(
           eb
             .selectFrom("current_host_ports as chp")
@@ -304,6 +314,8 @@ export function applyHostFilters(
               eb2.or([
                 eb2("chp.service_name", "ilike", `%${q}%`),
                 eb2("chp.service_product", "ilike", `%${q}%`),
+                eb2("chp.service_version", "ilike", `%${q}%`),
+                eb2("chp.extra_info", "ilike", `%${q}%`),
                 eb2("chp.banner", "ilike", `%${q}%`),
                 // Catches a filename in an anonymous FTP listing or an SMB
                 // share name (see scanner's "ftp-anon"/"smb-enum-shares"
@@ -329,8 +341,24 @@ export function applyHostFilters(
         // (pipeline/ocr.go, Tesseract) - catches page/login content that
         // never appears in a banner or HTTP header, e.g. text baked into
         // a background image or an RDP login screen.
+        // And what a web interface says about itself: its title and URL,
+        // the technologies gowitness fingerprinted, and its response
+        // headers (a "Server: Cisco-IP-Phone" header identifies a device
+        // nothing else here names).
         eb.exists(
-          eb.selectFrom("screenshots as s").select("s.id").whereRef("s.host_id", "=", "hosts.id").where("s.ocr_text", "ilike", `%${q}%`)
+          eb
+            .selectFrom("screenshots as s")
+            .select("s.id")
+            .whereRef("s.host_id", "=", "hosts.id")
+            .where((eb2: any) =>
+              eb2.or([
+                eb2("s.ocr_text", "ilike", `%${q}%`),
+                eb2("s.page_title", "ilike", `%${q}%`),
+                eb2("s.url", "ilike", `%${q}%`),
+                sql<boolean>`array_to_string(s.technologies, ' ') ilike ${`%${q}%`}`,
+                sql<boolean>`s.headers::text ilike ${`%${q}%`}`,
+              ])
+            )
         ),
         eb.exists(
           eb
@@ -621,6 +649,8 @@ hostsRouter.get("/", asyncHandler(async (req, res) => {
       "hosts.derived_mac_source as derived_mac_source",
       "hosts.windows_build as windows_build",
       "hosts.windows_build_source as windows_build_source",
+      "hosts.boot_time as boot_time",
+      "hosts.uptime_source as uptime_source",
       "hosts.retired_at as retired_at",
       // A host's identity is (ip, scanner_agent_id), not ip alone - two
       // different scanners (different networks) can each have a real
@@ -719,10 +749,16 @@ hostsRouter.get("/", asyncHandler(async (req, res) => {
       "hosts.derived_mac_source",
       "hosts.windows_build",
       "hosts.windows_build_source",
+      "hosts.boot_time",
+      "hosts.uptime_source",
       "hosts.scanner_agent_id",
       "scanner_agents.name",
     ])
-    .orderBy("hosts.last_seen_at", "desc");
+    .orderBy("hosts.last_seen_at", "desc")
+    // A unique tiebreak: hosts submitted together share a last_seen_at,
+    // and without one Postgres may order a tie differently from one page
+    // to the next - the same host on page 1 and page 2, another on none.
+    .orderBy("hosts.id");
 
   query = applyHostFilters(query, filters, allowed);
 
@@ -875,7 +911,11 @@ hostsRouter.get("/export.csv", asyncHandler(async (req, res) => {
       "hosts.derived_mac_source",
       "scanner_agents.name",
     ])
-    .orderBy("hosts.last_seen_at", "desc");
+    .orderBy("hosts.last_seen_at", "desc")
+    // A unique tiebreak: hosts submitted together share a last_seen_at,
+    // and without one Postgres may order a tie differently from one page
+    // to the next - the same host on page 1 and page 2, another on none.
+    .orderBy("hosts.id");
 
   query = applyHostFilters(query, filters, allowed);
 
@@ -938,9 +978,15 @@ hostsRouter.get("/export.json", asyncHandler(async (req, res) => {
       "hosts.derived_mac_source as derived_mac_source",
       "hosts.windows_build as windows_build",
       "hosts.windows_build_source as windows_build_source",
+      "hosts.boot_time as boot_time",
+      "hosts.uptime_source as uptime_source",
       "scanner_agents.name as scanner_agent_name",
     ])
-    .orderBy("hosts.last_seen_at", "desc");
+    .orderBy("hosts.last_seen_at", "desc")
+    // A unique tiebreak: hosts submitted together share a last_seen_at,
+    // and without one Postgres may order a tie differently from one page
+    // to the next - the same host on page 1 and page 2, another on none.
+    .orderBy("hosts.id");
 
   hostsQuery = applyHostFilters(hostsQuery, filters, allowed);
 

@@ -8,6 +8,10 @@ COPY . .
 RUN npm run build
 
 FROM node:26-alpine AS runtime
+# The same value the release workflow sets, so a locally built image is
+# recognisable too - scripts/update-webserver.sh only ever removes old
+# images carrying this label.
+LABEL org.opencontainers.image.source="https://github.com/BeNeDeLuX/PortTorch"
 WORKDIR /app
 # pg_dump/psql for the dashboard's backup and restore actions (see
 # src/backup/). Pinned to the same major version as the postgres:16-alpine

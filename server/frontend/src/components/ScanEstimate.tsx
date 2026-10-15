@@ -124,11 +124,26 @@ function EstimateResult({ estimate, agents, choices }: { estimate: Estimate; age
       <ScanPreview estimate={estimate} choices={choices} />
       {estimate.splitError && <p className="callout-warning">{estimate.splitError}</p>}
       {estimate.parts && estimate.parts.length > 1 && <SplitEstimate estimate={estimate} agents={agents} />}
-      <p className="empty">
-        That is masscan's discovery pass only. What follows it - nmap service detection, screenshots, nuclei - depends
-        entirely on how many open ports are actually found, so it cannot be estimated up front. A scan that finds a lot
-        will take meaningfully longer than this.
-      </p>
+      {estimate.enrichment ? (
+        <p>
+          After discovery, going by this scanner's last {estimate.enrichment.basedOnScans} scans (
+          {(estimate.enrichment.hitRate * 100).toFixed(1)}% of addresses turned out to be hosts, about{" "}
+          {Math.round(estimate.enrichment.secondsPerHost)} s each): expect around{" "}
+          <strong>{Math.round(estimate.enrichment.expectedHosts).toLocaleString()} hosts</strong> and{" "}
+          <strong>{formatDuration(estimate.enrichment.enrichmentSeconds)}</strong> more, so roughly{" "}
+          <strong>{formatDuration((estimate.masscanSeconds ?? 0) + estimate.enrichment.enrichmentSeconds)}</strong> in all.{" "}
+          <span className="empty">
+            A projection, not a promise: a range of servers and a range of printers are found at very different rates,
+            and nuclei makes every host slower.
+          </span>
+        </p>
+      ) : (
+        <p className="empty">
+          That is masscan's discovery pass only. What follows it - nmap service detection, screenshots, nuclei - depends
+          on how many hosts are found, and this scanner has too few completed scans in the last 30 days to project that
+          from.
+        </p>
+      )}
     </div>
   );
 }

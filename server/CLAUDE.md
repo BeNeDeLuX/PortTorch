@@ -208,6 +208,10 @@ The scanner reports its own version on every ingest request (`X-Scanner-Version`
 
 The Scanner Agents page groups agents into three sections — **Scanning** (has a row in `/api/scan-jobs/active`), **Idle** (neither scanning nor revoked), **Revoked** — computed client-side from the same `GET /api/agents`/`/api/scan-jobs/active` data the page already fetched, rather than a new endpoint. A scanning agent's Revoke button is hidden (not just disabled) - revoking mid-scan would leave it authenticated but permanently unable to report that job's outcome, so the scan has to be stopped first via the existing Stop button; idle agents keep Revoke unchanged.
 
+### The free-text search covers what the screenshot gallery covers
+
+The Dashboard's `q` (shared `applyHostFilters`, so saved searches and the External API too) and the gallery's keyword search grew up separately, and a word found a host in the gallery and nothing on the Dashboard. The gallery matched page titles, URLs, gowitness technologies, response headers, OS and device type, the self-reported hostname, service versions and tags, none of which `q` looked at. `q` now matches all of them as well, still as a case-insensitive substring. It deliberately does **not** take over the gallery's punctuation-blind matching (`ipphone` = "IP Phone"): `q` also searches addresses, versions and CVE ids, where dropping dots and hyphens would make `10.2` match `1.0.2`. Screenshot fields match any capture of the host, not only the newest, the same as the OCR text always did. Saved searches can therefore match more than before, which can fire `saved_search.match` for hosts that should always have matched. Pinned by `searchFields.integration.test.ts`, one host per field, which fails for all ten fields against the previous query.
+
 ### Filters can be negated with a leading minus
 
 `?port=53` narrows to hosts with 53 open; `?port=-53` excludes them, and `?port=80,-53` does both at once. Same for `service` and `tag`. One parameter carries both directions rather than a second `excludePort=` parameter, so a filter reads identically in the address bar, in a saved search and in the External API - and an API caller doesn't have to discover that a second parameter name exists. `splitNegated` (`search/routes.ts`) does the split; nothing else here can legitimately begin with `-` (ports are unsigned, services are nmap service names, tags are validated on creation), and a bare `-` is dropped rather than becoming an empty exclusion.
@@ -1119,6 +1123,37 @@ Filters, facets and Scan Stats read the manufacturer as `coalesce(mac_vendor, de
 Since scanner 0.30.2 the fixed UDP probes (DNS recursion, SNMP, IPMI, UPnP) only run when their port is in the spec, which silently changed what every narrow schedule collects. `lib/udpProbes.ts` (frontend and server copies of the scanner's `fixedUDPProbeInScope`, held to the same test cases) drives three places that say so: the port hint under both scan forms ("Also runs the UDP probes for SNMP (161)" / "No UDP probes"), a line under each schedule's ports, and a notice naming the active schedules that run none - dismissible per browser, coming back when that set changes.
 
 `POST /api/scan-estimate` also reports the UDP probes and a summary of the excludes the scanner will apply (global plus scanner-scoped, the union `/api/ingest/excludes` serves; the excluded port values only for an admin, and only for scanners the session may see), and the Ad-hoc form adds its NSE and nuclei choices - the same questions the scanner's `--dry-run` answers on the host.
+
+### Device uptime, and noticing a reboot
+
+How long a device has been up is the cheapest hint that it has not been patched - firmware, kernel and most OS updates need a reboot - and every scan that runs the SNMP probe already reads it. `lib/snmpUptime.ts` takes it from two places, in this order:
+
+- **snmp-info's SNMPv3 engine time and boot counter** (`snmpEngineTime: 73d00h10m33s`, `snmpEngineBoots: 2`). The time never wraps, and the counter makes a reboot a fact. An agent answering `0s` / boots `0` has an unconfigured engine - real devices do this - and is read as unknown, never as "just booted".
+- **snmp-sysdescr's sysUpTime**, read from the exact tick count, for SNMPv1/v2c-only devices. It is a 32-bit counter of hundredths of a second and **wraps every 497.1 days** - on exactly the devices this exists to find.
+
+`hosts.boot_time` (migration `1748400000000`) stores when the device last booted, not an uptime, because a boot time stays true between scans; the dashboard computes "up N days" at display time and says when the reading was taken. It is derived on ingest from the scripts in the payload, so every scanner version that runs the SNMP probe contributes - no scanner change. The migration fills it once from the SNMP output already stored (on the live deployment: 10 of 10 hosts, 8 from the engine time). Its regular expressions are a copy of the TypeScript ones, and the first version of that copy was double-escaped and matched nothing; a dry run of the migration against the real rows caught it before deploy.
+
+**`device.rebooted`** fires when the boot counter goes up, or - without one - when the boot time moves later by more than 30 minutes (probe timing jitters by seconds, not that). A sysUpTime reading that is exactly the old uptime modulo the 497-day wrap is the counter wrapping, not a reboot, and keeps the stored boot time; anything else is a real reboot, including on a device that was up past the wrap. The engine time strictly counts since the SNMP engine last initialised, which is a reboot or, rarely, an SNMP reconfiguration; the UI says so.
+
+Shown on Host Detail ("Up since …, last read …"), as an optional Uptime column in the host table (a warning badge past 180 days, `lib/uptime.ts`'s `LONG_UPTIME_DAYS`), and in the External API's enrichment record. The table remembers which columns a browser has seen (`knownColumns`), so a column added later is switched on rather than staying hidden for everyone who ever toggled one.
+
+### The webserver's own disk
+
+Scanners report their disk with every metrics sample; the host holding the database, screenshots and backups said nothing, and a full disk was first noticed when Postgres stopped. `webserverStorage/storage.ts` measures the filesystem of the screenshot directory (with the shipped compose file, the same Docker volume filesystem the database lives on) plus `pg_database_size`, every 15 minutes, keeping one row per day in `webserver_storage_samples` (migration `1748300000000`). Fleet Health's admin-only Webserver Storage card shows free space, database size and growth, and "full in about N days" from the last two weeks' loss of free space - only a loss counts, a disk that is not filling has no date. Critical below the disk line, warning when full within 30 days. `webserver.disk_low` alerts once below the line and re-arms five points above it. A screenshot directory that does not exist yet is measured at its nearest existing parent; the integration test found the "no measurement at all" case in a container without `/data`.
+
+### Load alert thresholds, and scans run on an overloaded host
+
+The CPU and memory lines for `scanner.resource_pressure` and the free-disk line for `scanner.disk_low`/`webserver.disk_low` are admin settings now (`app_settings.cpu_alert_percent`/`mem_alert_percent`/`disk_low_percent`, defaults 90/90/10 - the old constants, so nothing changes on upgrade), on the Scanner Metrics & Load Alerts card. Each check reads them fresh; `metrics-summary` folds the latest disk sample against the line server-side, so Fleet Health and the alert cannot disagree.
+
+**`host_saturated`** joins the scan anomalies (`scanJobs/anomalies.ts`): half or more of the minute samples during a completed scan at or above either line, with at least five samples. masscan drops replies an overloaded host never reads, so such a scan is probably incomplete with nothing in its results saying so. Shown as "scanner overloaded" in Scan History with the advice to lower the rate or concurrent scans.
+
+### Estimating the whole scan, not just discovery
+
+`projectEnrichment` (`scanEstimate/estimate.ts`) projects what follows discovery from the chosen scanner's own completed scans of the last 30 days: each says how many addresses it covered, how many hosts it confirmed and how long it took, and taking its estimated masscan pass off the duration leaves the cost per confirmed host. Pooled into a hit rate and seconds per host, that gives expected hosts and enrichment time, shown with how many scans it rests on and the caveat that a range of servers and a range of printers hit at very different rates. No projection below three usable scans.
+
+### One click to put SNMP back on a schedule
+
+The notice naming schedules without UDP probes carries a "+ 161" per schedule (admin), which appends 161 to that schedule's port spec through the ordinary `PATCH /api/schedules/:id` and leaves everything else as it was.
 
 ### SSH host keys, fleet-wide
 

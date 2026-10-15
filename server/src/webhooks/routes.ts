@@ -39,6 +39,8 @@ const EVENTS: WebhookEvent[] = [
   "backup.failed",
   "scanner.resource_pressure",
   "scanner.disk_low",
+  "webserver.disk_low",
+  "device.rebooted",
 ];
 const uuidSchema = z.string().uuid();
 const WEBHOOK_COLUMNS = [

@@ -546,6 +546,22 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
   // noticed rather than discovered months later as a gap.
   const withoutUdpProbes = activeSchedules.filter((s) => udpProbesInScope(s.port_spec).length === 0);
   const udpNoticeKey = withoutUdpProbes.map((s) => s.id).sort().join(",");
+  const [addingSnmp, setAddingSnmp] = useState<string | null>(null);
+
+  // One click instead of opening each schedule's edit form: appends 161 to
+  // the spec as it is, so everything else about the schedule stays put.
+  async function addSnmpPort(schedule: Schedule) {
+    setAddingSnmp(schedule.id);
+    setFormError(null);
+    try {
+      await api.updateSchedule(schedule.id, { portSpec: `${schedule.port_spec},161` });
+      await load();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Could not update the schedule");
+    } finally {
+      setAddingSnmp(null);
+    }
+  }
   const [udpNoticeDismissed, setUdpNoticeDismissed] = useState<string | null>(() => {
     try {
       return localStorage.getItem(UDP_NOTICE_STORAGE_KEY);
@@ -948,6 +964,20 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
                   <span key={s.id}>
                     {i > 0 && ", "}
                     <code>{s.target_spec}</code> ({s.port_spec})
+                    {isAdmin && (
+                      <>
+                        {" "}
+                        <button
+                          type="button"
+                          className="link-button"
+                          disabled={addingSnmp !== null}
+                          title="Add 161 to this schedule's ports, so its next run includes the SNMP probe"
+                          onClick={() => addSnmpPort(s)}
+                        >
+                          {addingSnmp === s.id ? "adding..." : "+ 161"}
+                        </button>
+                      </>
+                    )}
                   </span>
                 ))}
                 . Since scanner 0.30.2, SNMP (161), IPMI (623), DNS recursion (53) and UPnP (1900) only run when their

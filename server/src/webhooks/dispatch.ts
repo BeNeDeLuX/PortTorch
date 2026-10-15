@@ -75,7 +75,9 @@ export type WebhookEvent =
   | "port_policy.violation"
   | "backup.failed"
   | "scanner.resource_pressure"
-  | "scanner.disk_low";
+  | "scanner.disk_low"
+  | "webserver.disk_low"
+  | "device.rebooted";
 
 // Plain-English subject line for an email channel - a webhook channel has
 // no equivalent need, since "event"/"data" already ride along in the JSON
@@ -106,6 +108,8 @@ const EVENT_SUBJECTS: Record<WebhookEvent, string> = {
   "backup.failed": "Scheduled backup failed",
   "scanner.resource_pressure": "Scanner host running at its limits",
   "scanner.disk_low": "Scanner host running out of disk space",
+  "webserver.disk_low": "PortTorch webserver running out of disk space",
+  "device.rebooted": "Device rebooted",
 };
 
 // A Teams "Workflows" webhook (the current replacement for the classic,

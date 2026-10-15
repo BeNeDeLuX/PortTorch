@@ -13,6 +13,7 @@ import { metricsBatchSchema, storeSamples } from "../scannerMetrics/metrics";
 import { logger } from "../logger";
 import { dispatchWebhook } from "../webhooks/dispatch";
 import { fillMacVendors } from "../macOui/sync";
+import { reconcileUptime, uptimeFromScripts } from "../lib/snmpUptime";
 import { zIp } from "../lib/zodIp";
 import { singleParam } from "../lib/reqParams";
 import { deriveServiceTags } from "../lib/serviceTags";
@@ -793,6 +794,7 @@ export async function ingestHostPayload(
   // can be given the host's tags - looked up once after the transaction
   // commits rather than per event.
   const hostNewEvents: Array<{ hostId: string; ip: string; hostname: string | null }> = [];
+  const rebootEvents: Array<{ hostId: string; ip: string; hostname: string | null; bootTime: Date; previousBootTime: Date; source: string }> = [];
   const portOpenedEvents: Array<{ hostId: string; ip: string; hostname: string | null; port: number; serviceName: string | null }> = [];
   const nucleiFindingEvents: Array<{ hostId: string; ip: string; hostname: string | null; templateId: string; name: string; severity: string }> = [];
   const autoTagEvents: Array<{ hostId: string; ip: string; tag: string }> = [];
@@ -930,6 +932,28 @@ export async function ingestHostPayload(
         // and an ON CONFLICT-triggered update apart in the same statement.
         .returning(["id", sql<boolean>`(xmax = 0)`.as("inserted")])
         .executeTakeFirstOrThrow();
+
+      // Uptime from the SNMP probe's output, when this scan has one. Read
+      // here rather than by the scanner, so every scanner version that
+      // runs the SNMP probe contributes, old ones included.
+      const uptime = uptimeFromScripts(host.ports.flatMap((p) => p.extraScripts ?? []));
+      if (uptime) {
+        const prev = await trx
+          .selectFrom("hosts")
+          .select(["boot_time", "uptime_source", "snmp_engine_boots"])
+          .where("id", "=", upserted.id)
+          .executeTakeFirstOrThrow();
+        const observedAt = new Date();
+        const next = reconcileUptime({ bootTime: prev.boot_time, source: prev.uptime_source, engineBoots: prev.snmp_engine_boots }, uptime, observedAt);
+        await trx
+          .updateTable("hosts")
+          .set({ boot_time: next.bootTime, uptime_source: next.source, uptime_observed_at: observedAt, snmp_engine_boots: next.engineBoots })
+          .where("id", "=", upserted.id)
+          .execute();
+        if (next.rebooted && prev.boot_time) {
+          rebootEvents.push({ hostId: upserted.id, ip: host.ip, hostname: host.hostname ?? null, bootTime: next.bootTime, previousBootTime: prev.boot_time, source: next.source });
+        }
+      }
 
       if (upserted.inserted) {
         hostNewEvents.push({ hostId: upserted.id, ip: host.ip, hostname: host.hostname ?? null });
@@ -1184,6 +1208,7 @@ export async function ingestHostPayload(
       ...portOpenedEvents.map((e) => e.hostId),
       ...portClosedEvents.map((e) => e.hostId),
       ...nucleiFindingEvents.map((e) => e.hostId),
+      ...rebootEvents.map((e) => e.hostId),
     ]),
   ];
   const tagRows = alertHostIds.length
@@ -1230,6 +1255,16 @@ export async function ingestHostPayload(
       { ip: e.ip, hostname: e.hostname, template_id: e.templateId, name: e.name, severity: e.severity },
       alertContext(e.hostId, e.severity)
     );
+  }
+  for (const e of rebootEvents) {
+    const days = Math.round((e.bootTime.getTime() - e.previousBootTime.getTime()) / 86_400_000);
+    dispatchWebhook(
+      "device.rebooted",
+      `${e.hostname || e.ip} rebooted around ${e.bootTime.toISOString()} (previous boot ${days} day${days === 1 ? "" : "s"} before that)`,
+      { ip: e.ip, hostname: e.hostname, boot_time: e.bootTime.toISOString(), previous_boot_time: e.previousBootTime.toISOString(), source: e.source },
+      alertContext(e.hostId)
+    );
+    logger.info({ event: "host.rebooted", host_id: e.hostId, ip: e.ip, boot_time: e.bootTime.toISOString(), previous_boot_time: e.previousBootTime.toISOString() });
   }
   for (const e of autoTagEvents) {
     logger.info({ event: "host.tag_added", host_id: e.hostId, tag: e.tag, added_by: "auto-tag" });
