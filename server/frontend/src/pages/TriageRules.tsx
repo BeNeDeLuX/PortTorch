@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, FindingTriageRule, Me, TRIAGE_LABEL, TriageState } from "../api";
+import SearchInput from "../components/SearchInput";
 import { IconPlus, IconTrash } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { formatDateTime } from "../lib/formatDate";
@@ -150,7 +151,7 @@ export default function TriageRules({ me, onLogout }: { me: Me; onLogout: () => 
 
       {rules.length > 0 && (
         <form className="search-bar" onSubmit={(e) => e.preventDefault()}>
-          <input
+          <SearchInput
             placeholder="Search by CVE, template, note, or who set it..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}

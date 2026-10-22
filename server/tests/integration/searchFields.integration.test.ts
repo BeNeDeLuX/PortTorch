@@ -82,6 +82,24 @@ describe("dashboard free-text search covers what the gallery searches", () => {
     await closeDb();
   });
 
+  // A header typed the way it is written, "Name: value", matches that
+  // header only - not another host with the same name and another value.
+  it("finds a header as Name: value", async () => {
+    const extra = async (ip: string, headers: Record<string, string>) => {
+      const host = await db.insertInto("hosts").values({ ip, scanner_agent_id: agent.id } as never).returning("id").executeTakeFirstOrThrow();
+      await db.insertInto("host_port_observations").values({ host_id: host.id, scan_job_id: jobId, port: 80, protocol: "tcp", state: "open", service_name: "http" } as never).execute();
+      await db.insertInto("screenshots").values({ host_id: host.id, scan_job_id: jobId, port: 80, url: `http://${ip}/`, image_path: "none.png", headers: JSON.stringify(headers) } as never).execute();
+    };
+    await extra("192.0.2.40", { "X-Powered-By": "PHP/8.3.33", Server: "Apache" });
+    await extra("192.0.2.41", { "X-Powered-By": "Express" });
+    const ips = async (q: string) =>
+      (await client.get(`/api/hosts?q=${encodeURIComponent(q)}&scannerAgentId=${agent.id}`)).body.items.map((h: { ip: string }) => h.ip).sort();
+    expect(await ips("X-Powered-By: PHP")).toEqual(["192.0.2.40"]);
+    expect(await ips("x-powered-by: express")).toEqual(["192.0.2.41"]);
+    expect(await ips("Server: Apache")).toEqual(["192.0.2.40"]);
+    expect(await ips("X-Powered-By")).toEqual(["192.0.2.40", "192.0.2.41"]);
+  });
+
   it.each(["title", "url", "tech", "header", "osname", "device", "derived", "version", "extra", "tag"])(
     "finds a host by its %s",
     async (field) => {

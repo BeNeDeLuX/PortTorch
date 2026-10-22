@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, Me, ScanExclude, ScannerAgent } from "../api";
+import SearchInput from "../components/SearchInput";
 import { IconPlus, IconTrash } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
@@ -176,7 +177,7 @@ export default function Excludes({ me, onLogout }: { me: Me; onLogout: () => voi
       ) : (
         <>
           <form className="search-bar" onSubmit={(e) => e.preventDefault()}>
-            <input
+            <SearchInput
               placeholder="Search by value or scanner..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}

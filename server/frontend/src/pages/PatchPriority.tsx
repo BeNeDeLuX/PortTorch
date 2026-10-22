@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { api, Me, PatchPriorityHost } from "../api";
+import SearchInput from "../components/SearchInput";
 import PageHeader from "../components/PageHeader";
 import TableExport from "../components/TableExport";
 import TablePager, { pageSlice } from "../components/TablePager";
@@ -86,7 +87,7 @@ export default function PatchPriority({ me, onLogout }: { me: Me; onLogout: () =
 
           <div className="list-controls">
             <form className="search-bar" onSubmit={(e) => e.preventDefault()}>
-              <input
+              <SearchInput
                 placeholder="Search by address, name or reason..."
                 value={query}
                 onChange={(e) => {

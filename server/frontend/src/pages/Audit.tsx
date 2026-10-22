@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, auditExportUrl, AuditEntry, Me } from "../api";
+import SearchInput from "../components/SearchInput";
 import { IconDownload, IconSearch, IconX } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
@@ -99,10 +100,16 @@ export default function Audit({ me, onLogout }: { me: Me; onLogout: () => void }
       <h2>Audit Log</h2>
 
       <form className="search-bar" onSubmit={applyQuery}>
-        <input
+        <SearchInput
           placeholder="Search by event, actor, source IP, or details..."
           value={queryInput}
           onChange={(e) => setQueryInput(e.target.value)}
+          // Only the text; the Clear button beside it resets every filter.
+          onClear={() => {
+            setQueryInput("");
+            setPage(1);
+            setQ("");
+          }}
         />
         <button type="submit" className="btn-icon-label">
           <IconSearch /> Search

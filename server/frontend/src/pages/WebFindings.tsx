@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api, FleetNucleiFinding, Me } from "../api";
+import SearchInput from "../components/SearchInput";
 import PageHeader from "../components/PageHeader";
 import TablePager, { pageSlice } from "../components/TablePager";
 import TruncationNotice from "../components/TruncationNotice";
@@ -165,7 +166,7 @@ export default function WebFindings({ me, onLogout }: { me: Me; onLogout: () => 
       {findings.length > 0 && (
         <>
           <form className="search-bar" onSubmit={(e) => e.preventDefault()}>
-            <input
+            <SearchInput
               placeholder="Search by host, template id, or name..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}

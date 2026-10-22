@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api, ExpiringCertificate, Me } from "../api";
+import { fingerprintQuery } from "../lib/fingerprint";
 import { certExpiryStatus, certExpiryLabel } from "../lib/certExpiry";
+import SearchInput from "../components/SearchInput";
 import PageHeader from "../components/PageHeader";
 import TruncationNotice from "../components/TruncationNotice";
 import TableExport from "../components/TableExport";
@@ -74,6 +76,9 @@ export default function Certificates({ me, onLogout }: { me: Me; onLogout: () =>
   }
 
   const trimmedQuery = query.trim().toLowerCase();
+  // A pasted SHA-256 fingerprint ("BB:A4:D2:..." or plain hex, whole or
+  // in part) matches the stored lower-case hex - see lib/fingerprint.ts.
+  const fingerprint = fingerprintQuery(query);
   const filteredCerts = certs.filter((c) => {
     if (onlyExpired && certExpiryStatus(c.not_after) !== "expired") return false;
     if (!trimmedQuery) return true;
@@ -82,7 +87,8 @@ export default function Certificates({ me, onLogout }: { me: Me; onLogout: () =>
       (c.host_hostname ?? "").toLowerCase().includes(trimmedQuery) ||
       (c.subject_cn ?? "").toLowerCase().includes(trimmedQuery) ||
       (c.issuer_cn ?? "").toLowerCase().includes(trimmedQuery) ||
-      String(c.port).includes(trimmedQuery)
+      String(c.port).includes(trimmedQuery) ||
+      (fingerprint !== null && c.fingerprint_sha256.toLowerCase().includes(fingerprint))
     );
   });
   const sortedCerts = [...filteredCerts].sort((a, b) => compareCerts(a, b, sortKey, sortDirection));
@@ -99,8 +105,8 @@ export default function Certificates({ me, onLogout }: { me: Me; onLogout: () =>
       {certs.length > 0 && (
         <>
           <form className="search-bar" onSubmit={(e) => e.preventDefault()}>
-            <input
-              placeholder="Search by host, port, CN, or issuer..."
+            <SearchInput
+              placeholder="Search by host, port, CN, issuer, or SHA-256 fingerprint..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />

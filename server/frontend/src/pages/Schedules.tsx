@@ -704,7 +704,7 @@ export default function Schedules({ me, onLogout }: { me: Me; onLogout: () => vo
           <TargetPatternHint />
           <label>
             Ports
-            <input placeholder="1-1000" value={portSpec} onChange={(e) => setPortSpec(e.target.value)} />
+            <input placeholder="1-65535, or e.g. 80,443,8000-8010,U:53" value={portSpec} onChange={(e) => setPortSpec(e.target.value)} />
           </label>
           <PortSpecHint portSpec={portSpec} />
           <label>

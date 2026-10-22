@@ -353,7 +353,7 @@ export function applyHostFilters(
         // And what a web interface says about itself: its title and URL,
         // the technologies gowitness fingerprinted, and its response
         // headers (a "Server: Cisco-IP-Phone" header identifies a device
-        // nothing else here names).
+        // nothing else here names), matched as written below.
         eb.exists(
           eb
             .selectFrom("screenshots as s")
@@ -366,6 +366,15 @@ export function applyHostFilters(
                 eb2("s.url", "ilike", `%${q}%`),
                 sql<boolean>`array_to_string(s.technologies, ' ') ilike ${`%${q}%`}`,
                 sql<boolean>`s.headers::text ilike ${`%${q}%`}`,
+                // And each header the way it is written - "Name: value" -
+                // so "X-Powered-By: PHP" finds the PHP header and not the
+                // Express one. The stored jsonb renders it as
+                // "X-Powered-By": "PHP/8.3.33", which a typed header
+                // never matches.
+                sql<boolean>`jsonb_typeof(s.headers) = 'object' and exists (
+                  select 1 from jsonb_each_text(s.headers) as hdr
+                  where (hdr.key || ': ' || hdr.value) ilike ${`%${q}%`}
+                )`,
               ])
             )
         ),

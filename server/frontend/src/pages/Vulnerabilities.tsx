@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api, FleetVulnerability, Me } from "../api";
 import { cveSeverityClass } from "../lib/cveSeverity";
+import SearchInput from "../components/SearchInput";
 import PageHeader from "../components/PageHeader";
 import TablePager, { pageSlice } from "../components/TablePager";
 import TruncationNotice from "../components/TruncationNotice";
@@ -181,7 +182,7 @@ export default function Vulnerabilities({ me, onLogout }: { me: Me; onLogout: ()
             className="search-bar"
             onSubmit={(e) => e.preventDefault()}
           >
-            <input
+            <SearchInput
               placeholder="Search by host, CVE id, or description..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}

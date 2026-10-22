@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api, DigestResult, Me } from "../api";
+import SearchInput from "../components/SearchInput";
 import DigestExportModal from "../components/DigestExportModal";
 import PageHeader from "../components/PageHeader";
 import Modal from "../components/Modal";
@@ -135,7 +136,7 @@ export default function Digest({ me, onLogout }: { me: Me; onLogout: () => void 
       )}
 
       <form className="search-bar" onSubmit={(e) => e.preventDefault()}>
-        <input
+        <SearchInput
           placeholder="Search by host, port, or service..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}

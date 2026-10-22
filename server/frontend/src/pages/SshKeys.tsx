@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { api, FleetSshHostKey, Me } from "../api";
 import { sshKeyRisk, sshKeyRiskLabel } from "../lib/sshKeyRisk";
+import SearchInput from "../components/SearchInput";
 import PageHeader from "../components/PageHeader";
 import TruncationNotice from "../components/TruncationNotice";
 import TableExport from "../components/TableExport";
@@ -128,7 +129,7 @@ export default function SshKeys({ me, onLogout }: { me: Me; onLogout: () => void
           </div>
 
           <form className="search-bar" onSubmit={(e) => e.preventDefault()}>
-            <input
+            <SearchInput
               placeholder="Search by host, port, key type, or fingerprint..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}

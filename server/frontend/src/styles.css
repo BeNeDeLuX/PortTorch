@@ -595,6 +595,45 @@ kbd {
   flex: 1;
 }
 
+/* SearchInput.tsx: the clear button sits inside the field's right edge,
+   so the input keeps room for it rather than text running under it. */
+.search-input {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-width: 0;
+}
+
+.search-input input {
+  flex: 1;
+  min-width: 0;
+  padding-right: 2rem;
+}
+
+.search-input-clear {
+  position: absolute;
+  right: 0.35rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.search-input-clear:hover,
+.search-input-clear:focus-visible {
+  color: var(--text);
+  background: var(--border);
+}
+
 .list-controls {
   display: flex;
   align-items: center;

@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api, FleetScreenshot, Me, ScreenshotPage, ScreenshotQuery } from "../api";
+import SearchInput from "../components/SearchInput";
 import ScreenshotCompare from "../components/ScreenshotCompare";
 import PageHeader from "../components/PageHeader";
 import ScannerMultiSelect from "../components/ScannerMultiSelect";
@@ -151,7 +152,7 @@ export default function Screenshots({ me, onLogout }: { me: Me; onLogout: () => 
       </p>
 
       <form className="search-bar" onSubmit={(e) => e.preventDefault()}>
-        <input
+        <SearchInput
           placeholder="Search by host, port, page title, URL, manufacturer, text on the page..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}

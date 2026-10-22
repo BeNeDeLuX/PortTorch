@@ -14,6 +14,7 @@ import {
   SavedSearch,
   ScannerAgent,
 } from "../api";
+import SearchInput from "../components/SearchInput";
 import ExportModal from "../components/ExportModal";
 import {
   IconArchive,
@@ -929,10 +930,15 @@ export default function Dashboard({ me, onLogout }: { me: Me; onLogout: () => vo
           applyQuery();
         }}
       >
-        <input
+        <SearchInput
           placeholder="Search by IP, CIDR, hostname, service, banner, page title, OS, tag, CVE... - ip:10.20 for addresses only"
           value={queryInput}
           onChange={(e) => setQueryInput(e.target.value)}
+          onClear={() => {
+            setQueryInput("");
+            updateFilters({ q: undefined });
+          }}
+          aria-label="Search hosts"
         />
         <button type="submit" className="btn-icon-label">
           <IconSearch /> Search

@@ -2,6 +2,7 @@ import { formatBitRate } from "../lib/units";
 import { FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { api, Me, ScanHistoryEntry, ScanHistoryResult } from "../api";
+import SearchInput from "../components/SearchInput";
 import { IconInfo, IconWarning, IconSearch, IconRefresh, IconPlay } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import ScanProgressModal from "../components/ScanProgressModal";
@@ -128,10 +129,15 @@ export default function ScanHistory({ me, onLogout }: { me: Me; onLogout: () => 
       <p className="host-meta">Every finished scan job (completed, failed, or cancelled), most recently finished first.</p>
 
       <form className="search-bar" onSubmit={applyQuery}>
-        <input
+        <SearchInput
           placeholder="Search by target, ports, or scanner..."
           value={queryInput}
           onChange={(e) => setQueryInput(e.target.value)}
+          onClear={() => {
+            setQueryInput("");
+            setPage(1);
+            setQuery("");
+          }}
         />
         <button type="submit" className="btn-icon-label">
           <IconSearch /> Search
