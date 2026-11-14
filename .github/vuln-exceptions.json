@@ -1,0 +1,8 @@
+{
+  "_comment": "Advisories the security-audit workflow may ignore. Each entry is an advisory id mapped to the reason it is unreachable from this code or has no fixed release. Keyed by GHSA id for npm (as npm audit reports them) and by Go vulnerability database id (GO-YYYY-NNNN) for the scanner. Remove an entry once the fixed version is in; the checks flag entries that no longer match anything.",
+  "npm": {},
+  "go": {
+    "GO-2026-6872": "echo RateLimiter: the default IP extractor trusts X-Forwarded-For (GHSA-246p-cpwv-v3jq, no fixed release). The scanner's local API uses no rate limiter; its only middleware is Recover, and the advisory lists the whole module without symbols, so govulncheck cannot narrow it.",
+    "GO-2026-6875": "echo Proxy middleware forwards a client-supplied X-Real-IP upstream (GHSA-99jh-6h7p-pp36, no fixed release). The scanner's local API proxies nothing; same whole-module advisory as GO-2026-6872."
+  }
+}

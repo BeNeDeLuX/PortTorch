@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import forge from "node-forge";
+import { createSelfSignedCertificate } from "./x509";
 
 export interface TlsMaterial {
   key: string;
@@ -25,42 +25,22 @@ export function loadOrCreateSelfSignedCert(certDir: string): TlsMaterial {
 
   fs.mkdirSync(certDir, { recursive: true });
 
-  const keys = forge.pki.rsa.generateKeyPair(2048);
-  const cert = forge.pki.createCertificate();
-  cert.publicKey = keys.publicKey;
-  cert.serialNumber = "01";
-  cert.validity.notBefore = new Date();
-  cert.validity.notAfter = new Date();
-  cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 5);
-
   const hostname = os.hostname();
-  const attrs = [{ name: "commonName", value: hostname }];
-  cert.setSubject(attrs);
-  cert.setIssuer(attrs);
-  cert.setExtensions([
-    { name: "basicConstraints", cA: false },
-    {
-      name: "keyUsage",
-      digitalSignature: true,
-      keyEncipherment: true,
-    },
-    { name: "extKeyUsage", serverAuth: true },
-    {
-      name: "subjectAltName",
-      altNames: [
-        { type: 2, value: hostname },
-        { type: 2, value: "localhost" },
-        { type: 7, ip: "127.0.0.1" },
-      ],
-    },
-  ]);
-  cert.sign(keys.privateKey, forge.md.sha256.create());
+  const notBefore = new Date();
+  const notAfter = new Date(notBefore);
+  notAfter.setFullYear(notBefore.getFullYear() + 5);
 
-  const keyPem = forge.pki.privateKeyToPem(keys.privateKey);
-  const certPem = forge.pki.certificateToPem(cert);
+  const { cert, key } = createSelfSignedCertificate({
+    commonName: hostname,
+    notBefore,
+    notAfter,
+    basicConstraints: false,
+    dns: [hostname, "localhost"],
+    ip: ["127.0.0.1"],
+  });
 
-  fs.writeFileSync(keyPath, keyPem, { mode: 0o600 });
-  fs.writeFileSync(certPath, certPem, { mode: 0o644 });
+  fs.writeFileSync(keyPath, key, { mode: 0o600 });
+  fs.writeFileSync(certPath, cert, { mode: 0o644 });
 
-  return { key: keyPem, cert: certPem };
+  return { key, cert };
 }

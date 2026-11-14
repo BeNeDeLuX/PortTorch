@@ -1,5 +1,5 @@
+import { X509Certificate } from "crypto";
 import tls from "tls";
-import forge from "node-forge";
 import { db } from "../db";
 
 export interface ParsedCaCertificate {
@@ -17,19 +17,24 @@ export class CaCertificateError extends Error {}
 // endings, or with the surrounding whitespace a copy-paste picks up,
 // stores identically and is caught as a duplicate.
 //
-// Strips every carriage return rather than only the CRLF pairs: node-forge
-// emits PEM with CRLF, so text that has been through one conversion can
-// carry a stray lone \r that a pair-wise replace leaves behind - and the
-// stored PEM then differs from the same certificate pasted plainly.
+// Strips every carriage return rather than only the CRLF pairs: Windows
+// tooling and several CAs emit PEM with CRLF, so text that has been
+// through one conversion can carry a stray lone \r that a pair-wise
+// replace leaves behind - and the stored PEM then differs from the same
+// certificate pasted plainly.
 function normalisePem(pem: string): string {
   return pem.replace(/\r/g, "").trim() + "\n";
 }
 
+// Node renders a distinguished name one attribute per line (`CN=x\nO=y`);
+// the list shows it on one.
+const oneLine = (dn: string) => dn.split("\n").join(", ");
+
 export function parseCaCertificate(input: string): ParsedCaCertificate {
   const pem = normalisePem(input);
-  let cert: forge.pki.Certificate;
+  let cert: X509Certificate;
   try {
-    cert = forge.pki.certificateFromPem(pem);
+    cert = new X509Certificate(pem);
   } catch (err) {
     throw new CaCertificateError(`not a PEM certificate: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -37,25 +42,23 @@ export function parseCaCertificate(input: string): ParsedCaCertificate {
   // A leaf certificate uploaded here would be accepted by Node as a trust
   // anchor for itself and nothing else - which looks like it worked until
   // the server rotates its certificate. Rejecting it now, with a reason,
-  // beats an admin discovering it months later.
-  const basicConstraints = cert.getExtension("basicConstraints") as { cA?: boolean } | undefined;
-  if (!basicConstraints?.cA) {
+  // beats an admin discovering it months later. `ca` is OpenSSL's reading
+  // of basicConstraints, false when the extension is absent.
+  if (!cert.ca) {
     throw new CaCertificateError(
       "this is not a CA certificate (basicConstraints CA:TRUE is missing) - upload the CA that signed the server's certificate, not the server's own certificate"
     );
   }
 
-  const der = forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes();
-  const digest = forge.md.sha256.create();
-  digest.update(der);
-
   return {
     pem,
-    subject: cert.subject.attributes.map((a) => `${a.shortName ?? a.name}=${a.value}`).join(", "),
-    issuer: cert.issuer.attributes.map((a) => `${a.shortName ?? a.name}=${a.value}`).join(", "),
-    notBefore: cert.validity.notBefore,
-    notAfter: cert.validity.notAfter,
-    fingerprintSha256: digest.digest().toHex(),
+    subject: oneLine(cert.subject),
+    issuer: oneLine(cert.issuer),
+    notBefore: cert.validFromDate,
+    notAfter: cert.validToDate,
+    // Node formats it as colon-separated uppercase hex; stored bare and
+    // lower-case, the form every other fingerprint in this database uses.
+    fingerprintSha256: cert.fingerprint256.replace(/:/g, "").toLowerCase(),
   };
 }
 

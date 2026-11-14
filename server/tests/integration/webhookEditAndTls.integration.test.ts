@@ -2,47 +2,51 @@ import fs from "fs";
 import https from "https";
 import os from "os";
 import path from "path";
-import forge from "node-forge";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "../../src/db";
 import { attemptDelivery } from "../../src/webhooks/dispatch";
 import { resetCaBundle } from "../../src/settings/caCertificates";
+import { createCertificate, generateRsaKeyPair, privateKeyToPem } from "../../src/tls/x509";
 import { closeDb, createTestUser, deleteTestUser, loginAs, type TestUser } from "./helpers";
 
 // A private CA and a server certificate it signed, so the delivery path
 // can be exercised against a target that is genuinely untrusted until the
 // CA is uploaded - which is the whole point.
 function makePki() {
-  const caKeys = forge.pki.rsa.generateKeyPair(2048);
-  const ca = forge.pki.createCertificate();
-  ca.publicKey = caKeys.publicKey;
-  ca.serialNumber = "01";
-  ca.validity.notBefore = new Date(Date.now() - 60_000);
-  ca.validity.notAfter = new Date(Date.now() + 365 * 24 * 60 * 60_000);
-  const caAttrs = [{ name: "commonName", value: "it Webhook CA" }];
-  ca.setSubject(caAttrs);
-  ca.setIssuer(caAttrs);
-  ca.setExtensions([{ name: "basicConstraints", cA: true }]);
-  ca.sign(caKeys.privateKey, forge.md.sha256.create());
+  const notBefore = new Date(Date.now() - 60_000);
+  const notAfter = new Date(Date.now() + 365 * 24 * 60 * 60_000);
+  const caName = { commonName: "it Webhook CA" };
 
-  const srvKeys = forge.pki.rsa.generateKeyPair(2048);
-  const srv = forge.pki.createCertificate();
-  srv.publicKey = srvKeys.publicKey;
-  srv.serialNumber = "02";
-  srv.validity.notBefore = new Date(Date.now() - 60_000);
-  srv.validity.notAfter = new Date(Date.now() + 365 * 24 * 60 * 60_000);
-  srv.setSubject([{ name: "commonName", value: "localhost" }]);
-  srv.setIssuer(caAttrs);
-  srv.setExtensions([
-    { name: "basicConstraints", cA: false },
-    { name: "subjectAltName", altNames: [{ type: 2, value: "localhost" }, { type: 7, ip: "127.0.0.1" }] },
-  ]);
-  srv.sign(caKeys.privateKey, forge.md.sha256.create());
+  const caKeys = generateRsaKeyPair();
+  const caPem = createCertificate({
+    subject: caName,
+    publicKey: caKeys.publicKey,
+    signingKey: caKeys.privateKey,
+    serialNumber: 1,
+    notBefore,
+    notAfter,
+    basicConstraints: true,
+    keyUsage: ["keyCertSign", "cRLSign"],
+  });
+
+  const srvKeys = generateRsaKeyPair();
+  const serverCert = createCertificate({
+    subject: { commonName: "localhost" },
+    issuer: caName,
+    publicKey: srvKeys.publicKey,
+    signingKey: caKeys.privateKey,
+    serialNumber: 2,
+    notBefore,
+    notAfter,
+    basicConstraints: false,
+    serverAuth: true,
+    subjectAltNames: { dns: ["localhost"], ip: ["127.0.0.1"] },
+  });
 
   return {
-    caPem: forge.pki.certificateToPem(ca),
-    serverCert: forge.pki.certificateToPem(srv),
-    serverKey: forge.pki.privateKeyToPem(srvKeys.privateKey),
+    caPem,
+    serverCert,
+    serverKey: privateKeyToPem(srvKeys.privateKey),
   };
 }
 

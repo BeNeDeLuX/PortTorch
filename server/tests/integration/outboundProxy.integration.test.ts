@@ -3,8 +3,8 @@ import http from "http";
 import https from "https";
 import net from "net";
 import { AddressInfo } from "net";
-import forge from "node-forge";
 import { outboundGet, outboundPost } from "../../src/lib/outbound";
+import { createSelfSignedCertificate } from "../../src/tls/x509";
 
 // Real servers on loopback rather than a mocked http module: what is
 // under test is whether a request actually reaches a proxy in the shape
@@ -17,18 +17,11 @@ function clearProxyEnv() {
 }
 
 function selfSignedCert(): { cert: string; key: string } {
-  const keys = forge.pki.rsa.generateKeyPair(2048);
-  const cert = forge.pki.createCertificate();
-  cert.publicKey = keys.publicKey;
-  cert.serialNumber = "01";
-  cert.validity.notBefore = new Date();
-  cert.validity.notAfter = new Date(Date.now() + 86400000);
-  const attrs = [{ name: "commonName", value: "localhost" }];
-  cert.setSubject(attrs);
-  cert.setIssuer(attrs);
-  cert.setExtensions([{ name: "subjectAltName", altNames: [{ type: 2, value: "localhost" }] }]);
-  cert.sign(keys.privateKey, forge.md.sha256.create());
-  return { cert: forge.pki.certificateToPem(cert), key: forge.pki.privateKeyToPem(keys.privateKey) };
+  return createSelfSignedCertificate({
+    commonName: "localhost",
+    notAfter: new Date(Date.now() + 86400000),
+    dns: ["localhost"],
+  });
 }
 
 describe("outbound POST through a proxy", () => {

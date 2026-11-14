@@ -1,23 +1,17 @@
 import tls from "tls";
-import forge from "node-forge";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { db } from "../../src/db";
 import { caBundle, resetCaBundle } from "../../src/settings/caCertificates";
+import { createSelfSignedCertificate } from "../../src/tls/x509";
 import { closeDb, createTestUser, deleteTestUser, loginAs, type TestUser } from "./helpers";
 
 function makeCaPem(commonName: string, notAfter = new Date("2030-01-01T00:00:00Z")): string {
-  const keys = forge.pki.rsa.generateKeyPair(2048);
-  const cert = forge.pki.createCertificate();
-  cert.publicKey = keys.publicKey;
-  cert.serialNumber = "01";
-  cert.validity.notBefore = new Date("2026-01-01T00:00:00Z");
-  cert.validity.notAfter = notAfter;
-  const attrs = [{ name: "commonName", value: commonName }];
-  cert.setSubject(attrs);
-  cert.setIssuer(attrs);
-  cert.setExtensions([{ name: "basicConstraints", cA: true }]);
-  cert.sign(keys.privateKey, forge.md.sha256.create());
-  return forge.pki.certificateToPem(cert);
+  return createSelfSignedCertificate({
+    commonName,
+    notBefore: new Date("2026-01-01T00:00:00Z"),
+    notAfter,
+    basicConstraints: true,
+  }).cert;
 }
 
 // Uploading the CA that signed an internal server's certificate is the

@@ -70,7 +70,7 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-REQUIRED_GO_VERSION="1.26.5"
+REQUIRED_GO_VERSION="1.26.11"
 SERVICE_USER="porttorch"
 SERVICE_HOME="/var/lib/porttorch"
 CONFIG_DIR="$SERVICE_HOME/.config/porttorch"

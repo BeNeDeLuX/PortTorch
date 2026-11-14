@@ -1,0 +1,110 @@
+name: Security audit
+
+# The repository audits its own installed dependency versions rather than
+# relying on Dependabot alerts alone. Those alerts read GitHub's dependency
+# graph, which was seen to sit weeks behind the committed lockfiles: it kept
+# reporting proxy-addr, express and echo versions that master had long moved
+# past, and that noise is how a real new advisory could go unnoticed. Here
+# `npm audit` and `govulncheck` run against exactly what the lockfiles and
+# go.sum resolve to.
+#
+# Runs on every push and PR that changes a dependency manifest, and weekly
+# regardless - an advisory published against unchanged code only surfaces
+# through the scheduled run. A failed scheduled run notifies through
+# GitHub's usual workflow-failure email.
+#
+# Blocking: high/critical npm advisories, and Go vulnerabilities in code the
+# scanner actually calls. Confirmed-unreachable findings with no fixed
+# release go in .github/vuln-exceptions.json with a reason; both check
+# scripts flag an exception that stopped matching anything.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "server/package.json"
+      - "server/package-lock.json"
+      - "server/frontend/package.json"
+      - "server/frontend/package-lock.json"
+      - "scanner/go.mod"
+      - "scanner/go.sum"
+      - "scripts/npm-vuln-check.mjs"
+      - "scripts/go-vuln-check.mjs"
+      - ".github/vuln-exceptions.json"
+      - ".github/workflows/security-audit.yml"
+  pull_request:
+    paths:
+      - "server/package.json"
+      - "server/package-lock.json"
+      - "server/frontend/package.json"
+      - "server/frontend/package-lock.json"
+      - "scanner/go.mod"
+      - "scanner/go.sum"
+      - "scripts/npm-vuln-check.mjs"
+      - "scripts/go-vuln-check.mjs"
+      - ".github/vuln-exceptions.json"
+      - ".github/workflows/security-audit.yml"
+  schedule:
+    # Monday 06:15 UTC, ahead of Dependabot's own weekly pass.
+    - cron: "15 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: server
+            dir: server
+            # The webserver image ships production dependencies only, so
+            # the deployed surface is what blocks; dev findings still show
+            # in the full run below.
+            flags: --production
+          - name: frontend
+            dir: server/frontend
+            # Everything in the frontend is a build-time dependency; the
+            # browser bundle is the only runtime artifact.
+            flags: ""
+    name: npm audit (${{ matrix.name }})
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: ${{ matrix.dir }}/package-lock.json
+
+      # npm audit works from the lockfile alone; no install needed.
+      - name: Audit
+        run: node scripts/npm-vuln-check.mjs ${{ matrix.dir }} ${{ matrix.flags }}
+
+      - name: Full report including dev dependencies
+        if: matrix.flags != ''
+        run: npm audit --prefix ${{ matrix.dir }} || true
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    name: govulncheck (scanner)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: scanner/go.mod
+          cache-dependency-path: scanner/go.sum
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Check
+        run: node scripts/go-vuln-check.mjs scanner

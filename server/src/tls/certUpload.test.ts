@@ -1,28 +1,19 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import forge from "node-forge";
 import { describe, expect, it } from "vitest";
 import { getCurrentCertInfo, saveCertKeyPair, validateCertKeyPair } from "./certUpload";
+import { createSelfSignedCertificate } from "./x509";
 
-// Builds a real self-signed cert+key pair via node-forge - the same
-// library generateCert.ts itself uses to build the auto-generated
-// self-signed cert, so these tests exercise real PEM material rather
-// than hand-typed fixture strings. notAfterDays lets a test build a
-// deliberately-expired cert.
+// Builds a real self-signed cert+key pair with the same builder
+// generateCert.ts uses for the auto-generated self-signed cert, so these
+// tests exercise real PEM material rather than hand-typed fixture
+// strings. notAfterDays lets a test build a deliberately-expired cert.
 function buildSelfSignedPair(commonName: string, notAfterDays = 365): { cert: string; key: string } {
-  const keys = forge.pki.rsa.generateKeyPair(2048);
-  const cert = forge.pki.createCertificate();
-  cert.publicKey = keys.publicKey;
-  cert.serialNumber = "01";
-  cert.validity.notBefore = new Date();
-  cert.validity.notAfter = new Date();
-  cert.validity.notAfter.setDate(cert.validity.notBefore.getDate() + notAfterDays);
-  const attrs = [{ name: "commonName", value: commonName }];
-  cert.setSubject(attrs);
-  cert.setIssuer(attrs);
-  cert.sign(keys.privateKey, forge.md.sha256.create());
-  return { cert: forge.pki.certificateToPem(cert), key: forge.pki.privateKeyToPem(keys.privateKey) };
+  const notBefore = new Date();
+  const notAfter = new Date(notBefore);
+  notAfter.setDate(notBefore.getDate() + notAfterDays);
+  return createSelfSignedCertificate({ commonName, notBefore, notAfter });
 }
 
 describe("validateCertKeyPair", () => {
